@@ -1,0 +1,13 @@
+[package]
+name = "gpui_tokio"
+version = "0.1.0"
+edition = "2021"
+description = "Tokio runtime integration for GPUI applications"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+gpui = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }

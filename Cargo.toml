@@ -1,0 +1,74 @@
+[workspace]
+members = ["crates/broquest", "crates/gpui_tokio"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+license = "MIT"
+homepage = "https://github.com/yourusername/broquest"
+repository = "https://github.com/yourusername/broquest"
+description = "Rust implementation of the Bruno language format"
+
+[workspace.dependencies]
+# Core GPUI dependencies
+gpui = { version = "0.2.2" }
+gpui-macros = "0.2.2"
+gpui-component = { version = "0.4.1", features = ["tree-sitter-languages"] }
+gpui-component-macros = { version = "0.4.1" }
+
+# Database dependencies
+sqlx = { version = "0.8", features = [
+    "runtime-async-std",
+    "sqlite",
+    "chrono",
+    "json",
+] }
+
+# Core dependencies
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+env_logger = "0.11"
+chrono = "0.4"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+pest = "2.7"
+pest_derive = "2.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+zed-reqwest = "0.12.15-zed"
+async-std = { version = "1.13", features = ["attributes"] }
+tokio = { version = "1.0", features = ["full"] }
+dirs = "5"
+toml = "0.8"
+
+# Script execution dependencies
+rquickjs = { version = "0.10", features = ["parallel", "macro"] }
+base64 = "0.21"
+
+# Development dependencies
+anyhow = "1.0"
+
+[workspace.lints.clippy]
+almost_complete_range = "allow"
+arc_with_non_send_sync = "allow"
+borrowed_box = "allow"
+dbg_macro = "deny"
+let_underscore_future = "allow"
+manual_is_multiple_of = "allow"
+map_entry = "allow"
+module_inception = "allow"
+non_canonical_partial_ord_impl = "allow"
+reversed_empty_ranges = "allow"
+single_range_in_vec_init = "allow"
+style = { level = "allow", priority = -1 }
+todo = "deny"
+type_complexity = "allow"
+
+[profile.release]
+opt-level = 3
+
+[profile.profiling]
+inherits = "release"
+debug = true

@@ -1,0 +1,383 @@
+use anyhow::{Result, anyhow};
+use gpui::Global;
+use std::collections::HashMap;
+use std::time::Duration;
+use zed_reqwest as reqwest;
+
+use crate::environment_resolver::EnvironmentResolver;
+use crate::request_editor::{KeyValuePair, RequestData, ResponseData};
+use crate::script_engine::ScriptExecutionService;
+use crate::variable_store::VariableStore;
+
+/// Global HTTP client service for sending API requests
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct HttpClientService {
+    client: reqwest::Client,
+    timeout: Duration,
+    environment_resolver: EnvironmentResolver,
+    script_execution_service: ScriptExecutionService,
+}
+
+impl Global for HttpClientService {}
+
+impl HttpClientService {
+    pub fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .user_agent("broquest/0.1.0")
+            .build()
+            .expect("Failed to create HTTP client");
+
+        let script_execution_service =
+            ScriptExecutionService::new().expect("Failed to create script execution service");
+
+        Self {
+            client,
+            timeout: Duration::from_secs(30),
+            environment_resolver: EnvironmentResolver::new(),
+            script_execution_service,
+        }
+    }
+
+    /// Get the global HTTP client instance
+    pub fn global(cx: &gpui::App) -> &Self {
+        cx.global::<Self>()
+    }
+
+    pub async fn send_request(
+        &self,
+        request_data: RequestData,
+        variables: Option<HashMap<String, String>>,
+        secrets: Option<HashMap<String, String>>,
+    ) -> Result<(ResponseData, VariableStore)> {
+        self.send_request_internal(request_data, variables, secrets)
+            .await
+    }
+
+    async fn send_request_internal(
+        &self,
+        mut request_data: RequestData,
+        variables: Option<HashMap<String, String>>,
+        secrets: Option<HashMap<String, String>>,
+    ) -> Result<(ResponseData, VariableStore)> {
+        let start_time = std::time::Instant::now();
+
+        // Create variable store for this request
+        let variable_store = VariableStore::new();
+
+        // Initialize variable store with environment data if provided
+        if let (Some(variables), Some(secrets)) = (variables, secrets) {
+            tracing::info!(
+                "Loaded {} variables and {} secrets for request",
+                variables.len(),
+                secrets.len()
+            );
+
+            // Initialize variable store with environment data
+            variable_store.initialize_with_env(&variables, &secrets);
+
+            // Resolve variables in request data using EnvironmentResolver
+            request_data =
+                self.environment_resolver
+                    .resolve_request_data(request_data, &variables, &secrets);
+
+            tracing::info!("URL after environment substitution: {}", request_data.url);
+        }
+
+        tracing::info!(
+            "Sending {} request to {}",
+            request_data.method.as_str(),
+            request_data.url
+        );
+
+        // Execute pre-request script if present
+        if let Some(pre_request_script) = request_data.pre_request_script.clone() {
+            tracing::info!("Executing pre-request script");
+            if let Err(e) = self.script_execution_service.execute_pre_request_script(
+                &pre_request_script,
+                &mut request_data,
+                &variable_store,
+            ) {
+                tracing::error!("Failed to execute pre-request script: {}", e);
+                return Err(anyhow!("Pre-request script execution failed: {}", e));
+            }
+        }
+
+        // Build the request
+        let mut request = self
+            .client
+            .request(map_http_method(request_data.method), &request_data.url);
+
+        // Add headers
+        for header in &request_data.headers {
+            if header.enabled {
+                request = request.header(&header.key, &header.value);
+            }
+        }
+
+        // Add query parameters
+        let mut url = request_data.url.clone();
+        if !request_data.query_params.is_empty() {
+            let query_string = request_data
+                .query_params
+                .iter()
+                .filter(|param| param.enabled)
+                .filter_map(|param| {
+                    if param.key.is_empty() || param.value.is_empty() {
+                        None
+                    } else {
+                        Some(format!(
+                            "{}={}",
+                            urlencoding::encode(&param.key),
+                            urlencoding::encode(&param.value)
+                        ))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("&");
+
+            if !query_string.is_empty() {
+                if url.contains('?') {
+                    url.push('&');
+                    url.push_str(&query_string);
+                } else {
+                    url.push('?');
+                    url.push_str(&query_string);
+                }
+                // Rebuild the request with the new URL
+                request = self
+                    .client
+                    .request(map_http_method(request_data.method), &url);
+
+                // Add headers again
+                for header in &request_data.headers {
+                    if header.enabled {
+                        request = request.header(&header.key, &header.value);
+                    }
+                }
+            }
+        }
+
+        // Add body for POST, PUT, PATCH requests
+        if matches!(
+            request_data.method,
+            crate::request_editor::HttpMethod::Post
+                | crate::request_editor::HttpMethod::Put
+                | crate::request_editor::HttpMethod::Patch
+        ) && !request_data.body.is_empty()
+        {
+            request = request.body(request_data.body.clone());
+        }
+
+        // Execute the request
+        let response = request
+            .send()
+            .await
+            .map_err(|e| anyhow!("Failed to send request: {}", e))?;
+
+        let status = response.status();
+        let status_code = status.as_u16();
+        let status_text = status.canonical_reason().map(|s| s.to_string());
+
+        // Get response headers
+        let response_headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value.to_str().ok().map(|v| KeyValuePair {
+                    key: name.to_string(),
+                    value: v.to_string(),
+                    enabled: true,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // Get response body
+        let response_body = response
+            .text()
+            .await
+            .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
+
+        let latency = start_time.elapsed();
+        let response_size = response_body.len();
+
+        let response_data = ResponseData {
+            status_code: Some(status_code),
+            status_text: status_text.clone(),
+            latency: Some(latency),
+            size: Some(response_size),
+            headers: response_headers,
+            body: response_body,
+        };
+
+        // Execute post-response script if present
+        if let Some(post_response_script) = &request_data.post_response_script {
+            tracing::info!("Executing post-response script");
+            if let Err(e) = self.script_execution_service.execute_post_response_script(
+                post_response_script,
+                &request_data,
+                &response_data,
+                &variable_store,
+            ) {
+                tracing::error!("Failed to execute post-response script: {}", e);
+                return Err(anyhow!("Post-response script execution failed: {}", e));
+            }
+        }
+
+        tracing::info!(
+            "Request completed: {} {} ({} bytes, {}ms)",
+            status_code,
+            status_text.unwrap_or_else(|| "Unknown".to_string()),
+            response_size,
+            latency.as_millis()
+        );
+
+        // Check for dirty environment variables
+        let dirty_vars = variable_store.get_dirty_env_vars();
+        if !dirty_vars.is_empty() {
+            tracing::info!(
+                "Environment variables modified by scripts: {:?}",
+                dirty_vars.keys().collect::<Vec<_>>()
+            );
+        }
+
+        Ok((response_data, variable_store))
+    }
+}
+
+fn map_http_method(method: crate::request_editor::HttpMethod) -> reqwest::Method {
+    match method {
+        crate::request_editor::HttpMethod::Get => reqwest::Method::GET,
+        crate::request_editor::HttpMethod::Post => reqwest::Method::POST,
+        crate::request_editor::HttpMethod::Put => reqwest::Method::PUT,
+        crate::request_editor::HttpMethod::Delete => reqwest::Method::DELETE,
+        crate::request_editor::HttpMethod::Patch => reqwest::Method::PATCH,
+        crate::request_editor::HttpMethod::Head => reqwest::Method::HEAD,
+        crate::request_editor::HttpMethod::Options => reqwest::Method::OPTIONS,
+    }
+}
+
+/// Content type detection for response formatting
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseFormat {
+    Json,
+    Xml,
+    Html,
+    PlainText,
+    Binary,
+    Unknown,
+}
+
+impl ResponseFormat {
+    pub fn from_content_type(content_type: &str) -> Self {
+        let content_type = content_type.to_lowercase();
+
+        if content_type.contains("json") {
+            ResponseFormat::Json
+        } else if content_type.contains("xml") {
+            ResponseFormat::Xml
+        } else if content_type.contains("html") {
+            ResponseFormat::Html
+        } else if content_type.contains("text") || content_type.contains("plain") {
+            ResponseFormat::PlainText
+        } else if content_type.contains("application/octet-stream")
+            || content_type.contains("image/")
+            || content_type.contains("video/")
+            || content_type.contains("audio/")
+        {
+            ResponseFormat::Binary
+        } else {
+            ResponseFormat::Unknown
+        }
+    }
+
+    pub fn detect_from_content(content: &str, headers: &[KeyValuePair]) -> Self {
+        // Try to detect from content-type header first
+        if let Some(content_type_header) = headers
+            .iter()
+            .find(|h| h.key.to_lowercase() == "content-type")
+        {
+            return Self::from_content_type(&content_type_header.value);
+        }
+
+        // Try to detect from content
+        let content_trimmed = content.trim();
+
+        // Check if it looks like JSON
+        if (content_trimmed.starts_with('{') && content_trimmed.ends_with('}'))
+            || (content_trimmed.starts_with('[') && content_trimmed.ends_with(']'))
+        {
+            return ResponseFormat::Json;
+        }
+
+        // Check if it looks like XML
+        if content_trimmed.starts_with('<') && content_trimmed.ends_with('>') {
+            return ResponseFormat::Xml;
+        }
+
+        // Check if it looks like HTML
+        if content_trimmed.to_lowercase().starts_with("<html")
+            || content_trimmed.to_lowercase().starts_with("<!doctype html")
+        {
+            return ResponseFormat::Html;
+        }
+
+        ResponseFormat::Unknown
+    }
+
+    pub fn language_string(&self) -> &'static str {
+        match self {
+            ResponseFormat::Json => "json",
+            ResponseFormat::Xml => "xml",
+            ResponseFormat::Html => "html",
+            ResponseFormat::PlainText => "text",
+            ResponseFormat::Binary => "text",
+            ResponseFormat::Unknown => "text",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_content_type_detection() {
+        assert_eq!(
+            ResponseFormat::from_content_type("application/json"),
+            ResponseFormat::Json
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("text/html"),
+            ResponseFormat::Html
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("application/xml"),
+            ResponseFormat::Xml
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("text/plain"),
+            ResponseFormat::PlainText
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("application/octet-stream"),
+            ResponseFormat::Binary
+        );
+    }
+
+    #[test]
+    fn test_content_detection() {
+        let json_content = r#"{"key": "value"}"#;
+        let headers = vec![KeyValuePair {
+            key: "content-type".to_string(),
+            value: "application/json".to_string(),
+            enabled: true,
+        }];
+
+        assert_eq!(
+            ResponseFormat::detect_from_content(json_content, &headers),
+            ResponseFormat::Json
+        );
+    }
+}
