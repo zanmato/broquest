@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Function for displaying help info
+help_info() {
+  echo "
+Usage: ${0##*/} [options]
+Build a .deb package for Broquest.
+
+Options:
+  -h, --help     Display this help and exit.
+  "
+}
+
+# Get version from Cargo.toml
+VERSION=$(grep '^version' /mnt/dev/src/broquest/crates/broquest/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+PACKAGE_NAME="broquest"
+PACKAGE_VERSION="${VERSION}"
+PACKAGE_ARCH="amd64"
+RUST_TARGET="x86_64-unknown-linux-gnu"
+
+# Directories
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+TARGET_DIR="${PROJECT_ROOT}/target"
+BUILD_DIR="${PROJECT_ROOT}/build"
+PKG_DIR="${BUILD_DIR}/${PACKAGE_NAME}_${PACKAGE_VERSION}_${PACKAGE_ARCH}"
+
+echo "Building Broquest .deb package..."
+echo "Version: ${PACKAGE_VERSION}"
+echo "Architecture: ${PACKAGE_ARCH}"
+
+# Clean previous builds
+rm -rf "${BUILD_DIR}"
+mkdir -p "${PKG_DIR}"
+
+# Parse arguments if any
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            help_info
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            help_info
+            exit 1
+            ;;
+        *)
+            echo "Error: Unexpected argument: $1" >&2
+            help_info
+            exit 1
+            ;;
+    esac
+done
+
+# Build the application
+echo "Building Broquest for ${RUST_TARGET}..."
+cd "${PROJECT_ROOT}"
+
+cargo build --release --target "${RUST_TARGET}" --package broquest
+
+# Create package directory structure
+echo "Creating package directory structure..."
+mkdir -p "${PKG_DIR}/DEBIAN"
+mkdir -p "${PKG_DIR}/usr/bin"
+mkdir -p "${PKG_DIR}/usr/share/applications"
+mkdir -p "${PKG_DIR}/usr/share/icons/hicolor/512x512/apps"
+mkdir -p "${PKG_DIR}/usr/share/doc/${PACKAGE_NAME}"
+
+# Copy binary
+echo "Copying binary..."
+cp "${TARGET_DIR}/${RUST_TARGET}/release/broquest" "${PKG_DIR}/usr/bin/"
+
+# Copy .desktop file
+echo "Copying .desktop file..."
+cp "${PROJECT_ROOT}/crates/broquest/resources/broquest.desktop" "${PKG_DIR}/usr/share/applications/"
+
+# Copy icon
+echo "Copying icon..."
+cp "${PROJECT_ROOT}/crates/broquest/resources/broquest-icon-512x512.png" "${PKG_DIR}/usr/share/icons/hicolor/512x512/apps/broquest.png"
+
+# Copy documentation
+echo "Copying documentation..."
+cp "${PROJECT_ROOT}/README.md" "${PKG_DIR}/usr/share/doc/${PACKAGE_NAME}/"
+cp "${PROJECT_ROOT}/LICENSE" "${PKG_DIR}/usr/share/doc/${PACKAGE_NAME}/"
+
+# Create changelog
+echo "Creating changelog..."
+cat > "${PKG_DIR}/usr/share/doc/${PACKAGE_NAME}/changelog" << EOF
+broquest (${PACKAGE_VERSION}) unstable; urgency=medium
+
+  * Initial release
+
+ -- $(git config user.name) <$(git config user.email)>  $(date -R)
+EOF
+gzip -n "${PKG_DIR}/usr/share/doc/${PACKAGE_NAME}/changelog"
+
+# Create control file
+echo "Creating control file..."
+cat > "${PKG_DIR}/DEBIAN/control" << EOF
+Package: ${PACKAGE_NAME}
+Version: ${PACKAGE_VERSION}
+Architecture: ${PACKAGE_ARCH}
+Maintainer: $(git config user.name) <$(git config user.email)>
+Homepage: https://github.com/zanmato/broquest
+Description: Broquest is modern HTTP client and API testing tool with a native
+ Linux interface.
+EOF
+
+# Create md5sums
+echo "Creating md5sums..."
+cd "${PKG_DIR}"
+find usr -type f -exec md5sum {} + > DEBIAN/md5sums
+
+# Set permissions
+chmod 644 "${PKG_DIR}/DEBIAN/control" "${PKG_DIR}/DEBIAN/md5sums"
+chmod 755 "${PKG_DIR}/usr/bin/broquest"
+chmod 644 "${PKG_DIR}/usr/share/applications/broquest.desktop"
+chmod 644 "${PKG_DIR}/usr/share/icons/hicolor/512x512/apps/broquest.png"
+chmod 644 "${PKG_DIR}/usr/share/doc/${PACKAGE_NAME}"/*
+
+# Calculate installed size
+INSTALLED_SIZE=$(du -s "${PKG_DIR}" | cut -f1)
+sed -i "s/^Installed-Size: .*/Installed-Size: ${INSTALLED_SIZE}/" "${PKG_DIR}/DEBIAN/control"
+
+# Build the .deb package
+echo "Building .deb package..."
+cd "${BUILD_DIR}"
+dpkg-deb --build "${PACKAGE_NAME}_${PACKAGE_VERSION}_${PACKAGE_ARCH}"
+
+echo ".deb package created: ${BUILD_DIR}/${PACKAGE_NAME}_${PACKAGE_VERSION}_${PACKAGE_ARCH}.deb"
+
+# Show package info
+echo ""
+echo "Package information:"
+dpkg --info "${PACKAGE_NAME}_${PACKAGE_VERSION}_${PACKAGE_ARCH}.deb"
