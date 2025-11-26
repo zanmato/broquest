@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use gpui::Global;
+use serde_json;
 use std::collections::HashMap;
 use std::time::Duration;
 use zed_reqwest as reqwest;
@@ -104,58 +105,19 @@ impl HttpClientService {
             }
         }
 
+        // Add query parameters
+        let url =
+            Self::apply_query_parameters(request_data.url.clone(), &request_data.query_params);
+
         // Build the request
         let mut request = self
             .client
-            .request(map_http_method(request_data.method), &request_data.url);
+            .request(map_http_method(request_data.method), &url);
 
         // Add headers
         for header in &request_data.headers {
             if header.enabled {
                 request = request.header(&header.key, &header.value);
-            }
-        }
-
-        // Add query parameters
-        let mut url = request_data.url.clone();
-        if !request_data.query_params.is_empty() {
-            let query_string = request_data
-                .query_params
-                .iter()
-                .filter(|param| param.enabled)
-                .filter_map(|param| {
-                    if param.key.is_empty() || param.value.is_empty() {
-                        None
-                    } else {
-                        Some(format!(
-                            "{}={}",
-                            urlencoding::encode(&param.key),
-                            urlencoding::encode(&param.value)
-                        ))
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("&");
-
-            if !query_string.is_empty() {
-                if url.contains('?') {
-                    url.push('&');
-                    url.push_str(&query_string);
-                } else {
-                    url.push('?');
-                    url.push_str(&query_string);
-                }
-                // Rebuild the request with the new URL
-                request = self
-                    .client
-                    .request(map_http_method(request_data.method), &url);
-
-                // Add headers again
-                for header in &request_data.headers {
-                    if header.enabled {
-                        request = request.header(&header.key, &header.value);
-                    }
-                }
             }
         }
 
@@ -243,6 +205,41 @@ impl HttpClientService {
         }
 
         Ok((response_data, variable_store))
+    }
+
+    /// Apply query parameters to a URL
+    fn apply_query_parameters(mut url: String, query_params: &[KeyValuePair]) -> String {
+        if query_params.is_empty() {
+            return url;
+        }
+
+        let query_string = query_params
+            .iter()
+            .filter(|param| param.enabled)
+            .filter_map(|param| {
+                if param.key.is_empty() || param.value.is_empty() {
+                    None
+                } else {
+                    Some(format!(
+                        "{}={}",
+                        urlencoding::encode(&param.key),
+                        urlencoding::encode(&param.value)
+                    ))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+
+        if !query_string.is_empty() {
+            if url.contains('?') {
+                url.push('&');
+            } else {
+                url.push('?');
+            }
+            url.push_str(&query_string);
+        }
+
+        url
     }
 }
 
@@ -336,6 +333,25 @@ impl ResponseFormat {
             ResponseFormat::Unknown => "text",
         }
     }
+
+    /// Format content with pretty printing if it's JSON
+    pub fn format_content(&self, content: &str) -> String {
+        match self {
+            ResponseFormat::Json => {
+                // Try to parse as JSON and pretty print
+                match serde_json::from_str::<serde_json::Value>(content) {
+                    Ok(value) => {
+                        serde_json::to_string_pretty(&value).unwrap_or_else(|_| content.to_string())
+                    }
+                    Err(_) => {
+                        // If parsing fails, return the original content
+                        content.to_string()
+                    }
+                }
+            }
+            _ => content.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -379,5 +395,34 @@ mod tests {
             ResponseFormat::detect_from_content(json_content, &headers),
             ResponseFormat::Json
         );
+    }
+
+    #[test]
+    fn test_json_formatting() {
+        let format = ResponseFormat::Json;
+
+        // Test with valid JSON
+        let compact_json = r#"{"name":"John","age":30,"city":"New York"}"#;
+        let expected_pretty = r#"{
+  "name": "John",
+  "age": 30,
+  "city": "New York"
+}"#;
+        assert_eq!(format.format_content(compact_json), expected_pretty);
+
+        // Test with invalid JSON - should return original
+        let invalid_json = r#"{"name":"John","age":30,"city":"New York""#;
+        assert_eq!(format.format_content(invalid_json), invalid_json);
+    }
+
+    #[test]
+    fn test_non_json_formatting() {
+        let format = ResponseFormat::PlainText;
+        let text_content = "Just some plain text";
+        assert_eq!(format.format_content(text_content), text_content);
+
+        let format = ResponseFormat::Xml;
+        let xml_content = "<root><item>value</item></root>";
+        assert_eq!(format.format_content(xml_content), xml_content);
     }
 }

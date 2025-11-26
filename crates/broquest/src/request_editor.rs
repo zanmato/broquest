@@ -699,10 +699,13 @@ impl RequestEditor {
 
                         tracing::info!("Response format detected: {:?}, {}", format, language);
 
-                        // Update the response input with the correct language and content
+                        // Format content (pretty print JSON if applicable)
+                        let formatted_content = format.format_content(&response_data.body);
+
+                        // Update the response input with the correct language and formatted content
                         response_input.update(cx, |input_state, cx| {
                             input_state.set_highlighter(language, cx);
-                            input_state.set_value(&response_data.body, window, cx);
+                            input_state.set_value(&formatted_content, window, cx);
                             cx.notify();
                         });
 
@@ -805,6 +808,7 @@ impl RequestEditor {
 
     fn render_request_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         TabBar::new("request-tabs")
+            .left(px(-1.)) // Avoid double border with container
             .selected_index(match self.active_tab {
                 RequestTab::Query => 0,
                 RequestTab::Body => 1,
@@ -946,6 +950,7 @@ impl RequestEditor {
                     .child(
                         // Response tabs
                         TabBar::new("response-tabs")
+                            .left(px(-1.)) // Avoid double border with container
                             .selected_index(match self.active_response_tab {
                                 ResponseTab::Response => 0,
                                 ResponseTab::Raw => 1,
