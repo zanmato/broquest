@@ -242,18 +242,11 @@ impl CollectionsPanel {
     fn delete_collection(
         &mut self,
         collection_id: i64,
+        collection_path: &str,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         tracing::info!("Deleting collection with collection_id: {}", collection_id);
-
-        // Get the collection name for logging before removing it
-        let collection_name = self
-            .collections
-            .iter()
-            .find(|c| c.id == Some(collection_id))
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "Unknown".to_string());
 
         // Remove from local collections vector first
         self.collections
@@ -268,15 +261,13 @@ impl CollectionsPanel {
 
         // Remove the collection from AppDatabase
         let db = AppDatabase::global(cx).clone();
-        let collection_id_clone = collection_id;
-        let collection_name_clone = collection_name.clone();
-
+        let collection_path = collection_path.to_string();
         cx.spawn(async move |_, _| {
-            match db.delete_collection(collection_id_clone).await {
+            match db.delete_collection(&collection_path).await {
                 Ok(_) => {
                     tracing::info!(
                         "Successfully deleted collection '{}' from database",
-                        collection_name_clone
+                        collection_path
                     );
                 }
                 Err(e) => {
@@ -365,12 +356,13 @@ impl CollectionsPanel {
                         let collection_name_open = collection_name.clone();
                         let collection_name_new = collection_name.clone();
                         let collection_name_delete = collection_name.clone();
-                        let collection_path = metadata.collection_path.clone();
                         let weak_panel_clone = weak_panel.clone();
                         let weak_panel_new = weak_panel.clone();
                         let weak_panel_delete = weak_panel.clone();
                         let collection_id = metadata.collection_id;
-                        this.item(PopupMenuItem::new("Open Collection").on_click(
+
+                        this.item(PopupMenuItem::new("Open Collection").on_click({
+                            let collection_path = metadata.collection_path.clone();
                             move |_, _window, cx| {
                                 tracing::info!("Open collection: {}", collection_name_open);
                                 if let Some(ref collection_path) = collection_path {
@@ -381,8 +373,8 @@ impl CollectionsPanel {
                                         });
                                     }
                                 }
-                            },
-                        ))
+                            }
+                        }))
                         .item(
                             PopupMenuItem::new("New Request").on_click(move |_, _window, cx| {
                                 tracing::info!(
@@ -400,18 +392,26 @@ impl CollectionsPanel {
                         )
                         .separator()
                         .item(
-                            PopupMenuItem::new("Remove Collection").on_click(
+                            PopupMenuItem::new("Remove Collection").on_click({
+                                let collection_path = metadata.collection_path.clone();
                                 move |_, window, cx| {
                                     tracing::info!("Remove collection: {}", collection_name_delete);
 
                                     // Call delete_collection method through the panel context
-                                    if let Some(panel) = weak_panel_delete.upgrade() {
+                                    if let Some(panel) = weak_panel_delete.upgrade()
+                                        && let Some(collection_path) = &collection_path
+                                    {
                                         panel.update(cx, |panel, cx| {
-                                            panel.delete_collection(collection_id, window, cx);
+                                            panel.delete_collection(
+                                                collection_id,
+                                                collection_path,
+                                                window,
+                                                cx,
+                                            );
                                         });
                                     }
-                                },
-                            ),
+                                }
+                            }),
                         )
                     }
                     TreeItemKind::Request => {
@@ -529,6 +529,7 @@ impl CollectionsPanel {
             .w_full()
             .px_3()
             .pl(px(12.) * depth as f32 + px(12.)) // Indent based on depth
+            .my_0p5()
             .child(
                 h_flex()
                     .id(("tree-item", ix))

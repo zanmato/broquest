@@ -207,10 +207,10 @@ impl AppDatabase {
         Ok(collections)
     }
 
-    /// Delete a collection from the database by ID
-    pub async fn delete_collection(&self, id: i64) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM collections WHERE id = ?")
-            .bind(id)
+    /// Delete a collection from the database by path
+    pub async fn delete_collection(&self, path: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM collections WHERE path = ?")
+            .bind(path)
             .execute(&self.pool)
             .await?;
         Ok(())
