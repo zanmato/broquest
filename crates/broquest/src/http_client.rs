@@ -171,6 +171,7 @@ impl HttpClientService {
             size: Some(response_size),
             headers: response_headers,
             body: response_body,
+            url: Some(url),
         };
 
         // Execute post-response script if present

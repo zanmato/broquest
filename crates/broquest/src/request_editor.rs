@@ -229,6 +229,7 @@ pub struct ResponseData {
     pub size: Option<usize>,
     pub headers: Vec<KeyValuePair>,
     pub body: String,
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -727,6 +728,7 @@ impl RequestEditor {
                             size: Some(error.to_string().len()),
                             headers: vec![],
                             body: format!("Request failed: {}", error),
+                            url: None, // No URL available for error responses
                         };
 
                         // Update the RequestEditor's response_data for status bar and reset loading state
@@ -1039,10 +1041,15 @@ impl ResponseData {
     pub fn format_raw_response(self) -> String {
         let mut raw_output = String::new();
 
+        // Add request URL at the top
+        if let Some(url) = self.url {
+            raw_output.push_str(&format!("{}\n", url));
+        }
+
         // Add status line
         if let Some(status_code) = self.status_code {
             let status_text = self.status_text.as_deref().unwrap_or("Unknown");
-            raw_output.push_str(&format!("HTTP/1.1 {} {}\n", status_code, status_text));
+            raw_output.push_str(&format!("{} {}\n", status_code, status_text));
         }
 
         // Add headers
