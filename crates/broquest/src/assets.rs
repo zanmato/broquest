@@ -7,7 +7,6 @@ use std::borrow::Cow;
 #[folder = "$CARGO_MANIFEST_DIR/assets"]
 #[include = "icons/**/*.svg"]
 #[include = "img/**/*.svg"]
-#[include = "themes/**/*.json"]
 pub struct Assets;
 
 impl AssetSource for Assets {

@@ -17,15 +17,16 @@ mod query_parameter_editor;
 mod request_editor;
 mod script_editor;
 mod script_engine;
+mod themes_manager;
 mod variable_store;
 
 use assets::Assets;
 use gpui::{AppContext, Application, SharedString, WindowBounds, WindowOptions, px, size};
 use gpui_component::{Theme, ThemeRegistry};
-use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 use collection_manager::CollectionManager;
+use themes_manager::ThemesManager;
 
 fn main() {
     let app = Application::new().with_assets(Assets);
@@ -41,6 +42,13 @@ fn main() {
 
         gpui_component::init(cx);
         gpui_tokio::init(cx);
+
+        // Initialize themes by copying embedded themes to user directory
+        if let Err(e) = ThemesManager::init() {
+            tracing::error!("Failed to initialize themes: {}", e);
+        } else {
+            tracing::info!("Themes initialized successfully");
+        }
 
         // Initialize app database
         let db = async_std::task::block_on(async {
@@ -67,12 +75,14 @@ fn main() {
             None => SharedString::from("Catppuccin Macchiato"),
         };
 
-        if let Err(err) = ThemeRegistry::watch_dir(PathBuf::from("./themes"), cx, move |cx| {
-            if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
-                Theme::global_mut(cx).apply_config(&theme);
-                tracing::info!("Applying theme {}", theme_name);
-            }
-        }) {
+        if let Err(err) =
+            ThemeRegistry::watch_dir(ThemesManager::themes_directory(), cx, move |cx| {
+                if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
+                    Theme::global_mut(cx).apply_config(&theme);
+                    tracing::info!("Applying theme {}", theme_name);
+                }
+            })
+        {
             tracing::error!("Failed to watch themes directory: {}", err);
         }
 
