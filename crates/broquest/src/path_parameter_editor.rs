@@ -1,4 +1,4 @@
-use gpui::{App, Context, Entity, Window, div, prelude::*};
+use gpui::{App, Context, Entity, Window, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
@@ -226,6 +226,7 @@ impl PathParamEditor {
                     } else {
                         cx.theme().red
                     })
+                    .w(px(24.))
                     .label(if row.enabled { "✓" } else { "○" })
                     .on_click(cx.listener({
                         let id = row.id;
@@ -284,7 +285,7 @@ impl Render for PathParamEditor {
             )
             .child(
                 div().flex_1().child(
-                    v_flex().gap_1().children(
+                    v_flex().children(
                         self.rows
                             .iter()
                             .map(|row| div().child(self.render_parameter_row(row, cx))),

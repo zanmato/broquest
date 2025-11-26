@@ -1,4 +1,4 @@
-use gpui::{App, Context, Entity, Window, div, prelude::*};
+use gpui::{App, Context, Entity, Window, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
@@ -399,6 +399,7 @@ impl EnvironmentEditor {
                     } else {
                         cx.theme().red
                     })
+                    .w(px(24.))
                     .label(if var.enabled { "✓" } else { "○" })
                     .on_click(cx.listener({
                         let id = var.id;
@@ -468,6 +469,7 @@ impl EnvironmentEditor {
                     } else {
                         cx.theme().red
                     })
+                    .w(px(24.))
                     .label(if secret.enabled { "✓" } else { "○" })
                     .on_click(cx.listener({
                         let id = secret.id;
@@ -492,6 +494,7 @@ impl EnvironmentEditor {
 
     fn render_environment_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         TabBar::new("environment-tabs")
+            .left(px(-1.)) // Avoid double border
             .selected_index(self.active_environment_idx)
             .on_click(cx.listener(|this, ix: &usize, _window, cx| {
                 this.set_active_environment(*ix, cx);

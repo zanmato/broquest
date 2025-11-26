@@ -1,4 +1,4 @@
-use gpui::{App, Context, Entity, Window, div, prelude::*};
+use gpui::{App, Context, Entity, Window, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, StyledExt, WindowExt,
     button::Button,
@@ -163,6 +163,7 @@ impl CollectionEditor {
 
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         TabBar::new("collection-tabs")
+            .left(px(-1.)) // Avoid double border
             .selected_index(self.active_tab)
             .on_click(cx.listener(|this, _ix: &usize, _window, cx| {
                 this.set_active_tab(*_ix, cx);
@@ -174,7 +175,7 @@ impl CollectionEditor {
     }
 
     fn render_tab_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div().flex_1().child(match self.active_tab {
+        div().flex_1().size_full().child(match self.active_tab {
             0 => {
                 let content = self.render_collection_tab(cx);
                 div().child(content)
@@ -301,6 +302,7 @@ impl Render for CollectionEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .flex_1()
+            .size_full()
             .child(
                 // Tab bar
                 self.render_tab_bar(cx),
@@ -313,7 +315,7 @@ impl Render for CollectionEditor {
                 // Save button at the bottom
                 h_flex()
                     .gap_2()
-                    .p_4()
+                    .p_3()
                     .border_t_1()
                     .border_color(cx.theme().border)
                     .justify_end()

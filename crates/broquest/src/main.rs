@@ -12,7 +12,6 @@ mod environment_resolver;
 mod header_editor;
 mod http_client;
 mod icon;
-// mod open_collection_dialog; // Temporarily commented out
 mod path_parameter_editor;
 mod query_parameter_editor;
 mod request_editor;

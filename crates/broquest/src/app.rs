@@ -14,7 +14,7 @@ use crate::{
     collection_manager::CollectionManager,
     collections_panel::CollectionsPanel,
     editor_panel::EditorPanel,
-    request_editor::{HttpMethod, RequestData}, // open_collection_dialog::OpenCollectionDialog, // Temporarily commented out
+    request_editor::{HttpMethod, RequestData},
 };
 
 actions!(
@@ -207,7 +207,7 @@ impl BroquestApp {
         tracing::info!("Opening new collection tab");
         // Create an empty collection and open it in a new tab
         let collection_data = crate::collection_types::create_empty_collection();
-        let collection_path = "".to_string(); // Empty path - user will set it
+        let collection_path = "".to_string();
 
         // Directly create the new collection tab
         self.editor_panel.update(cx, |editor_panel, cx| {
@@ -227,7 +227,6 @@ impl BroquestApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // For now, just use a simple path prompt until the dialog component is fixed
         let path = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: false,
             directories: true,
