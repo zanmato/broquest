@@ -118,7 +118,7 @@ fn main() {
             tabbing_identifier: None,
             display_id: None,
             window_background: gpui::WindowBackgroundAppearance::Opaque,
-            app_id: Some("com.broquest.client".into()),
+            app_id: Some("broquest".into()),
         };
 
         cx.spawn(async move |cx| {

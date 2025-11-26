@@ -4,12 +4,12 @@ resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+edition = "2024"
+authors = ["Andreas Johansson <z@zanmato.se>"]
 license = "MIT"
-homepage = "https://github.com/yourusername/broquest"
-repository = "https://github.com/yourusername/broquest"
-description = "Rust implementation of the Bruno language format"
+homepage = "https://github.com/zanmato/broquest"
+repository = "https://github.com/zanmato/broquest"
+description = "Desktop API Client"
 
 [workspace.dependencies]
 # Core GPUI dependencies

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Broquest
+Comment=API Client
+Exec=broquest %U
+Icon=broquest
+Terminal=false
+Categories=Development;Utility;
+MimeType=text/plain;
+StartupNotify=true
+StartupWMClass=broquest
+Keywords=API;HTTP;Testing;Development;
