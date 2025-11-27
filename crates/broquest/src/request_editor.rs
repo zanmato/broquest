@@ -267,6 +267,7 @@ pub struct RequestEditor {
     query_param_editor: Entity<QueryParamEditor>,
     header_editor: Entity<HeaderEditor>,
     script_editor: Entity<ScriptEditor>,
+    send_keystroke: KeybindingKeystroke,
 }
 
 impl RequestEditor {
@@ -358,6 +359,7 @@ impl RequestEditor {
             query_param_editor,
             header_editor,
             script_editor,
+            send_keystroke: KeybindingKeystroke::from_keystroke(Keystroke::parse("enter").unwrap()),
         }
     }
 
@@ -789,12 +791,19 @@ impl RequestEditor {
                     .child(Select::new(&self.environment_select)),
             )
             .child(
-                div().flex_1().child(
-                    Input::new(&self.url_input)
-                        .cleanable(true)
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .text_sm(),
-                ),
+                div()
+                    .flex_1()
+                    .on_key_down(cx.listener(|this, evt: &gpui::KeyDownEvent, window, cx| {
+                        if evt.keystroke.should_match(&this.send_keystroke) {
+                            this.send_request(window, cx);
+                        }
+                    }))
+                    .child(
+                        Input::new(&self.url_input)
+                            .cleanable(true)
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_sm(),
+                    ),
             )
             .child(
                 Button::new("send-request")
