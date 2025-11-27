@@ -1,4 +1,9 @@
-# Broquest
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/image/logo-light.png">
+  <img alt="Broquest" src="docs/image/logo-light.png">
+</picture>
+<hr><br>
 
 A modern, native desktop API client built with [GPUI](https://www.gpui.rs) and [gpui-component](https://github.com/longbridge/gpui-component), offering fast performance and a clean interface for API development and testing.
 
