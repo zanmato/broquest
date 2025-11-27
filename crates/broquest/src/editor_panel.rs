@@ -7,6 +7,8 @@ use gpui_component::{
     ActiveTheme, Icon, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
+    input::InputEvent,
+    select::SelectEvent,
     tab::{Tab, TabBar},
 };
 
@@ -124,6 +126,58 @@ impl EditorPanel {
             collection_id,
         };
 
+        // Set up subscriptions to update tab title when request name or method changes
+        let name_input = request_editor.read(cx).name_input().clone();
+        let name_input_for_closure = name_input.clone();
+        let name_subscription = cx.subscribe_in(&name_input, window, {
+            move |editor_panel: &mut Self, _input_state, event: &InputEvent, _window, cx| {
+                match event {
+                    InputEvent::Change => {
+                        // Find the request tab that corresponds to this request editor
+                        for tab in editor_panel.tabs.iter_mut() {
+                            if let TabType::Request(request_tab) = tab {
+                                // Check if this is the same request editor by comparing the name_input entity
+                                if request_tab.request_editor.read(cx).name_input().clone() == name_input_for_closure {
+                                    let current_name = request_tab.request_editor.read(cx).name_input().read(cx).value().to_string();
+
+                                    if request_tab.title != current_name {
+                                        request_tab.title = current_name;
+                                        cx.notify();
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+        self._subscriptions.push(name_subscription);
+
+        let method_select = request_editor.read(cx).method_select().clone();
+        let method_select_for_closure = method_select.clone();
+        let method_subscription = cx.subscribe_in(&method_select, window, {
+            move |editor_panel: &mut Self, _select_state, _event: &SelectEvent<Vec<HttpMethod>>, _window, cx| {
+                // Find the request tab that corresponds to this request editor
+                for tab in editor_panel.tabs.iter_mut() {
+                    if let TabType::Request(request_tab) = tab {
+                        // Check if this is the same request editor by comparing the method_select entity
+                        if request_tab.request_editor.read(cx).method_select().clone() == method_select_for_closure {
+                            let current_method = request_tab.request_editor.read(cx).method_select().read(cx).selected_value().copied().unwrap_or(HttpMethod::Get);
+
+                            if request_tab.method != current_method {
+                                request_tab.method = current_method;
+                                cx.notify();
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        self._subscriptions.push(method_subscription);
+
         self.tabs.push(TabType::Request(request_tab));
         self.active_tab_ix = tab_id;
 
@@ -191,6 +245,40 @@ impl EditorPanel {
             collection_editor: collection_editor.clone(),
             collection_id,
         };
+
+        // Set up subscription to update tab title when collection name changes
+        let name_input = collection_editor.read(cx).name_input().clone();
+        let name_input_for_closure = name_input.clone();
+        let subscription = cx.subscribe_in(&name_input, window, {
+            move |editor_panel: &mut Self, _input_state, event: &InputEvent, _window, cx| {
+                match event {
+                    InputEvent::Change => {
+                        // Find the collection tab that corresponds to this collection editor
+                        for tab in editor_panel.tabs.iter_mut() {
+                            if let TabType::Collection(collection_tab) = tab {
+                                // Check if this is the same collection editor by comparing the name_input entity
+                                if collection_tab.collection_editor.read(cx).name_input().clone() == name_input_for_closure {
+                                    let current_name = collection_tab.collection_editor.read(cx).name_input().read(cx).value().to_string();
+                                    let tab_name = if current_name.is_empty() {
+                                        "New Collection".to_string()
+                                    } else {
+                                        current_name
+                                    };
+
+                                    if collection_tab.title != tab_name {
+                                        collection_tab.title = tab_name;
+                                        cx.notify();
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+        self._subscriptions.push(subscription);
 
         self.tabs.push(TabType::Collection(collection_tab));
         self.active_tab_ix = tab_id;

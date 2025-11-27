@@ -610,6 +610,7 @@ impl Render for CollectionsPanel {
             .size_full()
             .gap_2()
             .bg(cx.theme().sidebar_primary_foreground)
+            .px(px(1.))
             .child(self.render_header_section(cx))
             .child(self.render_collections_tree(cx))
     }

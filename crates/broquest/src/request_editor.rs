@@ -1,4 +1,8 @@
-use gpui::{SharedString, *};
+use gpui::{
+    App, AppContext, BorrowAppContext as _, Context, Entity, EventEmitter, FocusHandle,
+    InteractiveElement as _, IntoElement, KeybindingKeystroke, Keystroke, ParentElement as _,
+    Render, SharedString, Styled as _, Window, div, prelude::FluentBuilder, px,
+};
 use gpui_component::{
     ActiveTheme, IndexPath, Sizable, StyledExt, WindowExt,
     button::Button,
@@ -622,21 +626,33 @@ impl RequestEditor {
             let env_resolver = crate::environment_resolver::EnvironmentResolver::new();
             let env_name = selected_env.name.clone();
             let selected_env_clone = selected_env.clone();
+            let collection_manager = CollectionManager::global(cx);
 
-            match env_resolver.load_environment_data("", &env_name, &[selected_env_clone], cx) {
-                Ok((vars, secs)) => {
-                    tracing::info!(
-                        "Loaded {} variables and {} secrets for environment '{}'",
-                        vars.len(),
-                        secs.len(),
-                        env_name
-                    );
-                    (Some(vars), Some(secs))
+            if let Some(collection) =
+                collection_manager.get_collection_by_id(self.collection_id.unwrap_or(0))
+            {
+                match env_resolver.load_environment_data(
+                    &collection.data.name,
+                    &env_name,
+                    &[selected_env_clone],
+                    cx,
+                ) {
+                    Ok((vars, secs)) => {
+                        tracing::info!(
+                            "Loaded {} variables and {} secrets for environment '{}'",
+                            vars.len(),
+                            secs.len(),
+                            env_name
+                        );
+                        (Some(vars), Some(secs))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load environment data: {}", e);
+                        (None, None)
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("Failed to load environment data: {}", e);
-                    (None, None)
-                }
+            } else {
+                (None, None)
             }
         } else {
             (None, None)
@@ -674,7 +690,6 @@ impl RequestEditor {
                         tracing::info!("Environment variables modified by scripts: {:?}", dirty_vars.keys().collect::<Vec<_>>());
                         tracing::info!("Dirty variables that need to be persisted: {:?}", dirty_vars);
                         if let (Some(collection_id), Some(selected_env)) = (collection_id, selected_env_for_later) {
-                            tracing::info!("Collection ID: {}, Environment: {}", collection_id, selected_env.name);
                             // Update the CollectionManager with dirty variables
                             match window.update_global(|collection_manager: &mut CollectionManager, _window, cx| {
                                 collection_manager.update_environment_variables(collection_id, selected_env.name.as_str(), &dirty_vars, cx)
@@ -928,18 +943,20 @@ impl RequestEditor {
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let status_text = if let Some(status) = self.response_data.status_code {
-            format!(
-                "{} {}{}",
+            let text = format!(
+                "{} {}",
                 status,
-                self.response_data.status_text.as_deref().unwrap_or(""),
-                if let Some(latency) = self.response_data.latency {
-                    format!(" • {}ms", latency.as_millis())
-                } else {
-                    String::new()
-                }
-            )
+                self.response_data.status_text.as_deref().unwrap_or("")
+            );
+            Some((status, text))
         } else {
-            "".to_string()
+            None
+        };
+
+        let latency_text = if let Some(latency) = self.response_data.latency {
+            format!("{}ms", latency.as_millis())
+        } else {
+            String::new()
         };
 
         let size_text = if let Some(size) = self.response_data.size {
@@ -960,7 +977,20 @@ impl RequestEditor {
             .bg(cx.theme().background)
             .text_sm()
             .text_color(cx.theme().muted_foreground)
-            .child(status_text)
+            .when_some(status_text, |this, (status, text)| {
+                let text_color = match status {
+                    100..=199 => cx.theme().blue,   // Informational responses
+                    200..=299 => cx.theme().green,  // Successful responses
+                    300..=399 => cx.theme().blue,   // Redirection messages
+                    400..=499 => cx.theme().yellow, // Client error responses
+                    500..=599 => cx.theme().red,    // Server error responses
+                    _ => cx.theme().foreground,     // Default for unknown ranges
+                };
+                this.child(div().text_color(text_color).child(text))
+            })
+            .when(!latency_text.is_empty(), |this| {
+                this.child(div().child(format!(" • {}", latency_text)))
+            })
             .child(size_text)
             .child(div().flex_1())
             .child(
@@ -1049,6 +1079,16 @@ impl RequestEditor {
                         }),
                     ),
             )
+    }
+
+    /// Get the method select entity for external subscriptions
+    pub fn method_select(&self) -> &Entity<SelectState<Vec<HttpMethod>>> {
+        &self.method_select
+    }
+
+    /// Get the name input entity for external subscriptions
+    pub fn name_input(&self) -> &Entity<InputState> {
+        &self.name_input
     }
 }
 

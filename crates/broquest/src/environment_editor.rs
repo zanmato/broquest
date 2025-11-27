@@ -3,7 +3,7 @@ use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -33,6 +33,7 @@ pub struct EnvironmentData {
     #[allow(dead_code)]
     pub id: usize,
     pub name: String,
+    pub name_input: Entity<InputState>,
     pub variables: Vec<VariableRow>,
     pub secrets: Vec<SecretRow>,
 }
@@ -42,6 +43,7 @@ pub struct EnvironmentEditor {
     active_environment_idx: usize,
     next_id: usize,
     collection_name: String,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
 impl EnvironmentEditor {
@@ -51,6 +53,7 @@ impl EnvironmentEditor {
             active_environment_idx: 0,
             next_id: 0,
             collection_name: collection_name.to_string(),
+            _subscriptions: Vec::new(),
         }
     }
 
@@ -62,6 +65,7 @@ impl EnvironmentEditor {
         cx: &mut Context<Self>,
     ) {
         self.environments.clear();
+        self._subscriptions.clear();
 
         for env_toml in environment_tomls {
             let mut variables = Vec::new();
@@ -84,15 +88,30 @@ impl EnvironmentEditor {
                 }
             }
 
+            let name_input = cx.new(|cx| InputState::new(window, cx).default_value(&env_toml.name));
             let environment = EnvironmentData {
                 id: self.next_id,
                 name: env_toml.name.clone(),
+                name_input,
                 variables,
                 secrets,
             };
 
             self.environments.push(environment);
             self.next_id += 1;
+        }
+
+        // Set up subscriptions for environment name input changes
+        for (env_idx, env) in self.environments.iter().enumerate() {
+            let subscription = cx.subscribe_in(&env.name_input, window, {
+                move |this: &mut Self, _input_state, event: &InputEvent, _window, cx| match event {
+                    InputEvent::Change => {
+                        this.update_environment_name(env_idx, cx);
+                    }
+                    _ => {}
+                }
+            });
+            self._subscriptions.push(subscription);
         }
 
         if self.environments.is_empty() {
@@ -104,17 +123,32 @@ impl EnvironmentEditor {
     }
 
     /// Add a new environment
-    pub fn add_environment(&mut self, name: String, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn add_environment(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let name_input = cx.new(|cx| InputState::new(window, cx).default_value(&name));
         let environment = EnvironmentData {
             id: self.next_id,
-            name,
+            name: name.clone(),
+            name_input,
             variables: Vec::new(),
             secrets: Vec::new(),
         };
 
+        // Set up subscription for the new environment name input
+        let env_idx = self.environments.len();
+        let subscription = cx.subscribe_in(&environment.name_input, window, {
+            move |this: &mut Self, _input_state, event: &InputEvent, _window, cx| match event {
+                InputEvent::Change => {
+                    this.update_environment_name(env_idx, cx);
+                }
+                _ => {}
+            }
+        });
+        self._subscriptions.push(subscription);
+
         self.environments.push(environment);
         self.next_id += 1;
-        self.active_environment_idx = self.environments.len() - 1;
+        self.active_environment_idx = env_idx;
+
         cx.notify();
     }
 
@@ -143,6 +177,15 @@ impl EnvironmentEditor {
     pub fn set_active_environment(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.environments.len() {
             self.active_environment_idx = index;
+            cx.notify();
+        }
+    }
+
+    /// Update environment name when input changes
+    pub fn update_environment_name(&mut self, env_index: usize, cx: &mut Context<Self>) {
+        if let Some(env) = self.environments.get_mut(env_index) {
+            let new_name = env.name_input.read(cx).value().to_string();
+            env.name = new_name;
             cx.notify();
         }
     }
@@ -199,8 +242,9 @@ impl EnvironmentEditor {
                 }
             }
 
+            let current_name = env_data.name_input.read(cx).value().to_string();
             let env_toml = crate::collection_types::EnvironmentToml {
-                name: env_data.name.clone(),
+                name: current_name,
                 variables,
             };
 
@@ -213,6 +257,7 @@ impl EnvironmentEditor {
     /// Save secrets to secure storage
     pub fn save_secrets(&self, cx: &App) -> Result<(), Box<dyn std::error::Error>> {
         for env_data in &self.environments {
+            let env_name = env_data.name_input.read(cx).value().to_string();
             for secret in &env_data.secrets {
                 if secret.enabled {
                     let key = secret.key_input.read(cx).value().to_string();
@@ -221,7 +266,7 @@ impl EnvironmentEditor {
                     if !key.is_empty() && !value.is_empty() {
                         EnvironmentVariable::write_credential(
                             &self.collection_name,
-                            &env_data.name,
+                            &env_name,
                             &key,
                             &value,
                             cx,
@@ -500,7 +545,8 @@ impl EnvironmentEditor {
                 this.set_active_environment(*ix, cx);
             }))
             .children(self.environments.iter().enumerate().map(|(env_idx, env)| {
-                Tab::new().label(&env.name).suffix(
+                let current_name = env.name_input.read(cx).value().to_string();
+                Tab::new().label(current_name).suffix(
                     Button::new(("delete_env", env_idx))
                         .small()
                         .ghost()
@@ -532,6 +578,26 @@ impl Render for EnvironmentEditor {
                     div().flex_1().child(
                         v_flex()
                             .gap_6()
+                            // Environment name section
+                            .child(
+                                v_flex()
+                                    .gap_2()
+                                    .px_3()
+                                    .pt_3()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_medium()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Name"),
+                                    )
+                                    .child(
+                                        Input::new(&env.name_input)
+                                            .small()
+                                            .bordered(true)
+                                            .text_sm(),
+                                    ),
+                            )
                             // Variables section
                             .child(
                                 v_flex().children([

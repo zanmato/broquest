@@ -44,7 +44,7 @@ impl EnvironmentResolver {
         collection_name: &str,
         environment_name: &str,
         environments: &[EnvironmentToml],
-        cx: &mut gpui::App,
+        cx: &gpui::App,
     ) -> Result<(HashMap<String, String>, HashMap<String, String>), Box<dyn std::error::Error>>
     {
         let mut variables = HashMap::new();

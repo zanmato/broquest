@@ -296,6 +296,11 @@ impl CollectionEditor {
         })
         .detach();
     }
+
+    /// Get the name input entity for external subscriptions
+    pub fn name_input(&self) -> &Entity<InputState> {
+        &self.name_input
+    }
 }
 
 impl Render for CollectionEditor {
