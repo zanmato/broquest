@@ -1,0 +1,98 @@
+============================
+Simple query parameter
+============================
+
+/users?name=john
+
+---
+(source_file
+  (url_line
+    (url_components
+      (path
+        "/"
+        (path_segment))
+      (query_string
+        (query_param
+          (key)
+          (value))))))
+
+
+============================
+Multiple query parameters
+============================
+
+/search?q=tree&sort=date&filter=all
+
+---
+(source_file
+  (url_line
+    (url_components
+      (path
+        "/"
+        (path_segment))
+      (query_string
+        (query_param
+          (key)
+          (value))
+        (query_param
+          (key)
+          (value))
+        (query_param
+          (key)
+          (value))))))
+
+
+============================
+Variable in query value
+============================
+
+/users?filter={{status}}
+
+---
+(source_file
+  (url_line
+    (url_components
+      (path
+        "/"
+        (path_segment))
+      (query_string
+        (query_param
+          (key)
+          (variable))))))
+
+
+============================
+Variable in query key
+============================
+
+/users?{{param}}=value
+
+---
+(source_file
+  (url_line
+    (url_components
+      (path
+        "/"
+        (path_segment))
+      (query_string
+        (query_param
+          (variable)
+          (value))))))
+
+
+============================
+Query parameter without value
+============================
+
+/users?debug
+
+---
+(source_file
+  (url_line
+    (url_components
+      (path
+        "/"
+        (path_segment))
+      (query_string
+        (query_param
+          (key)))))

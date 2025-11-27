@@ -1,0 +1,124 @@
+============================
+Basic URL
+============================
+
+https://example.com/path
+
+---
+(source_file
+  (url_line
+    (protocol)
+    (domain_and_port
+      (domain))
+    (url_components
+      (path
+        "/"
+        (path_segment)
+        "/"
+        (path_segment)))))
+
+
+============================
+URL with port
+============================
+
+http://localhost:8080/api
+
+---
+(source_file
+  (url_line
+    (protocol)
+    (domain_and_port
+      (hostname)
+      (port))
+    (url_components
+      (path
+        "/"
+        (path_segment)))))
+
+
+============================
+Variable at start
+============================
+
+{{baseUrl}}/api/users
+
+---
+(source_file
+  (url_line
+    (variable)
+    (url_components
+      (path
+        "/"
+        (path_segment)
+        "/"
+        (path_segment)))))
+
+
+============================
+Path parameters
+============================
+
+/users/:id/posts/:postId
+
+---
+(source_file
+  (url_line
+    (url_components
+      (path
+        "/"
+        (path_segment)
+        "/"
+        (path_param)
+        "/"
+        (path_segment)
+        "/"
+        (path_param)))))
+
+
+============================
+Path parameters with hyphens
+============================
+
+/api/users/:user-id/posts/:post-id/comments
+
+---
+(source_file
+  (url_line
+    (url_components
+      (path
+        "/"
+        (path_segment)
+        "/"
+        (path_segment)
+        "/"
+        (path_param)
+        "/"
+        (path_segment)
+        "/"
+        (path_param)
+        "/"
+        (path_segment)))))
+
+
+==================
+Multiple path segments
+==================
+
+/api/v1/users/posts/comments
+
+---
+(source_file
+  (url_line
+    (url_components
+      (path
+        "/"
+        (path_segment)
+        "/"
+        (path_segment)
+        "/"
+        (path_segment)
+        "/"
+        (path_segment)
+        "/"
+        (path_segment)))))

@@ -1,0 +1,66 @@
+============================
+Variable only
+============================
+
+{{variable}}
+
+---
+(source_file
+  (url_line
+    (variable)
+    (url_components
+      (path))))
+
+
+============================
+Variable in path
+============================
+
+/path/{{variable}}/other
+
+---
+(source_file
+  (url_line
+    (url_components
+      (path
+        "/"
+        (path_segment)
+        "/"
+        (variable)
+        "/"
+        (path_segment)))))
+
+
+============================
+Multiple variables
+============================
+
+{{api}}/{{version}}/{{resource}}
+
+---
+(source_file
+  (url_line
+    (variable)
+    (url_components
+      (path
+        "/"
+        (variable)
+        "/"
+        (variable))))))
+
+
+============================
+Variable with domain
+============================
+
+https://{{host}}/path
+
+---
+(source_file
+  (url_line
+    (protocol)
+    (variable)
+    (url_components
+      (path
+        "/"
+        (path_segment)))))

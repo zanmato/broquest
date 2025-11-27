@@ -10,6 +10,7 @@ mod editor_panel;
 mod environment_editor;
 mod environment_resolver;
 mod header_editor;
+mod highlighting;
 mod http_client;
 mod icon;
 mod path_parameter_editor;
@@ -27,6 +28,7 @@ use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _
 
 use collection_manager::CollectionManager;
 use themes_manager::ThemesManager;
+use highlighting::register_url_highlighting;
 
 fn main() {
     let app = Application::new().with_assets(Assets);
@@ -42,6 +44,9 @@ fn main() {
 
         gpui_component::init(cx);
         gpui_tokio::init(cx);
+
+        // Register URL syntax highlighting
+        register_url_highlighting(cx);
 
         // Initialize themes by copying embedded themes to user directory
         if let Err(e) = ThemesManager::init() {

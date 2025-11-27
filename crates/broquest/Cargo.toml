@@ -32,3 +32,6 @@ thiserror = { workspace = true }
 # Script execution dependencies
 rquickjs = { workspace = true }
 base64 = { workspace = true }
+
+# URL parsing and highlighting
+tree-sitter-url = { path = "../tree-sitter-url" }

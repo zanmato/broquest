@@ -807,6 +807,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
+ "tree-sitter-url",
  "urlencoding",
  "zed-reqwest",
 ]
@@ -2461,9 +2462,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-component"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "637027625747c194c8bbcbc12965e5eac867c3ac38f20c3090c76cdcc0653214"
+version = "0.5.0-preview0"
+source = "git+https://github.com/zanmato/gpui-component/?branch=single-line-code-editor#126a3cdcb4720918689281510084a4fd1b9b88e1"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2528,9 +2528,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-component-macros"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "440ef68055e212f31bb9a6662aa1e7aa52087c857b7f8db737b812d240582aa2"
+version = "0.5.0-preview0"
+source = "git+https://github.com/zanmato/gpui-component/?branch=single-line-code-editor#126a3cdcb4720918689281510084a4fd1b9b88e1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7215,6 +7214,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c5f76ed8d947a75cc446d5fccd8b602ebf0cde64ccf2ffa434d873d7a575eff"
 dependencies = [
  "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-url"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "tree-sitter",
  "tree-sitter-language",
 ]
 

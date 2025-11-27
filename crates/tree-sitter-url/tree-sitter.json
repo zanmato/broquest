@@ -1,0 +1,39 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "url",
+      "camelcase": "Url",
+      "title": "Url",
+      "scope": "source.url",
+      "file-types": [
+        "url"
+      ],
+      "injection-regex": "^url$",
+      "class-name": "TreeSitterUrl"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Url grammar for tree-sitter",
+    "authors": [
+      {
+        "name": "Andreas",
+        "email": "z@zanmato.se"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/zanmato/broquest/crates/tree-sitter-url"
+    }
+  },
+  "bindings": {
+    "c": false,
+    "go": false,
+    "node": false,
+    "python": false,
+    "rust": true,
+    "swift": false,
+    "zig": false
+  }
+}

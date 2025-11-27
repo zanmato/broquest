@@ -1,6 +1,6 @@
 use gpui::{SharedString, *};
 use gpui_component::{
-    ActiveTheme, IndexPath, Sizable, WindowExt,
+    ActiveTheme, IndexPath, Sizable, StyledExt, WindowExt,
     button::Button,
     h_flex,
     input::{Input, InputState},
@@ -99,7 +99,7 @@ impl HttpMethod {
     }
 
     /// Get color for HTTP method
-    pub fn get_color(&self, cx: &mut App) -> gpui::Rgba {
+    pub fn get_color(&self, cx: &App) -> gpui::Rgba {
         match self {
             HttpMethod::Get => cx.theme().green.into(),
             HttpMethod::Post => cx.theme().blue.into(),
@@ -300,7 +300,11 @@ impl RequestEditor {
             )
         });
 
-        let url_input = cx.new(|cx| InputState::new(window, cx).placeholder("Enter request URL"));
+        let url_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Enter request URL")
+                .single_line_code_editor("url".to_string())
+        });
 
         let name_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -802,10 +806,25 @@ impl RequestEditor {
     }
 
     fn render_url_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected_method = self
+            .method_select
+            .read(&cx)
+            .selected_value()
+            .unwrap_or(&HttpMethod::Get);
+
+        let method_color = selected_method.get_color(&cx);
+
         h_flex()
             .gap_3()
             .w_full()
-            .child(div().w(px(120.)).child(Select::new(&self.method_select)))
+            .child(
+                div().w(px(120.)).child(
+                    Select::new(&self.method_select)
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .font_bold()
+                        .text_color(method_color),
+                ),
+            )
             .child(
                 div()
                     .w(px(160.))
