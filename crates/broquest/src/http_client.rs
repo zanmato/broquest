@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use gpui::Global;
 use serde_json;
 use std::collections::HashMap;
@@ -9,6 +8,49 @@ use crate::environment_resolver::EnvironmentResolver;
 use crate::request_editor::{KeyValuePair, RequestData, ResponseData};
 use crate::script_engine::ScriptExecutionService;
 use crate::variable_store::VariableStore;
+
+/// Well-defined error type for HTTP requests
+#[derive(Debug, Clone)]
+pub struct HttpError {
+    pub summary: String,
+    pub details: String,
+}
+
+impl HttpError {
+    pub fn new(summary: impl Into<String>, details: impl Into<String>) -> Self {
+        Self {
+            summary: summary.into(),
+            details: details.into(),
+        }
+    }
+
+    fn from_reqwest_error(e: &reqwest::Error) -> Self {
+        if e.is_timeout() {
+            Self::new("Request timed out", format!("Request timed out - {}", e))
+        } else if e.is_connect() {
+            Self::new(
+                "Request failed: couldn't connect",
+                format!("Connection failed - {}", e),
+            )
+        } else if e.is_request() {
+            Self::new("Request failed", format!("Request setup error - {}", e))
+        } else if e.is_body() {
+            Self::new("Request failed", format!("Request body error - {}", e))
+        } else if e.is_decode() {
+            Self::new("Request failed", format!("Response decode error - {}", e))
+        } else {
+            Self::new("Request failed", e.to_string())
+        }
+    }
+}
+
+impl std::fmt::Display for HttpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.details)
+    }
+}
+
+impl std::error::Error for HttpError {}
 
 /// Global HTTP client service for sending API requests
 #[derive(Clone)]
@@ -51,7 +93,7 @@ impl HttpClientService {
         request_data: RequestData,
         variables: Option<HashMap<String, String>>,
         secrets: Option<HashMap<String, String>>,
-    ) -> Result<(ResponseData, VariableStore)> {
+    ) -> std::result::Result<(ResponseData, VariableStore), HttpError> {
         self.send_request_internal(request_data, variables, secrets)
             .await
     }
@@ -61,7 +103,7 @@ impl HttpClientService {
         mut request_data: RequestData,
         variables: Option<HashMap<String, String>>,
         secrets: Option<HashMap<String, String>>,
-    ) -> Result<(ResponseData, VariableStore)> {
+    ) -> std::result::Result<(ResponseData, VariableStore), HttpError> {
         let start_time = std::time::Instant::now();
 
         // Create variable store for this request
@@ -101,7 +143,10 @@ impl HttpClientService {
                 &variable_store,
             ) {
                 tracing::error!("Failed to execute pre-request script: {}", e);
-                return Err(anyhow!("Pre-request script execution failed: {}", e));
+                return Err(HttpError::new(
+                    "Pre-request script execution failed",
+                    format!("Pre-request script execution failed: {}", e),
+                ));
             }
         }
 
@@ -136,7 +181,7 @@ impl HttpClientService {
         let response = request
             .send()
             .await
-            .map_err(|e| anyhow!("Failed to send request: {}", e))?;
+            .map_err(|e| HttpError::from_reqwest_error(&e))?;
 
         let status = response.status();
         let status_code = status.as_u16();
@@ -156,10 +201,12 @@ impl HttpClientService {
             .collect::<Vec<_>>();
 
         // Get response body
-        let response_body = response
-            .text()
-            .await
-            .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
+        let response_body = response.text().await.map_err(|e| {
+            HttpError::new(
+                "Failed to read response body",
+                format!("Failed to read response body: {}", e),
+            )
+        })?;
 
         let latency = start_time.elapsed();
         let response_size = response_body.len();
@@ -184,7 +231,10 @@ impl HttpClientService {
                 &variable_store,
             ) {
                 tracing::error!("Failed to execute post-response script: {}", e);
-                return Err(anyhow!("Post-response script execution failed: {}", e));
+                return Err(HttpError::new(
+                    "Post-response script execution failed",
+                    format!("Post-response script execution failed: {}", e),
+                ));
             }
         }
 

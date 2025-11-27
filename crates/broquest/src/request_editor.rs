@@ -1,9 +1,10 @@
 use gpui::{SharedString, *};
 use gpui_component::{
-    ActiveTheme, IndexPath, Sizable,
+    ActiveTheme, IndexPath, Sizable, WindowExt,
     button::Button,
     h_flex,
     input::{Input, InputState},
+    notification::NotificationType,
     select::{Select, SelectEvent, SelectItem, SelectState},
     tab::{Tab, TabBar},
     v_flex,
@@ -14,7 +15,7 @@ use crate::app_events::AppEvent;
 use crate::collection_manager::CollectionManager;
 use crate::collection_types::EnvironmentToml;
 use crate::header_editor::HeaderEditor;
-use crate::http_client::ResponseFormat;
+use crate::http_client::{HttpError, ResponseFormat};
 use crate::icon::IconName;
 use crate::path_parameter_editor::PathParamEditor;
 use crate::query_parameter_editor::QueryParamEditor;
@@ -580,6 +581,14 @@ impl RequestEditor {
     }
 
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_loading {
+            window.push_notification(
+                (NotificationType::Warning, "Request is already in progress"),
+                cx,
+            );
+            return;
+        }
+
         // Set loading state
         self.is_loading = true;
         cx.notify();
@@ -641,6 +650,7 @@ impl RequestEditor {
             http_client_clone
                 .send_request(request_data_clone1, variables, secrets)
                 .await
+                .map_err(|e| anyhow::anyhow!(e))
         });
 
         // Clone necessary data before moving into async closure
@@ -720,16 +730,22 @@ impl RequestEditor {
                     })?;
                 }
                 Err(error) => {
-                    // HTTP request failed
+                    // HTTP request failed - extract HttpError from anyhow::Error
+                    let http_error = error.downcast_ref::<HttpError>()
+                        .cloned()
+                        .unwrap_or_else(|| HttpError::new("Request failed", error.to_string()));
+
+                    let error_summary = SharedString::from(http_error.summary.clone());
+
                     window.update(|window, cx| {
                         // Create error response
                         let response_data = ResponseData {
                             status_code: None,
                             status_text: Some("Error".to_string()),
                             latency: None,
-                            size: Some(error.to_string().len()),
+                            size: Some(http_error.details.len()),
                             headers: vec![],
-                            body: format!("Request failed: {}", error),
+                            body: http_error.details.clone(),
                             url: None, // No URL available for error responses
                         };
 
@@ -744,6 +760,11 @@ impl RequestEditor {
                             input_state.set_value(&response_data.body, window, cx);
                             cx.notify();
                         });
+
+                        window.push_notification(
+                            (NotificationType::Error, error_summary.clone()),
+                             cx,
+                        );
                     })?;
                 }
             }
