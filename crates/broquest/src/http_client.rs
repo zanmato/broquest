@@ -68,7 +68,7 @@ impl HttpClientService {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
-            .user_agent("broquest/0.1.0")
+            .user_agent(&format!("broquest/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("Failed to create HTTP client");
 
@@ -150,10 +150,9 @@ impl HttpClientService {
             }
         }
 
-        // Build the request (URL already contains query parameters from two-way binding)
-        let mut request = self
-            .client
-            .request(map_http_method(request_data.method), &request_data.url);
+        // Apply query parameters to URL for proper encoding after variable substitution
+        let url = Self::apply_query_parameters(&request_data.url, &request_data.query_params);
+        let mut request = self.client.request(map_http_method(request_data.method), &url);
 
         // Add headers
         for header in &request_data.headers {
@@ -252,6 +251,52 @@ impl HttpClientService {
         }
 
         Ok((response_data, variable_store))
+    }
+  /// Apply query parameters to a URL, handling URL encoding
+    fn apply_query_parameters(url: &str, params: &[KeyValuePair]) -> String {
+        let mut result = url.to_string();
+
+        // Filter enabled parameters with non-empty keys
+        let enabled_params: Vec<_> = params
+            .iter()
+            .filter(|p| p.enabled && !p.key.is_empty())
+            .collect();
+
+        if enabled_params.is_empty() {
+            return result;
+        }
+
+        // Remove existing query string and fragment if present
+        if let Some(query_start) = result.find('?') {
+            if let Some(fragment_start) = result.find('#') {
+                // Fragment comes after query
+                if fragment_start > query_start {
+                    result.truncate(fragment_start);
+                }
+            } else {
+                // No fragment, just truncate at query
+                result.truncate(query_start);
+            }
+        }
+
+        // Build query string
+        let query_string = enabled_params
+            .iter()
+            .map(|p| {
+                format!(
+                    "{}={}",
+                    urlencoding::encode(&p.key),
+                    urlencoding::encode(&p.value)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+
+        // Append query string
+        result.push('?');
+        result.push_str(&query_string);
+
+        result
     }
 }
 

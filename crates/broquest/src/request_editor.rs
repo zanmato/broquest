@@ -17,16 +17,17 @@ use gpui_tokio::Tokio;
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use urlencoding;
 
 use crate::app_events::AppEvent;
 use crate::collection_manager::CollectionManager;
 use crate::collection_types::EnvironmentToml;
 use crate::header_editor::HeaderEditor;
-use crate::query_parameter_editor::QueryParamEvent;
 use crate::http_client::{HttpError, ResponseFormat};
 use crate::icon::IconName;
 use crate::path_parameter_editor::PathParamEditor;
 use crate::query_parameter_editor::QueryParamEditor;
+use crate::query_parameter_editor::QueryParamEvent;
 use crate::script_editor::ScriptEditor;
 
 /// Basic URL encoding function
@@ -527,6 +528,61 @@ impl RequestEditor {
         }
     }
 
+    /// Strip query parameters from URL, returning base URL and extracted parameters
+    fn strip_query_params_from_url(url: &str) -> (String, Vec<KeyValuePair>) {
+        let mut base_url = url.to_string();
+        let mut query_params = Vec::new();
+
+        // Check if URL has query parameters
+        if let Some(query_start) = url.find('?') {
+            // Extract the base URL (before ?)
+            base_url = url[..query_start].to_string();
+
+            // Extract query string (after ?, before # if present)
+            let query_part = if let Some(fragment_start) = url.find('#') {
+                // Fragment comes after query
+                if fragment_start > query_start {
+                    &url[query_start + 1..fragment_start]
+                } else {
+                    &url[query_start + 1..]
+                }
+            } else {
+                &url[query_start + 1..]
+            };
+
+            // Parse query parameters
+            for pair in query_part.split('&') {
+                if let Some(eq_pos) = pair.find('=') {
+                    let key = &pair[..eq_pos];
+                    let value = &pair[eq_pos + 1..];
+
+                    if !key.is_empty() {
+                        query_params.push(KeyValuePair {
+                            key: urlencoding::decode(key)
+                                .unwrap_or_else(|_| key.to_string().into())
+                                .to_string(),
+                            value: urlencoding::decode(value)
+                                .unwrap_or_else(|_| value.to_string().into())
+                                .to_string(),
+                            enabled: true,
+                        });
+                    }
+                } else if !pair.is_empty() {
+                    // Parameter without value
+                    query_params.push(KeyValuePair {
+                        key: urlencoding::decode(pair)
+                            .unwrap_or_else(|_| pair.to_string().into())
+                            .to_string(),
+                        value: String::new(),
+                        enabled: true,
+                    });
+                }
+            }
+        }
+
+        (base_url, query_params)
+    }
+
     pub fn get_request_data(&self, cx: &Context<Self>) -> RequestData {
         let mut data = self.request_data.clone();
 
@@ -535,8 +591,10 @@ impl RequestEditor {
             data.method = *selected_method;
         }
 
-        // Update URL from input
-        data.url = self.url_input.read(cx).value().to_string();
+        // Update URL from input and strip query parameters
+        let raw_url = self.url_input.read(cx).value().to_string();
+        let (base_url, url_query_params) = Self::strip_query_params_from_url(&raw_url);
+        data.url = base_url;
 
         // Update name from input
         data.name = self.name_input.read(cx).value().to_string();
@@ -545,9 +603,24 @@ impl RequestEditor {
             .path_param_editor
             .read_with(cx, |editor, cx| editor.get_path_parameters(cx));
 
-        let query_params = self
+        let editor_query_params = self
             .query_param_editor
             .read_with(cx, |editor, cx| editor.get_query_parameters(cx));
+
+        // Merge URL query params with editor query params
+        // Editor params take precedence, but preserve disabled state for URL params not in editor
+        let mut query_params = editor_query_params.clone();
+
+        // Add URL parameters that aren't already in the editor (as disabled)
+        for url_param in url_query_params {
+            if !query_params.iter().any(|p| p.key == url_param.key) {
+                query_params.push(KeyValuePair {
+                    key: url_param.key,
+                    value: url_param.value,
+                    enabled: false, // Mark as disabled since they're not in the editor
+                });
+            }
+        }
 
         let headers = self
             .header_editor
@@ -1140,9 +1213,54 @@ impl RequestEditor {
                         let current_url = this.url_input.read(cx).value().to_string();
                         let parsed_params = this.parse_query_params_from_url(&current_url);
 
-                        // Update query parameter editor without triggering another URL update
+                        // Only update query parameters if this is a genuine URL change (not from parameter editor)
                         query_param_editor.update(cx, |editor, cx| {
-                            editor.set_parameters(&parsed_params, window, cx);
+                            let existing_params = editor.get_query_parameters(cx);
+
+                            // Skip if URL doesn't have query parameters
+                            if !current_url.contains('?') {
+                                return;
+                            }
+
+                            // Skip if no meaningful parsed parameters
+                            if parsed_params.is_empty() {
+                                return;
+                            }
+
+                            // Check if this would actually change anything
+                            // Only proceed if parsed params differ from existing enabled params
+                            let existing_enabled: Vec<_> =
+                                existing_params.iter().filter(|p| p.enabled).collect();
+
+                            // Quick check: if counts differ, update is needed
+                            if existing_enabled.len() != parsed_params.len() {
+                                editor.set_parameters(&parsed_params, window, cx);
+                                return;
+                            }
+
+                            // Check if any existing enabled parameters differ from parsed ones
+                            let needs_update = existing_enabled.iter().any(|existing| {
+                                !parsed_params.iter().any(|parsed| {
+                                    parsed.key == existing.key && parsed.value == existing.value
+                                })
+                            });
+
+                            if needs_update {
+                                // Only update if there are actual differences
+                                let mut merged_params = Vec::new();
+
+                                // Preserve all disabled parameters
+                                for existing_param in &existing_params {
+                                    if !existing_param.enabled {
+                                        merged_params.push(existing_param.clone());
+                                    }
+                                }
+
+                                // Add new/updated parameters from URL
+                                merged_params.extend(parsed_params);
+
+                                editor.set_parameters(&merged_params, window, cx);
+                            }
                         });
                     }
                     _ => {}
@@ -1156,9 +1274,11 @@ impl RequestEditor {
             move |this: &mut Self, _editor, event: &QueryParamEvent, window, cx| {
                 match event {
                     QueryParamEvent::ParameterChanged => {
-                        let current_params = this.query_param_editor.read(cx).get_query_parameters(cx);
+                        let current_params =
+                            this.query_param_editor.read(cx).get_query_parameters(cx);
                         let current_url = this.url_input.read(cx).value().to_string();
-                        let new_url = this.build_url_with_query_params(&current_url, &current_params);
+                        let new_url =
+                            this.build_url_with_query_params(&current_url, &current_params);
 
                         // Set flag to prevent URL change from triggering query param update
                         this._updating_url_from_params = true;
@@ -1182,20 +1302,43 @@ impl RequestEditor {
         };
 
         // Find the end of query string (before # or end of string)
-        let query_end = url[query_start..].find('#').map(|pos| query_start + pos).unwrap_or(url.len());
+        let query_end = url[query_start..]
+            .find('#')
+            .map(|pos| query_start + pos)
+            .unwrap_or(url.len());
 
         let query_string = &url[query_start..query_end];
         if query_string.is_empty() {
             return Vec::new();
         }
 
-        // Parse query parameters
+        // Parse query parameters - only accept well-formed key=value pairs
         query_string
             .split('&')
             .filter_map(|pair| {
                 let mut parts = pair.splitn(2, '=');
                 let key = parts.next()?;
-                let value = parts.next().unwrap_or("");
+                let value = parts.next();
+
+                // Only accept parameters that have both key and value separated by =
+                // This prevents partial typing like "?h" or "?hello" from creating parameters
+                if value.is_none() {
+                    return None;
+                }
+
+                let key = key.trim();
+                let value = value.unwrap_or("").trim();
+
+                // Don't create parameters if key is empty
+                if key.is_empty() {
+                    return None;
+                }
+
+                // Allow empty values (like "hello=") but be more restrictive about
+                // very short keys with empty values that are likely from partial typing
+                if key.len() == 1 && value.is_empty() {
+                    return None;
+                }
 
                 // Decode URL encoding (basic implementation)
                 let decoded_key = url_decode(key);
