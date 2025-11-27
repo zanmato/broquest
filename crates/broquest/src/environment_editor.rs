@@ -104,11 +104,8 @@ impl EnvironmentEditor {
         // Set up subscriptions for environment name input changes
         for (env_idx, env) in self.environments.iter().enumerate() {
             let subscription = cx.subscribe_in(&env.name_input, window, {
-                move |this: &mut Self, _input_state, event: &InputEvent, _window, cx| match event {
-                    InputEvent::Change => {
-                        this.update_environment_name(env_idx, cx);
-                    }
-                    _ => {}
+                move |this: &mut Self, _input_state, event: &InputEvent, _window, cx| if let InputEvent::Change = event {
+                    this.update_environment_name(env_idx, cx);
                 }
             });
             self._subscriptions.push(subscription);
@@ -136,11 +133,8 @@ impl EnvironmentEditor {
         // Set up subscription for the new environment name input
         let env_idx = self.environments.len();
         let subscription = cx.subscribe_in(&environment.name_input, window, {
-            move |this: &mut Self, _input_state, event: &InputEvent, _window, cx| match event {
-                InputEvent::Change => {
-                    this.update_environment_name(env_idx, cx);
-                }
-                _ => {}
+            move |this: &mut Self, _input_state, event: &InputEvent, _window, cx| if let InputEvent::Change = event {
+                this.update_environment_name(env_idx, cx);
             }
         });
         self._subscriptions.push(subscription);

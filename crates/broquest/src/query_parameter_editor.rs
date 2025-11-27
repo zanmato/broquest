@@ -123,22 +123,16 @@ impl QueryParamEditor {
         // Use blur instead of change to prevent focus stealing loops
         let key_subscription = cx.subscribe_in(&key_input, window, {
             move |_this: &mut Self, _input_state, event: &InputEvent, _window, cx| {
-                match event {
-                    InputEvent::Blur => {
-                        cx.emit(QueryParamEvent::ParameterChanged);
-                    }
-                    _ => {}
+                if let InputEvent::Blur = event {
+                    cx.emit(QueryParamEvent::ParameterChanged);
                 }
             }
         });
 
         let value_subscription = cx.subscribe_in(&value_input, window, {
             move |_this: &mut Self, _input_state, event: &InputEvent, _window, cx| {
-                match event {
-                    InputEvent::Blur => {
-                        cx.emit(QueryParamEvent::ParameterChanged);
-                    }
-                    _ => {}
+                if let InputEvent::Blur = event {
+                    cx.emit(QueryParamEvent::ParameterChanged);
                 }
             }
         });

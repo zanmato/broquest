@@ -17,7 +17,6 @@ use gpui_tokio::Tokio;
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use urlencoding;
 
 use crate::app_events::AppEvent;
 use crate::collection_manager::CollectionManager;
@@ -51,13 +50,11 @@ fn url_decode(input: &str) -> String {
         match c {
             '+' => result.push(' '),
             '%' => {
-                if let (Some(h1), Some(h2)) = (chars.next(), chars.next()) {
-                    if let Ok(byte) = u8::from_str_radix(&format!("{}{}", h1, h2), 16) {
-                        if let Some(decoded) = char::from_u32(byte as u32) {
+                if let (Some(h1), Some(h2)) = (chars.next(), chars.next())
+                    && let Ok(byte) = u8::from_str_radix(&format!("{}{}", h1, h2), 16)
+                        && let Some(decoded) = char::from_u32(byte as u32) {
                             result.push(decoded);
                         }
-                    }
-                }
             }
             _ => result.push(c),
         }
@@ -938,11 +935,11 @@ impl RequestEditor {
     fn render_url_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_method = self
             .method_select
-            .read(&cx)
+            .read(cx)
             .selected_value()
             .unwrap_or(&HttpMethod::Get);
 
-        let method_color = selected_method.get_color(&cx);
+        let method_color = selected_method.get_color(cx);
 
         h_flex()
             .gap_3()
@@ -1203,67 +1200,64 @@ impl RequestEditor {
         let query_param_editor = self.query_param_editor.clone();
         let url_subscription = cx.subscribe_in(&url_input, window, {
             move |this: &mut Self, _input_state, event: &InputEvent, window, cx| {
-                match event {
-                    InputEvent::Change => {
-                        // Don't update query params if we're currently updating URL from params
-                        if this._updating_url_from_params {
+                if let InputEvent::Change = event {
+                    // Don't update query params if we're currently updating URL from params
+                    if this._updating_url_from_params {
+                        return;
+                    }
+
+                    let current_url = this.url_input.read(cx).value().to_string();
+                    let parsed_params = this.parse_query_params_from_url(&current_url);
+
+                    // Only update query parameters if this is a genuine URL change (not from parameter editor)
+                    query_param_editor.update(cx, |editor, cx| {
+                        let existing_params = editor.get_query_parameters(cx);
+
+                        // Skip if URL doesn't have query parameters
+                        if !current_url.contains('?') {
                             return;
                         }
 
-                        let current_url = this.url_input.read(cx).value().to_string();
-                        let parsed_params = this.parse_query_params_from_url(&current_url);
+                        // Skip if no meaningful parsed parameters
+                        if parsed_params.is_empty() {
+                            return;
+                        }
 
-                        // Only update query parameters if this is a genuine URL change (not from parameter editor)
-                        query_param_editor.update(cx, |editor, cx| {
-                            let existing_params = editor.get_query_parameters(cx);
+                        // Check if this would actually change anything
+                        // Only proceed if parsed params differ from existing enabled params
+                        let existing_enabled: Vec<_> =
+                            existing_params.iter().filter(|p| p.enabled).collect();
 
-                            // Skip if URL doesn't have query parameters
-                            if !current_url.contains('?') {
-                                return;
-                            }
+                        // Quick check: if counts differ, update is needed
+                        if existing_enabled.len() != parsed_params.len() {
+                            editor.set_parameters(&parsed_params, window, cx);
+                            return;
+                        }
 
-                            // Skip if no meaningful parsed parameters
-                            if parsed_params.is_empty() {
-                                return;
-                            }
-
-                            // Check if this would actually change anything
-                            // Only proceed if parsed params differ from existing enabled params
-                            let existing_enabled: Vec<_> =
-                                existing_params.iter().filter(|p| p.enabled).collect();
-
-                            // Quick check: if counts differ, update is needed
-                            if existing_enabled.len() != parsed_params.len() {
-                                editor.set_parameters(&parsed_params, window, cx);
-                                return;
-                            }
-
-                            // Check if any existing enabled parameters differ from parsed ones
-                            let needs_update = existing_enabled.iter().any(|existing| {
-                                !parsed_params.iter().any(|parsed| {
-                                    parsed.key == existing.key && parsed.value == existing.value
-                                })
-                            });
-
-                            if needs_update {
-                                // Only update if there are actual differences
-                                let mut merged_params = Vec::new();
-
-                                // Preserve all disabled parameters
-                                for existing_param in &existing_params {
-                                    if !existing_param.enabled {
-                                        merged_params.push(existing_param.clone());
-                                    }
-                                }
-
-                                // Add new/updated parameters from URL
-                                merged_params.extend(parsed_params);
-
-                                editor.set_parameters(&merged_params, window, cx);
-                            }
+                        // Check if any existing enabled parameters differ from parsed ones
+                        let needs_update = existing_enabled.iter().any(|existing| {
+                            !parsed_params.iter().any(|parsed| {
+                                parsed.key == existing.key && parsed.value == existing.value
+                            })
                         });
-                    }
-                    _ => {}
+
+                        if needs_update {
+                            // Only update if there are actual differences
+                            let mut merged_params = Vec::new();
+
+                            // Preserve all disabled parameters
+                            for existing_param in &existing_params {
+                                if !existing_param.enabled {
+                                    merged_params.push(existing_param.clone());
+                                }
+                            }
+
+                            // Add new/updated parameters from URL
+                            merged_params.extend(parsed_params);
+
+                            editor.set_parameters(&merged_params, window, cx);
+                        }
+                    });
                 }
             }
         });
@@ -1322,9 +1316,7 @@ impl RequestEditor {
 
                 // Only accept parameters that have both key and value separated by =
                 // This prevents partial typing like "?h" or "?hello" from creating parameters
-                if value.is_none() {
-                    return None;
-                }
+                value?;
 
                 let key = key.trim();
                 let value = value.unwrap_or("").trim();

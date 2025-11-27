@@ -1,5 +1,4 @@
 use gpui::Global;
-use serde_json;
 use std::collections::HashMap;
 use std::time::Duration;
 use zed_reqwest as reqwest;
@@ -68,7 +67,7 @@ impl HttpClientService {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
-            .user_agent(&format!("broquest/{}", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("broquest/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("Failed to create HTTP client");
 
