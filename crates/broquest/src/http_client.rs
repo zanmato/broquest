@@ -150,14 +150,10 @@ impl HttpClientService {
             }
         }
 
-        // Add query parameters
-        let url =
-            Self::apply_query_parameters(request_data.url.clone(), &request_data.query_params);
-
-        // Build the request
+        // Build the request (URL already contains query parameters from two-way binding)
         let mut request = self
             .client
-            .request(map_http_method(request_data.method), &url);
+            .request(map_http_method(request_data.method), &request_data.url);
 
         // Add headers
         for header in &request_data.headers {
@@ -218,7 +214,7 @@ impl HttpClientService {
             size: Some(response_size),
             headers: response_headers,
             body: response_body,
-            url: Some(url),
+            url: Some(request_data.url.clone()),
         };
 
         // Execute post-response script if present
@@ -256,41 +252,6 @@ impl HttpClientService {
         }
 
         Ok((response_data, variable_store))
-    }
-
-    /// Apply query parameters to a URL
-    fn apply_query_parameters(mut url: String, query_params: &[KeyValuePair]) -> String {
-        if query_params.is_empty() {
-            return url;
-        }
-
-        let query_string = query_params
-            .iter()
-            .filter(|param| param.enabled)
-            .filter_map(|param| {
-                if param.key.is_empty() || param.value.is_empty() {
-                    None
-                } else {
-                    Some(format!(
-                        "{}={}",
-                        urlencoding::encode(&param.key),
-                        urlencoding::encode(&param.value)
-                    ))
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("&");
-
-        if !query_string.is_empty() {
-            if url.contains('?') {
-                url.push('&');
-            } else {
-                url.push('?');
-            }
-            url.push_str(&query_string);
-        }
-
-        url
     }
 }
 

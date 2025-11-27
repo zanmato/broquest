@@ -114,6 +114,11 @@ impl EditorPanel {
             editor.set_request_data(request_data.clone(), window, cx);
         });
 
+        // Set up two-way binding between URL input and query parameter editor
+        request_editor.update(cx, |editor, cx| {
+            editor.setup_url_query_binding(window, cx);
+        });
+
         // Load environments for this request if it belongs to a collection
         self.load_environments_for_request(collection_id, &request_editor, window, cx);
 

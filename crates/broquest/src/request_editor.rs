@@ -7,7 +7,7 @@ use gpui_component::{
     ActiveTheme, IndexPath, Sizable, StyledExt, WindowExt,
     button::Button,
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     notification::NotificationType,
     select::{Select, SelectEvent, SelectItem, SelectState},
     tab::{Tab, TabBar},
@@ -15,17 +15,55 @@ use gpui_component::{
 };
 use gpui_tokio::Tokio;
 
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
 use crate::app_events::AppEvent;
 use crate::collection_manager::CollectionManager;
 use crate::collection_types::EnvironmentToml;
 use crate::header_editor::HeaderEditor;
+use crate::query_parameter_editor::QueryParamEvent;
 use crate::http_client::{HttpError, ResponseFormat};
 use crate::icon::IconName;
 use crate::path_parameter_editor::PathParamEditor;
 use crate::query_parameter_editor::QueryParamEditor;
 use crate::script_editor::ScriptEditor;
-use serde::{Deserialize, Serialize};
-use std::time::Duration;
+
+/// Basic URL encoding function
+fn url_encode(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+            ' ' => "+".to_string(),
+            _ => format!("%{:02X}", c as u8),
+        })
+        .collect()
+}
+
+/// Basic URL decoding function
+fn url_decode(input: &str) -> String {
+    let mut result = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '+' => result.push(' '),
+            '%' => {
+                if let (Some(h1), Some(h2)) = (chars.next(), chars.next()) {
+                    if let Ok(byte) = u8::from_str_radix(&format!("{}{}", h1, h2), 16) {
+                        if let Some(decoded) = char::from_u32(byte as u32) {
+                            result.push(decoded);
+                        }
+                    }
+                }
+            }
+            _ => result.push(c),
+        }
+    }
+
+    result
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnvironmentOption {
@@ -273,6 +311,8 @@ pub struct RequestEditor {
     header_editor: Entity<HeaderEditor>,
     script_editor: Entity<ScriptEditor>,
     send_keystroke: KeybindingKeystroke,
+    _subscriptions: Vec<gpui::Subscription>,
+    _updating_url_from_params: bool,
 }
 
 impl RequestEditor {
@@ -369,6 +409,8 @@ impl RequestEditor {
             header_editor,
             script_editor,
             send_keystroke: KeybindingKeystroke::from_keystroke(Keystroke::parse("enter").unwrap()),
+            _subscriptions: Vec::new(),
+            _updating_url_from_params: false,
         }
     }
 
@@ -1079,6 +1121,128 @@ impl RequestEditor {
                         }),
                     ),
             )
+    }
+
+    /// Set up two-way binding between URL input and query parameter editor
+    pub fn setup_url_query_binding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Set up subscription for URL input changes
+        let url_input = self.url_input.clone();
+        let query_param_editor = self.query_param_editor.clone();
+        let url_subscription = cx.subscribe_in(&url_input, window, {
+            move |this: &mut Self, _input_state, event: &InputEvent, window, cx| {
+                match event {
+                    InputEvent::Change => {
+                        // Don't update query params if we're currently updating URL from params
+                        if this._updating_url_from_params {
+                            return;
+                        }
+
+                        let current_url = this.url_input.read(cx).value().to_string();
+                        let parsed_params = this.parse_query_params_from_url(&current_url);
+
+                        // Update query parameter editor without triggering another URL update
+                        query_param_editor.update(cx, |editor, cx| {
+                            editor.set_parameters(&parsed_params, window, cx);
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        });
+        self._subscriptions.push(url_subscription);
+
+        // Set up subscription for query parameter changes
+        let query_param_subscription = cx.subscribe_in(&self.query_param_editor, window, {
+            move |this: &mut Self, _editor, event: &QueryParamEvent, window, cx| {
+                match event {
+                    QueryParamEvent::ParameterChanged => {
+                        let current_params = this.query_param_editor.read(cx).get_query_parameters(cx);
+                        let current_url = this.url_input.read(cx).value().to_string();
+                        let new_url = this.build_url_with_query_params(&current_url, &current_params);
+
+                        // Set flag to prevent URL change from triggering query param update
+                        this._updating_url_from_params = true;
+                        this.url_input.update(cx, |state, cx| {
+                            state.set_value(new_url, window, cx);
+                        });
+                        this._updating_url_from_params = false;
+                    }
+                }
+            }
+        });
+        self._subscriptions.push(query_param_subscription);
+    }
+
+    /// Parse query parameters from a URL string
+    fn parse_query_params_from_url(&self, url: &str) -> Vec<KeyValuePair> {
+        // Find the start of query string (after ? and before # or end)
+        let query_start = match url.find('?') {
+            Some(pos) => pos + 1,
+            None => return Vec::new(),
+        };
+
+        // Find the end of query string (before # or end of string)
+        let query_end = url[query_start..].find('#').map(|pos| query_start + pos).unwrap_or(url.len());
+
+        let query_string = &url[query_start..query_end];
+        if query_string.is_empty() {
+            return Vec::new();
+        }
+
+        // Parse query parameters
+        query_string
+            .split('&')
+            .filter_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                let key = parts.next()?;
+                let value = parts.next().unwrap_or("");
+
+                // Decode URL encoding (basic implementation)
+                let decoded_key = url_decode(key);
+                let decoded_value = url_decode(value);
+
+                if !decoded_key.is_empty() {
+                    Some(KeyValuePair {
+                        key: decoded_key,
+                        value: decoded_value,
+                        enabled: true,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Build a URL with the given query parameters
+    fn build_url_with_query_params(&self, url: &str, params: &[KeyValuePair]) -> String {
+        // Find the start of query string (after ? and before # or end)
+        let query_start = url.find('?');
+        let fragment_start = url.find('#');
+
+        // Extract base URL (without query string and fragment)
+        let base_url_end = query_start.or(fragment_start).unwrap_or(url.len());
+        let base_url = &url[..base_url_end];
+
+        // Extract fragment if present
+        let fragment = fragment_start.map(|pos| &url[pos..]).unwrap_or("");
+
+        // Filter enabled parameters and build query string
+        let enabled_params: Vec<_> = params.iter().filter(|p| p.enabled).collect();
+        if enabled_params.is_empty() {
+            return format!("{}{}", base_url, fragment);
+        }
+
+        let query_string = enabled_params
+            .iter()
+            .map(|param| {
+                // Basic URL encoding
+                format!("{}={}", url_encode(&param.key), url_encode(&param.value))
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+
+        format!("{}?{}{}", base_url, query_string, fragment)
     }
 
     /// Get the method select entity for external subscriptions
