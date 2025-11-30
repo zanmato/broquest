@@ -4,6 +4,7 @@ use crate::{
     collection_types::CollectionToml,
     request_editor::{RequestData, ResponseData},
 };
+use gpui::SharedString;
 
 /// Core application events that can be emitted and subscribed to
 #[derive(Clone, Debug, PartialEq)]
@@ -42,7 +43,7 @@ pub enum AppEvent {
     SaveRequestAs(RequestData),
     CreateNewRequestTab {
         request_data: RequestData,
-        collection_id: Option<i64>,
+        collection_path: SharedString,
     },
     RequestCompleted {
         request_data: RequestData,
@@ -56,19 +57,18 @@ pub enum AppEvent {
     /// Collection events
     CreateNewCollectionTab {
         collection_data: CollectionToml,
-        collection_path: String,
-        collection_id: Option<i64>,
+        collection_path: SharedString,
     },
     CollectionSaved {
-        collection_path: String,
+        collection_path: SharedString,
         collection_name: String,
         success: bool,
     },
     CollectionDeleted {
-        collection_id: i64,
+        collection_path: SharedString,
     },
     NewRequest {
-        collection_id: Option<i64>,
+        collection_path: SharedString,
     },
 }
 

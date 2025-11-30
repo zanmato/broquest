@@ -5,132 +5,39 @@ use anyhow::{Context, Result};
 use gpui::{App, Global};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct CollectionInfo {
-    #[allow(dead_code)]
-    pub id: i64,
     pub data: CollectionData,
     pub toml: CollectionToml,
     pub requests: HashMap<String, RequestData>, // file_path -> RequestData
 }
 
 pub struct CollectionManager {
-    base_path: PathBuf,
-    collections: HashMap<i64, CollectionInfo>,
-    next_id: i64,
-    path_to_id: HashMap<String, i64>, // path -> id mapping
+    collections: HashMap<String, CollectionInfo>, // collection_path -> CollectionInfo
 }
 
 impl CollectionManager {
-    pub fn new(base_path: &str) -> Self {
+    pub fn new() -> Self {
         Self {
-            base_path: PathBuf::from(base_path),
             collections: HashMap::new(),
-            next_id: 1,
-            path_to_id: HashMap::new(),
         }
     }
 
-    /// Scan for collections in the specified directory and cache them
-    pub fn scan_and_cache_collections(&mut self) -> Result<()> {
-        self.collections.clear();
-        self.path_to_id.clear();
-
-        // Check if the base path exists
-        if !self.base_path.exists() {
-            tracing::warn!("Collection directory does not exist: {:?}", self.base_path);
-            return Ok(());
-        }
-
-        // Look for collection.toml files in subdirectories
-        for entry in fs::read_dir(&self.base_path)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                // Check if this directory contains a collection.toml file
-                let collection_toml_path = path.join("collection.toml");
-                if collection_toml_path.exists() {
-                    match self.load_and_cache_collection(&path) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            tracing::error!("Failed to load collection from {:?}: {}", path, e)
-                        }
-                    }
-                }
-            }
-        }
-
-        tracing::info!("Found and cached {} collections", self.collections.len());
-        Ok(())
+    /// Get collection by path
+    pub fn get_collection_by_path(&self, collection_path: &str) -> Option<&CollectionInfo> {
+        self.collections.get(collection_path)
     }
 
-    /// Load and cache a single collection from a directory containing collection.toml
-    fn load_and_cache_collection(&mut self, collection_dir: &Path) -> Result<i64> {
-        let collection_toml_path = collection_dir.join("collection.toml");
-
-        // Read and parse collection.toml
-        let collection_content = fs::read_to_string(&collection_toml_path).with_context(|| {
-            format!(
-                "Failed to read collection.toml from {:?}",
-                collection_toml_path
-            )
-        })?;
-
-        let collection_toml: CollectionToml =
-            toml::from_str(&collection_content).with_context(|| {
-                format!(
-                    "Failed to parse collection.toml from {:?}",
-                    collection_toml_path
-                )
-            })?;
-
-        // Load all requests in this collection
-        let requests = self.load_collection_requests(collection_dir)?;
-
-        tracing::info!(
-            "Loaded collection '{}' with {} requests and {} environments from {:?}",
-            collection_toml.collection.name,
-            requests.len(),
-            collection_toml.environments.len(),
-            collection_dir
-        );
-
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let path_string = collection_dir.to_string_lossy().to_string();
-
-        let collection_info = CollectionInfo {
-            id,
-            data: CollectionData {
-                id: Some(id),
-                name: collection_toml.collection.name.clone(),
-                path: path_string.clone(),
-                position: 0,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            },
-            toml: collection_toml,
-            requests,
-        };
-
-        self.collections.insert(id, collection_info);
-        self.path_to_id.insert(path_string, id);
-
-        Ok(id)
-    }
-
-    /// Get collection by ID
-    pub fn get_collection_by_id(&self, id: i64) -> Option<&CollectionInfo> {
-        self.collections.get(&id)
-    }
-
-    /// Get collection ID by path
-    pub fn get_collection_id(&self, collection_path: &str) -> Option<i64> {
-        self.path_to_id.get(collection_path).copied()
+    /// Get collection environments by path
+    pub fn get_collection_environments(
+        &self,
+        collection_path: &str,
+    ) -> Option<Vec<EnvironmentToml>> {
+        self.collections
+            .get(collection_path)
+            .map(|info| info.toml.environments.clone())
     }
 
     /// Get all cached collections
@@ -138,85 +45,66 @@ impl CollectionManager {
         self.collections.values().collect()
     }
 
-    /// Get collection environments
-    pub fn get_collection_environments(&self, collection_id: i64) -> Option<Vec<EnvironmentToml>> {
-        self.collections
-            .get(&collection_id)
-            .map(|info| info.toml.environments.clone())
-    }
-
-    /// Get collection ID by name
-    #[allow(dead_code)]
-    pub fn get_collection_id_by_name(&self, collection_name: &str) -> Option<i64> {
-        self.collections
-            .values()
-            .find(|info| info.data.name == collection_name)
-            .and_then(|info| info.data.id)
-    }
-
-    /// Get collection name by ID
-    #[allow(dead_code)]
-    pub fn get_collection_name_by_id(&self, collection_id: i64) -> Option<String> {
-        self.collections
-            .get(&collection_id)
-            .map(|info| info.data.name.clone())
-    }
-
     /// Load collections from the database and cache their TOML data from the file system
     pub fn load_saved(&mut self, cx: &mut App) -> Result<()> {
         let app_database = AppDatabase::global(cx).clone();
 
-        // Load collections from database using blocking task
-        let db_collections = async_std::task::block_on(async {
-            match app_database.load_collections().await {
-                Ok(collections) => {
-                    tracing::info!("Loaded {} collections from database", collections.len());
-                    collections
+        // Load collections from the database
+        let db_collections =
+            async_std::task::block_on(async move { app_database.load_collections().await });
+
+        match db_collections {
+            Ok(collections) => {
+                tracing::info!("Loaded {} collections from database", collections.len());
+
+                for collection_data in collections {
+                    // Try to load the TOML data from the file system path
+                    let collection_path = Path::new(&collection_data.path);
+                    if collection_path.exists() {
+                        match self.load_collection_toml(collection_path) {
+                            Ok(collection_toml) => {
+                                tracing::info!(
+                                    "Loaded TOML for collection '{}' from database path: {}",
+                                    collection_data.name,
+                                    collection_data.path
+                                );
+
+                                // Load all requests in this collection
+                                let requests = self.load_collection_requests(collection_path)?;
+
+                                let collection_info = CollectionInfo {
+                                    data: collection_data,
+                                    toml: collection_toml,
+                                    requests,
+                                };
+
+                                self.collections
+                                    .insert(collection_info.data.path.clone(), collection_info);
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to load TOML for collection '{}' from path {}: {}",
+                                    collection_data.name,
+                                    collection_data.path,
+                                    e
+                                );
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Collection path from database does not exist: {}",
+                            collection_data.path
+                        );
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("Failed to load collections from database: {}", e);
-                    Vec::new()
-                }
+
+                tracing::info!("Total cached collections: {}", self.collections.len());
             }
-        });
-
-        // Clear existing collections
-        self.collections.clear();
-        self.path_to_id.clear();
-
-        // Load TOML data for each collection from the database
-        for collection_data in db_collections {
-            let collection_path = std::path::Path::new(&collection_data.path);
-
-            if collection_path.exists() {
-                match self.load_and_cache_collection(collection_path) {
-                    Ok(_id) => {
-                        tracing::info!(
-                            "Loaded collection '{}' from database and file system",
-                            collection_data.name
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to load collection '{}' from path '{}': {}",
-                            collection_data.name,
-                            collection_data.path,
-                            e
-                        );
-                    }
-                }
-            } else {
-                tracing::warn!("Collection path does not exist: {}", collection_data.path);
+            Err(e) => {
+                tracing::error!("Failed to load collections from database: {}", e);
             }
         }
 
-        // If no collections were loaded from database, fall back to file system scan
-        if self.collections.is_empty() {
-            tracing::info!("No collections found in database, scanning file system");
-            self.scan_and_cache_collections()?;
-        }
-
-        tracing::info!("Total cached collections: {}", self.collections.len());
         Ok(())
     }
 
@@ -277,12 +165,7 @@ impl CollectionManager {
     }
 
     /// Save collection data to the specified path and update the in-memory cache
-    pub fn save_collection(
-        &mut self,
-        collection_data: &CollectionToml,
-        path: &str,
-        database_id: Option<i64>,
-    ) -> Result<()> {
+    pub fn save_collection(&mut self, collection_data: &CollectionToml, path: &str) -> Result<()> {
         use std::path::Path;
 
         // Create directory if it doesn't exist
@@ -299,101 +182,64 @@ impl CollectionManager {
         fs::write(collection_file_path, toml_string)
             .with_context(|| format!("Failed to write collection.toml to path: {}", path))?;
 
-        // Update or add the collection in the in-memory cache
+        // Update or add the collection in the in-memory cache using path as key
         let collection_name = &collection_data.collection.name;
 
-        // Find if this collection already exists in our cache by path
-        let existing_collection = self
-            .collections
-            .values()
-            .find(|info| info.data.path == path);
+        let collection_info = CollectionInfo {
+            data: crate::app_database::CollectionData {
+                id: None, // We don't use IDs anymore
+                name: collection_name.clone(),
+                path: path.to_string(),
+                position: 0,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            toml: collection_data.clone(),
+            requests: HashMap::new(), // This will be populated when requests are loaded
+        };
 
-        if let Some(existing_info) = existing_collection {
-            // Update existing collection
-            if let Some(collection_id) = existing_info.data.id
-                && let Some(info) = self.collections.get_mut(&collection_id)
-            {
-                info.toml = collection_data.clone();
-                tracing::info!("Updated existing collection '{}' in cache", collection_name);
-            }
-        } else {
-            // This is a new collection - use the database ID if available, otherwise assign a temporary ID
-            let collection_id = if let Some(db_id) = database_id {
-                db_id
-            } else {
-                // Use a negative temporary ID that will be replaced when the database assigns a proper ID
-                let temp_id = -self.next_id;
-                self.next_id += 1;
-                temp_id
-            };
-
-            let collection_info = CollectionInfo {
-                id: collection_id,
-                data: crate::app_database::CollectionData {
-                    id: Some(collection_id),
-                    name: collection_name.clone(),
-                    path: path.to_string(),
-                    position: 0, // Default position
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                },
-                toml: collection_data.clone(),
-                requests: HashMap::new(), // Empty for new collections
-            };
-
-            self.collections.insert(collection_id, collection_info);
-            if database_id.is_some() {
-                tracing::info!(
-                    "Added new collection '{}' to cache with database ID {}",
-                    collection_name,
-                    collection_id
-                );
-            } else {
-                tracing::info!(
-                    "Added new collection '{}' to cache with temporary ID {}",
-                    collection_name,
-                    collection_id
-                );
-            }
-        }
-
-        tracing::info!("Collection saved successfully to: {}", path);
+        self.collections.insert(path.to_string(), collection_info);
+        tracing::info!(
+            "Collection '{}' saved and cached at path: {}",
+            collection_name,
+            path
+        );
 
         Ok(())
     }
 
-    /// Remove a collection from the manager by ID
-    pub fn remove_collection(&mut self, collection_id: i64) {
-        if let Some(collection) = self.collections.remove(&collection_id) {
-            // Remove from path_to_id mapping
-            self.path_to_id.retain(|_, &mut id| id != collection_id);
-
+    /// Remove a collection from the manager by path
+    pub fn remove_collection(&mut self, collection_path: &str) {
+        if let Some(collection) = self.collections.remove(collection_path) {
             tracing::info!(
-                "Removed collection '{}' (ID: {}) from manager",
+                "Removed collection '{}' (path: {}) from manager",
                 collection.data.name,
-                collection_id
+                collection_path
             );
         } else {
-            tracing::warn!("Collection with ID {} not found in manager", collection_id);
+            tracing::warn!(
+                "Collection with path {} not found in manager",
+                collection_path
+            );
         }
     }
 
     /// Save a request to a collection directory
     pub fn save_request(
         &mut self,
-        collection_id: i64,
+        collection_path: &str,
         request_data: &RequestData,
         request_name: &str,
     ) -> Result<()> {
         // Get collection info as mutable reference
         let collection_info = self
             .collections
-            .get_mut(&collection_id)
-            .ok_or_else(|| anyhow::anyhow!("Collection with ID {} not found", collection_id))?;
+            .get_mut(collection_path)
+            .ok_or_else(|| anyhow::anyhow!("Collection with path {} not found", collection_path))?;
 
         // Create the full file path
-        let collection_path = Path::new(&collection_info.data.path);
-        let request_file_path = collection_path.join(format!("{}.toml", request_name));
+        let collection_dir_path = Path::new(&collection_info.data.path);
+        let request_file_path = collection_dir_path.join(format!("{}.toml", request_name));
 
         // Convert RequestData to RequestToml
         let request_toml: RequestToml = request_data.clone().into();
@@ -425,12 +271,16 @@ impl CollectionManager {
     }
 
     /// Delete a request from a collection
-    pub fn delete_request(&mut self, collection_id: i64, request_data: &RequestData) -> Result<()> {
+    pub fn delete_request(
+        &mut self,
+        collection_path: &str,
+        request_data: &RequestData,
+    ) -> Result<()> {
         // Get collection info as mutable reference
         let collection_info = self
             .collections
-            .get_mut(&collection_id)
-            .ok_or_else(|| anyhow::anyhow!("Collection with ID {} not found", collection_id))?;
+            .get_mut(collection_path)
+            .ok_or_else(|| anyhow::anyhow!("Collection with path {} not found", collection_path))?;
 
         // Find the file path for this request
         let request_file_path = collection_info
@@ -491,7 +341,7 @@ impl CollectionManager {
     /// Update environment variables in a collection environment
     pub fn update_environment_variables(
         &mut self,
-        collection_id: i64,
+        collection_path: &str,
         environment_name: &str,
         dirty_vars: &HashMap<String, String>,
         cx: &mut App,
@@ -499,8 +349,8 @@ impl CollectionManager {
         // Get collection info
         let collection_info = self
             .collections
-            .get_mut(&collection_id)
-            .ok_or_else(|| anyhow::anyhow!("Collection with ID {} not found", collection_id))?;
+            .get_mut(collection_path)
+            .ok_or_else(|| anyhow::anyhow!("Collection with path {} not found", collection_path))?;
 
         // Find the environment
         let environment = collection_info

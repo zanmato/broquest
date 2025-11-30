@@ -56,11 +56,10 @@ pub enum TreeItemKind {
 /// Metadata for tree items to enable proper context menu actions
 #[derive(Clone, Debug)]
 pub struct TreeItemMetadata {
-    pub collection_id: i64,
     pub name: String,
     pub kind: TreeItemKind,
     pub icon: TreeItemIcon,
-    pub collection_path: Option<String>, // Path to collection directory for collection items
+    pub collection_path: String, // Path to collection directory for collection items
 }
 
 impl CollectionsPanel {
@@ -117,8 +116,8 @@ impl CollectionsPanel {
 
         for collection_info in collection_infos {
             let collection_data = &collection_info.data;
-            let collection_id = collection_data.id.unwrap_or(0);
-            let item_id = format!("collection_{}", collection_id);
+            let collection_path = &collection_data.path;
+            let item_id = format!("collection_{}", collection_path.replace('/', "_"));
 
             // Build child tree items for all requests
             let requests: Vec<crate::request_editor::RequestData> =
@@ -126,13 +125,12 @@ impl CollectionsPanel {
 
             let mut child_items = Vec::new();
             for (index, request) in requests.iter().enumerate() {
-                let request_id = format!("request_{}_{}", collection_id, index);
+                let request_id = format!("request_{}_{}", collection_path.replace('/', "_"), index);
                 let request_tree_item =
                     TreeItem::new(request_id.clone(), request.name.clone()).children(vec![]);
 
                 // Store metadata for this request
                 let request_metadata = TreeItemMetadata {
-                    collection_id,
                     name: request.name.clone(),
                     kind: TreeItemKind::Request,
                     icon: TreeItemIcon {
@@ -140,7 +138,7 @@ impl CollectionsPanel {
                         prefix: Some(SharedString::from(request.method.as_str())),
                         color: request.method.get_color(cx),
                     },
-                    collection_path: None, // Requests don't have a collection path
+                    collection_path: collection_data.path.clone(),
                 };
 
                 self.tree_item_metadata
@@ -157,7 +155,6 @@ impl CollectionsPanel {
 
             // Store metadata for this collection
             let collection_metadata = TreeItemMetadata {
-                collection_id,
                 name: collection_data.name.clone(),
                 kind: TreeItemKind::Collection,
                 icon: TreeItemIcon {
@@ -165,7 +162,7 @@ impl CollectionsPanel {
                     prefix: None,
                     color: cx.theme().blue.into(),
                 },
-                collection_path: Some(collection_data.path.clone()),
+                collection_path: collection_data.path.clone(),
             };
 
             self.tree_item_metadata.insert(item_id, collection_metadata);
@@ -201,18 +198,11 @@ impl CollectionsPanel {
                     collection_data.collection.name
                 );
 
-                // Get collection_id from the CollectionManager
-                let collection_id = collection_manager.get_collection_id(collection_path);
-                tracing::info!(
-                    "Opening collection tab for path: {}, collection_id: {:?}",
-                    collection_path,
-                    collection_id
-                );
+                tracing::info!("Opening collection tab for path: {}", collection_path);
 
                 cx.emit(AppEvent::CreateNewCollectionTab {
                     collection_data,
-                    collection_path: collection_path.to_string(),
-                    collection_id,
+                    collection_path: collection_path.to_string().into(),
                 });
             }
             Err(e) => {
@@ -226,48 +216,51 @@ impl CollectionsPanel {
     }
 
     /// Create a new request tab for a collection
-    fn new_request_tab(&mut self, collection_id: i64, cx: &mut Context<Self>) {
+    fn new_request_tab(&mut self, collection_path: &str, cx: &mut Context<Self>) {
         tracing::info!(
-            "Creating new request tab for collection_id: {}",
-            collection_id
+            "Creating new request tab for collection_path: {}",
+            collection_path
         );
 
         // Emit NewRequest event to create the new request tab
         cx.emit(AppEvent::NewRequest {
-            collection_id: Some(collection_id),
+            collection_path: collection_path.to_string().into(),
         });
     }
 
     /// Delete a collection from CollectionManager and AppDatabase
     fn delete_collection(
         &mut self,
-        collection_id: i64,
         collection_path: &str,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        tracing::info!("Deleting collection with collection_id: {}", collection_id);
+        tracing::info!(
+            "Deleting collection with collection_path: {}",
+            collection_path
+        );
 
         // Remove from local collections vector first
         self.collections
-            .retain(|collection| collection.id != Some(collection_id));
+            .retain(|collection| collection.path != collection_path);
 
         // Update global CollectionManager to remove the collection
         cx.update_global(
             |collection_manager: &mut crate::collection_manager::CollectionManager, _cx| {
-                collection_manager.remove_collection(collection_id);
+                collection_manager.remove_collection(collection_path);
             },
         );
 
         // Remove the collection from AppDatabase
         let db = AppDatabase::global(cx).clone();
-        let collection_path = collection_path.to_string();
+        let collection_path_for_async = collection_path.to_string();
+        let collection_path_for_event = collection_path.to_string().into();
         cx.spawn(async move |_, _| {
-            match db.delete_collection(&collection_path).await {
+            match db.delete_collection(&collection_path_for_async).await {
                 Ok(_) => {
                     tracing::info!(
                         "Successfully deleted collection '{}' from database",
-                        collection_path
+                        collection_path_for_async
                     );
                 }
                 Err(e) => {
@@ -282,15 +275,18 @@ impl CollectionsPanel {
         self.load_collections(cx);
 
         // Emit event to notify other parts of the app
-        cx.emit(AppEvent::CollectionDeleted { collection_id });
+        cx.emit(AppEvent::CollectionDeleted {
+            collection_path: collection_path_for_event,
+        });
+        tracing::info!("end delete collection");
     }
 
     /// Delete a request through CollectionManager
-    fn delete_request(&mut self, request_id: &str, collection_id: i64, cx: &mut Context<Self>) {
+    fn delete_request(&mut self, request_id: &str, collection_path: &str, cx: &mut Context<Self>) {
         tracing::info!(
             "Deleting request with ID: {} from collection: {}",
             request_id,
-            collection_id
+            collection_path
         );
 
         // Get the request data for logging and file path extraction
@@ -307,12 +303,12 @@ impl CollectionsPanel {
         // Use CollectionManager to delete the request
         cx.update_global(
             |collection_manager: &mut crate::collection_manager::CollectionManager, _cx| {
-                match collection_manager.delete_request(collection_id, &request_data) {
+                match collection_manager.delete_request(collection_path, &request_data) {
                     Ok(_) => {
                         tracing::info!(
                             "Successfully deleted request '{}' from collection {}",
                             request_name,
-                            collection_id
+                            collection_path
                         );
                     }
                     Err(e) => {
@@ -355,21 +351,21 @@ impl CollectionsPanel {
                         let collection_name = metadata.name.clone();
                         let collection_name_open = collection_name.clone();
                         let collection_name_new = collection_name.clone();
-                        let collection_name_delete = collection_name.clone();
                         let weak_panel_clone = weak_panel.clone();
                         let weak_panel_new = weak_panel.clone();
                         let weak_panel_delete = weak_panel.clone();
-                        let collection_id = metadata.collection_id;
+                        let collection_path = metadata.collection_path.clone();
+                        let collection_path_for_new_request = collection_path.clone();
 
                         this.item(PopupMenuItem::new("Open Collection").on_click({
-                            let collection_path = metadata.collection_path.clone();
+                            let collection_path = collection_path.clone();
                             move |_, _window, cx| {
                                 tracing::info!("Open collection: {}", collection_name_open);
-                                if let Some(ref collection_path) = collection_path {
+                                {
                                     // Use the weak_panel to call open_collection_tab
                                     if let Some(panel) = weak_panel_clone.upgrade() {
                                         panel.update(cx, |panel, cx| {
-                                            panel.open_collection_tab(collection_path, cx);
+                                            panel.open_collection_tab(&collection_path, cx);
                                         });
                                     }
                                 }
@@ -385,7 +381,7 @@ impl CollectionsPanel {
                                 // Call new_request_tab method through the panel context
                                 if let Some(panel) = weak_panel_new.upgrade() {
                                     panel.update(cx, |panel, cx| {
-                                        panel.new_request_tab(collection_id, cx);
+                                        panel.new_request_tab(&collection_path_for_new_request, cx);
                                     });
                                 }
                             }),
@@ -395,19 +391,12 @@ impl CollectionsPanel {
                             PopupMenuItem::new("Remove Collection").on_click({
                                 let collection_path = metadata.collection_path.clone();
                                 move |_, window, cx| {
-                                    tracing::info!("Remove collection: {}", collection_name_delete);
+                                    tracing::info!("Remove collection");
 
                                     // Call delete_collection method through the panel context
-                                    if let Some(panel) = weak_panel_delete.upgrade()
-                                        && let Some(collection_path) = &collection_path
-                                    {
+                                    if let Some(panel) = weak_panel_delete.upgrade() {
                                         panel.update(cx, |panel, cx| {
-                                            panel.delete_collection(
-                                                collection_id,
-                                                collection_path,
-                                                window,
-                                                cx,
-                                            );
+                                            panel.delete_collection(&collection_path, window, cx);
                                         });
                                     }
                                 }
@@ -415,7 +404,7 @@ impl CollectionsPanel {
                         )
                     }
                     TreeItemKind::Request => {
-                        let collection_id = metadata.collection_id;
+                        let collection_path = metadata.collection_path.clone();
                         let weak_panel_delete = weak_panel.clone();
                         let request_id_for_deletion = item.id.clone();
 
@@ -426,7 +415,7 @@ impl CollectionsPanel {
                                     panel.update(cx, |panel, cx| {
                                         panel.delete_request(
                                             &request_id_for_deletion,
-                                            collection_id,
+                                            &collection_path,
                                             cx,
                                         );
                                     });
@@ -584,15 +573,16 @@ impl CollectionsPanel {
                                         );
                                         cx.emit(AppEvent::CreateNewRequestTab {
                                             request_data,
-                                            collection_id: Some(metadata.collection_id),
+                                            collection_path: metadata
+                                                .collection_path
+                                                .clone()
+                                                .into(),
                                         });
                                     }
                                 }
                                 TreeItemKind::Collection => {
                                     // Open collection in new tab
-                                    if let Some(collection_path) = &metadata.collection_path {
-                                        this.open_collection_tab(collection_path, cx);
-                                    }
+                                    this.open_collection_tab(&metadata.collection_path, cx);
                                 }
                                 TreeItemKind::Group => {}
                             }

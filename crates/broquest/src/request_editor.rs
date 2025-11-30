@@ -52,9 +52,10 @@ fn url_decode(input: &str) -> String {
             '%' => {
                 if let (Some(h1), Some(h2)) = (chars.next(), chars.next())
                     && let Ok(byte) = u8::from_str_radix(&format!("{}{}", h1, h2), 16)
-                        && let Some(decoded) = char::from_u32(byte as u32) {
-                            result.push(decoded);
-                        }
+                    && let Some(decoded) = char::from_u32(byte as u32)
+                {
+                    result.push(decoded);
+                }
             }
             _ => result.push(c),
         }
@@ -295,7 +296,7 @@ pub struct RequestEditor {
     active_tab: RequestTab,
     active_response_tab: ResponseTab,
     is_loading: bool,
-    collection_id: Option<i64>,
+    collection_path: Option<String>,
     method_select: Entity<SelectState<Vec<HttpMethod>>>,
     environment_select: Entity<SelectState<Vec<EnvironmentOption>>>,
     content_type_select: Entity<SelectState<Vec<ContentType>>>,
@@ -345,7 +346,8 @@ impl RequestEditor {
         let url_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Enter request URL")
-                .single_line_code_editor("url".to_string())
+                .code_editor("url")
+                .multi_line(false)
         });
 
         let name_input = cx.new(|cx| {
@@ -393,7 +395,7 @@ impl RequestEditor {
             active_tab: RequestTab::Query,
             active_response_tab: ResponseTab::Response,
             is_loading: false,
-            collection_id: None,
+            collection_path: None,
             method_select,
             environment_select,
             content_type_select,
@@ -412,8 +414,8 @@ impl RequestEditor {
         }
     }
 
-    pub fn set_collection_id(&mut self, collection_id: Option<i64>) {
-        self.collection_id = collection_id;
+    pub fn set_collection_path(&mut self, collection_path: Option<String>) {
+        self.collection_path = collection_path;
     }
 
     pub fn set_request_data(
@@ -740,8 +742,8 @@ impl RequestEditor {
             let selected_env_clone = selected_env.clone();
             let collection_manager = CollectionManager::global(cx);
 
-            if let Some(collection) =
-                collection_manager.get_collection_by_id(self.collection_id.unwrap_or(0))
+            if let Some(ref collection_path) = self.collection_path
+                && let Some(collection) = collection_manager.get_collection_by_path(collection_path)
             {
                 match env_resolver.load_environment_data(
                     &collection.data.name,
@@ -786,7 +788,7 @@ impl RequestEditor {
         });
 
         // Clone necessary data before moving into async closure
-        let collection_id = self.collection_id;
+        let collection_path = self.collection_path.clone();
         let selected_env_for_later = self.get_selected_environment(cx);
 
         // Spawn a GPUI task to wait for the HTTP response
@@ -801,10 +803,10 @@ impl RequestEditor {
                     if !dirty_vars.is_empty() {
                         tracing::info!("Environment variables modified by scripts: {:?}", dirty_vars.keys().collect::<Vec<_>>());
                         tracing::info!("Dirty variables that need to be persisted: {:?}", dirty_vars);
-                        if let (Some(collection_id), Some(selected_env)) = (collection_id, selected_env_for_later) {
+                        if let (Some(collection_path), Some(selected_env)) = (collection_path.as_ref(), selected_env_for_later) {
                             // Update the CollectionManager with dirty variables
                             match window.update_global(|collection_manager: &mut CollectionManager, _window, cx| {
-                                collection_manager.update_environment_variables(collection_id, selected_env.name.as_str(), &dirty_vars, cx)
+                                collection_manager.update_environment_variables(collection_path, selected_env.name.as_str(), &dirty_vars, cx)
                             }) {
                                 Ok(inner_result) => {
                                     match inner_result {
@@ -915,10 +917,11 @@ impl RequestEditor {
             &request_data.name
         };
 
-        if let Some(collection_id) = self.collection_id {
+        if let Some(ref collection_path) = self.collection_path {
             // Use cx.update_global to call the save_request method on CollectionManager
             cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-                match collection_manager.save_request(collection_id, &request_data, request_name) {
+                match collection_manager.save_request(collection_path, &request_data, request_name)
+                {
                     Ok(()) => {
                         tracing::info!("Request saved successfully");
                     }

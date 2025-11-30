@@ -27,8 +27,8 @@ use gpui_component::{Theme, ThemeRegistry};
 use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 use collection_manager::CollectionManager;
-use themes_manager::ThemesManager;
 use highlighting::register_url_highlighting;
+use themes_manager::ThemesManager;
 
 fn main() {
     let app = Application::new().with_assets(Assets);
@@ -94,8 +94,7 @@ fn main() {
         cx.set_global(db);
 
         // Initialize global CollectionManager
-        let collection_base_path = "./collections"; // Default collections directory
-        let mut collection_manager = CollectionManager::new(collection_base_path);
+        let mut collection_manager = CollectionManager::new();
 
         // Load collections from database and cache them
         if let Err(e) = collection_manager.load_saved(cx) {

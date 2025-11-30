@@ -20,8 +20,6 @@ pub struct CollectionEditor {
     active_tab: usize,
     collection_data: CollectionToml,
     collection_path: String,
-    #[allow(dead_code)]
-    collection_id: Option<i64>,
     environment_editor: Entity<EnvironmentEditor>,
     name_input: Entity<InputState>,
     path_input: Entity<InputState>,
@@ -33,8 +31,12 @@ impl CollectionEditor {
         cx: &mut Context<Self>,
         collection_data: CollectionToml,
         collection_path: String,
-        collection_id: Option<i64>,
     ) -> Self {
+        let collection_name = collection_data.collection.name.clone();
+        let environments_count = collection_data.environments.len();
+        let collection_path_for_log = collection_path.clone();
+        let collection_path_for_lookup = collection_path.clone();
+
         let environment_editor =
             cx.new(|cx| EnvironmentEditor::new(window, cx, &collection_data.collection.name));
 
@@ -47,7 +49,6 @@ impl CollectionEditor {
             active_tab: 0, // Collection tab
             collection_data,
             collection_path,
-            collection_id,
             environment_editor,
             name_input,
             path_input,
@@ -55,28 +56,32 @@ impl CollectionEditor {
 
         // Load initial environments data from CollectionManager
         tracing::info!(
-            "CollectionEditor::new called with collection_id: {:?}",
-            collection_id
+            "CollectionEditor::new called with collection_path: '{}', collection_name: '{}', environments_count: {}",
+            collection_path_for_log,
+            collection_name,
+            environments_count
         );
-        if let Some(collection_id) = collection_id {
-            tracing::info!("Looking for CollectionManager global");
-            let collection_manager = CollectionManager::global(cx);
-            if let Some(environments) =
-                collection_manager.get_collection_environments(collection_id)
-            {
-                tracing::info!(
-                    "Loading {} environments for collection editor: {:?}",
-                    environments.len(),
-                    environments.iter().map(|e| &e.name).collect::<Vec<_>>()
-                );
-                editor.environment_editor.update(cx, |env_editor, cx| {
-                    env_editor.load_environments(&environments, window, cx);
-                });
-            } else {
-                tracing::warn!("No environments found for collection_id: {}", collection_id);
-            }
+
+        // Always load from CollectionManager cache since we're using path-based approach
+        let collection_manager = CollectionManager::global(cx);
+        if let Some(environments) =
+            collection_manager.get_collection_environments(&collection_path_for_lookup)
+        {
+            tracing::info!(
+                "Found {} environments for collection '{}': {:?}",
+                environments.len(),
+                collection_name,
+                environments.iter().map(|e| &e.name).collect::<Vec<_>>()
+            );
+            editor.environment_editor.update(cx, |env_editor, cx| {
+                env_editor.load_environments(&environments, window, cx);
+            });
         } else {
-            tracing::info!("No collection_id provided for collection editor");
+            tracing::warn!(
+                "No environments found for collection '{}' (path: {})",
+                collection_name,
+                collection_path_for_log
+            );
         }
 
         editor
@@ -139,20 +144,14 @@ impl CollectionEditor {
                         .font_medium()
                         .text_color(cx.theme().muted_foreground)
                         .child("Collection Path"),
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            Input::new(&self.path_input)
-                                .font_family(cx.theme().font_family.clone()),
-                        )
-                        .child(
-                            Button::new("browse_path")
-                                .outline()
-                                .icon(IconName::FolderOpen)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.handle_browse_directory(window, cx)
-                                })),
-                        ),
+                    h_flex().gap_2().child(Input::new(&self.path_input)).child(
+                        Button::new("browse_path")
+                            .outline()
+                            .icon(IconName::FolderOpen)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.handle_browse_directory(window, cx)
+                            })),
+                    ),
                 ]),
             )
     }
@@ -200,8 +199,13 @@ impl CollectionEditor {
 
         // Save collection to file
         if current_path.is_empty() {
-            tracing::warn!("Cannot save collection: no path specified");
-            // TODO: Show error to user
+            window.push_notification(
+                (
+                    NotificationType::Error,
+                    "Can't save collection, no path specified",
+                ),
+                cx,
+            );
             return;
         }
 
@@ -210,7 +214,7 @@ impl CollectionEditor {
         let collection_data_clone = collection_data.clone();
         let current_path_clone = current_path.clone();
 
-        let database_id = async_std::task::block_on(async move {
+        cx.spawn(async move |_, _| {
             app_database
                 .save_collection(&CollectionData {
                     id: None,
@@ -221,22 +225,12 @@ impl CollectionEditor {
                     updated_at: chrono::Utc::now(),
                 })
                 .await
-        });
-
-        let database_id = match database_id {
-            Ok(id) => {
-                tracing::info!("Collection saved to database with id: {}", id);
-                Some(id)
-            }
-            Err(e) => {
-                tracing::error!("Failed to save collection to database: {}", e);
-                None
-            }
-        };
+        })
+        .detach();
 
         // Use CollectionManager to save the collection with proper database ID
         let save_result = cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-            collection_manager.save_collection(&collection_data, &current_path, database_id)
+            collection_manager.save_collection(&collection_data, &current_path)
         });
 
         match save_result {

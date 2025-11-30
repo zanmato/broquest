@@ -1,7 +1,7 @@
 use gpui::{
-    Action, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Menu, MenuItem, ParentElement, Render, SharedString, Styled,
-    Subscription, Window, actions, div, prelude::FluentBuilder, px, svg,
+    Action, App, AppContext, BorrowAppContext, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, Menu, MenuItem, ParentElement, Render,
+    SharedString, Styled, Subscription, Window, actions, div, prelude::FluentBuilder, px, svg,
 };
 use gpui_component::{
     ActiveTheme, Root, TITLE_BAR_HEIGHT, Theme, ThemeRegistry, TitleBar, WindowExt,
@@ -17,10 +17,7 @@ use crate::{
     request_editor::{HttpMethod, RequestData},
 };
 
-actions!(
-    broquest_app,
-    [Quit, About, OpenNewCollectionTab, OpenCollection]
-);
+actions!(broquest_app, [Quit, OpenNewCollectionTab, OpenCollection]);
 
 #[derive(Action, Clone, PartialEq)]
 #[action(namespace = broquest_app, no_json)]
@@ -81,7 +78,7 @@ impl BroquestApp {
             move |_app, _panel, event, window, cx| {
                 if let AppEvent::CreateNewRequestTab {
                     request_data,
-                    collection_id,
+                    collection_path,
                 } = event
                 {
                     tracing::info!(
@@ -91,17 +88,17 @@ impl BroquestApp {
                     editor_panel_clone.update(cx, |editor_panel, cx| {
                         editor_panel.create_and_add_request_tab(
                             request_data.clone(),
-                            *collection_id,
+                            collection_path.to_string(),
                             window,
                             cx,
                         );
                     });
                 }
 
-                if let AppEvent::NewRequest { collection_id } = event {
+                if let AppEvent::NewRequest { collection_path } = event {
                     tracing::info!(
-                        "Received NewRequest event for collection_id: {:?}",
-                        collection_id
+                        "Received NewRequest event for collection_path: {:?}",
+                        collection_path
                     );
 
                     // Create a new empty request
@@ -120,7 +117,7 @@ impl BroquestApp {
                     editor_panel_clone.update(cx, |editor_panel, cx| {
                         editor_panel.create_and_add_request_tab(
                             request_data.clone(),
-                            *collection_id,
+                            collection_path.to_string(),
                             window,
                             cx,
                         );
@@ -130,7 +127,6 @@ impl BroquestApp {
                 if let AppEvent::CreateNewCollectionTab {
                     collection_data,
                     collection_path,
-                    collection_id,
                 } = event
                 {
                     tracing::info!(
@@ -140,12 +136,15 @@ impl BroquestApp {
                     editor_panel_clone.update(cx, |editor_panel, cx| {
                         editor_panel.create_and_add_collection_tab(
                             collection_data.clone(),
-                            collection_path.clone(),
-                            *collection_id,
+                            collection_path.to_string(),
                             window,
                             cx,
                         );
                     });
+                }
+
+                if let AppEvent::CollectionDeleted { collection_path } = event {
+                    tracing::info!("Received CollectionDeleted event for: {}", collection_path);
                 }
             },
         );
@@ -194,17 +193,12 @@ impl BroquestApp {
         cx.quit();
     }
 
-    fn on_about(&mut self, _: &About, _: &mut Window, _: &mut Context<Self>) {
-        println!("Broquest API Client");
-    }
-
     fn on_open_new_collection_tab(
         &mut self,
         _: &OpenNewCollectionTab,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        tracing::info!("Opening new collection tab");
         // Create an empty collection and open it in a new tab
         let collection_data = crate::collection_types::create_empty_collection();
         let collection_path = "".to_string();
@@ -214,7 +208,6 @@ impl BroquestApp {
             editor_panel.create_and_add_collection_tab(
                 collection_data,
                 collection_path,
-                None,
                 window,
                 cx,
             );
@@ -246,32 +239,38 @@ impl BroquestApp {
                     let _ = window
                         .update(|window, cx| {
                             // Load the collection with CollectionManager
-                            let collection_manager = CollectionManager::global(cx);
-                            let collection = match collection_manager
-                                .load_collection_toml(std::path::PathBuf::from(dir_str).as_path())
-                            {
-                                Ok(col) => Some(col),
-                                Err(e) => {
-                                    window.push_notification(
-                                        (NotificationType::Error, "Failed to load collection"),
-                                        cx,
-                                    );
+                            let collection = cx.update_global(
+                                |collection_manager: &mut CollectionManager, cx| {
+                                    match collection_manager.load_collection_toml(
+                                        std::path::PathBuf::from(dir_str).as_path(),
+                                    ) {
+                                        Ok(col) => Some(col),
+                                        Err(e) => {
+                                            window.push_notification(
+                                                (
+                                                    NotificationType::Error,
+                                                    "Failed to load collection",
+                                                ),
+                                                cx,
+                                            );
 
-                                    tracing::error!(
-                                        "Failed to load collection from {}: {}",
-                                        dir_str,
-                                        e
-                                    );
+                                            tracing::error!(
+                                                "Failed to load collection from {}: {}",
+                                                dir_str,
+                                                e
+                                            );
 
-                                    None
-                                }
-                            };
+                                            None
+                                        }
+                                    }
+                                },
+                            );
 
                             // Save the collection to the database and get its ID
                             if let Some(collection) = collection {
                                 let app_database = AppDatabase::global(cx).clone();
 
-                                let _ = async_std::task::block_on(async {
+                                let database_id = async_std::task::block_on(async {
                                     app_database
                                         .save_collection(&CollectionData {
                                             id: None,
@@ -284,19 +283,48 @@ impl BroquestApp {
                                         .await
                                 });
 
-                                window.push_notification(
-                                    (
-                                        NotificationType::Success,
-                                        SharedString::from(
-                                            format!(
-                                                "Opened {}",
-                                                collection.collection.name.clone()
-                                            )
-                                            .to_string(),
-                                        ),
-                                    ),
-                                    cx,
-                                );
+                                match database_id {
+                                    Ok(_collection_id) => {
+                                        // Add collection to CollectionManager cache
+                                        cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
+                                            match collection_manager.save_collection(&collection, dir_str) {
+                                                Ok(()) => {
+                                                    tracing::info!("Added collection '{}' to CollectionManager cache", collection.collection.name);
+                                                }
+                                                Err(e) => {
+                                                    tracing::error!("Failed to add collection to cache: {}", e);
+                                                }
+                                            }
+                                        });
+
+                                        // Collection was successfully added to the cache
+                                        tracing::info!("Collection '{}' was added to the CollectionManager cache.", collection.collection.name);
+
+                                        window.push_notification(
+                                            (
+                                                NotificationType::Success,
+                                                SharedString::from(
+                                                    format!(
+                                                        "Opened {}",
+                                                        collection.collection.name.clone()
+                                                    )
+                                                    .to_string(),
+                                                ),
+                                            ),
+                                            cx,
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to save collection to database: {}", e);
+                                        window.push_notification(
+                                            (
+                                                NotificationType::Error,
+                                                "Failed to save collection to database"
+                                            ),
+                                            cx,
+                                        );
+                                    }
+                                }
                             }
                         })
                         .ok();
@@ -361,7 +389,6 @@ impl Render for BroquestApp {
             .flex()
             .flex_col()
             .on_action(cx.listener(Self::on_quit))
-            .on_action(cx.listener(Self::on_about))
             .on_action(cx.listener(Self::on_open_new_collection_tab))
             .on_action(cx.listener(Self::on_open_collection_dialog))
             .on_action(cx.listener(Self::on_switch_theme))

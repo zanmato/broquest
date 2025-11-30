@@ -12,6 +12,7 @@ pub struct AppDatabase {
 
 #[derive(Debug, Clone)]
 pub struct CollectionData {
+    #[allow(dead_code)]
     pub id: Option<i64>,
     pub name: String,
     pub path: String,

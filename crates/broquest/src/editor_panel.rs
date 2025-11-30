@@ -32,7 +32,7 @@ pub struct RequestTab {
     pub collection_name: String,
     pub request_editor: Entity<RequestEditor>,
     #[allow(dead_code)]
-    pub collection_id: Option<i64>, // Link to the collection this request belongs to
+    pub collection_path: String, // Link to the collection this request belongs to
 }
 
 pub struct CollectionTab {
@@ -41,7 +41,7 @@ pub struct CollectionTab {
     pub title: String,
     pub collection_editor: Entity<CollectionEditor>,
     #[allow(dead_code)]
-    pub collection_id: Option<i64>, // Link to the collection this belongs to
+    pub collection_path: String, // Link to the collection this belongs to
 }
 
 impl EventEmitter<AppEvent> for Tab {}
@@ -81,36 +81,32 @@ impl EditorPanel {
     pub fn create_and_add_request_tab(
         &mut self,
         request_data: RequestData,
-        collection_id: Option<i64>,
+        collection_path: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let tab_id = self.next_tab_id;
         self.next_tab_id += 1;
 
-        let collection_suffix = if let Some(collection_id) = collection_id {
-            tracing::info!(
-                "Getting collection name for collection_id: {}",
-                collection_id
+        tracing::info!(
+            "Getting collection name for collection_path: {}",
+            collection_path
+        );
+        let collection_suffix = CollectionManager::global(cx)
+            .get_collection_by_path(&collection_path)
+            .map_or_else(
+                || {
+                    tracing::error!("Collection not found for path: {}", collection_path);
+                    String::new()
+                },
+                |collection_info| collection_info.data.name.clone(),
             );
-            CollectionManager::global(cx)
-                .get_collection_by_id(collection_id)
-                .map_or_else(
-                    || {
-                        tracing::error!("Collection not found for id: {}", collection_id);
-                        String::new()
-                    },
-                    |collection_info| collection_info.data.name.clone(),
-                )
-        } else {
-            String::new()
-        };
 
         let request_editor = cx.new(|cx| RequestEditor::new(window, cx));
 
         // Set the request data from the collection
         request_editor.update(cx, |editor, cx| {
-            editor.set_collection_id(collection_id);
+            editor.set_collection_path(Some(collection_path.clone()));
             editor.set_request_data(request_data.clone(), window, cx);
         });
 
@@ -119,8 +115,8 @@ impl EditorPanel {
             editor.setup_url_query_binding(window, cx);
         });
 
-        // Load environments for this request if it belongs to a collection
-        self.load_environments_for_request(collection_id, &request_editor, window, cx);
+        // Load environments for this request
+        self.load_environments_for_request(Some(&collection_path), &request_editor, window, cx);
 
         let request_tab = RequestTab {
             id: tab_id,
@@ -128,7 +124,7 @@ impl EditorPanel {
             method: request_data.method,
             collection_name: collection_suffix.clone(),
             request_editor: request_editor.clone(),
-            collection_id,
+            collection_path: collection_path.clone(),
         };
 
         // Set up subscriptions to update tab title when request name or method changes
@@ -189,16 +185,16 @@ impl EditorPanel {
     /// Load environments from global CollectionManager and set them on a request editor
     fn load_environments_for_request(
         &mut self,
-        collection_id: Option<i64>,
+        collection_path: Option<&str>,
         request_editor: &Entity<RequestEditor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(collection_id) = collection_id {
+        if let Some(collection_path) = collection_path {
             // Get the global CollectionManager
             let collection_manager = CollectionManager::global(cx);
             if let Some(environments) =
-                collection_manager.get_collection_environments(collection_id)
+                collection_manager.get_collection_environments(collection_path)
             {
                 tracing::info!(
                     "Loading {} environments for request editor",
@@ -208,7 +204,7 @@ impl EditorPanel {
                     editor.set_environments(&environments, window, cx);
                 });
             } else {
-                tracing::warn!("No environments found for collection_id: {}", collection_id);
+                tracing::warn!("No environments found for collection_path: {}", collection_path);
             }
         }
     }
@@ -218,7 +214,6 @@ impl EditorPanel {
         &mut self,
         collection_data: CollectionToml,
         collection_path: String,
-        collection_id: Option<i64>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -237,7 +232,6 @@ impl EditorPanel {
                 cx,
                 collection_data.clone(),
                 collection_path.clone(),
-                collection_id,
             )
         });
 
@@ -245,7 +239,7 @@ impl EditorPanel {
             id: tab_id,
             title: collection_tab_title,
             collection_editor: collection_editor.clone(),
-            collection_id,
+            collection_path,
         };
 
         // Set up subscription to update tab title when collection name changes
