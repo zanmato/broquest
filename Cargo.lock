@@ -2463,7 +2463,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.0-preview0"
-source = "git+https://github.com/zanmato/gpui-component/?branch=single-line-code-editor#126a3cdcb4720918689281510084a4fd1b9b88e1"
+source = "git+https://github.com/longbridge/gpui-component/#7e479aa7f2ea61b4cb57c14d878d71d57606b87c"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2529,7 +2529,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.5.0-preview0"
-source = "git+https://github.com/zanmato/gpui-component/?branch=single-line-code-editor#126a3cdcb4720918689281510084a4fd1b9b88e1"
+source = "git+https://github.com/longbridge/gpui-component/#7e479aa7f2ea61b4cb57c14d878d71d57606b87c"
 dependencies = [
  "proc-macro2",
  "quote",

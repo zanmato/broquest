@@ -16,10 +16,10 @@ description = "Desktop API Client"
 gpui = { version = "0.2.2" }
 gpui-macros = "0.2.2"
 # longbridge/gpui-component
-gpui-component = { git = "https://github.com/zanmato/gpui-component/", branch = "single-line-code-editor", features = [
+gpui-component = { git = "https://github.com/longbridge/gpui-component/", features = [
     "tree-sitter-languages",
 ] }
-gpui-component-macros = { git = "https://github.com/zanmato/gpui-component/", branch = "single-line-code-editor" }
+gpui-component-macros = { git = "https://github.com/longbridge/gpui-component/" }
 
 # Database dependencies
 sqlx = { version = "0.8", features = [
