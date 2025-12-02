@@ -60,6 +60,7 @@ pub struct TreeItemMetadata {
     pub kind: TreeItemKind,
     pub icon: TreeItemIcon,
     pub collection_path: String, // Path to collection directory for collection items
+    pub group_path: Option<String>, // Path to group directory for group items
 }
 
 impl CollectionsPanel {
@@ -101,7 +102,7 @@ impl CollectionsPanel {
         self.build_tree_from_collections(&collection_infos_owned, cx);
     }
 
-    /// Build the complete tree with all collections and their requests
+    /// Build the complete tree with all collections, groups, and requests
     fn build_tree_from_collections(
         &mut self,
         collection_infos: &[crate::collection_manager::CollectionInfo],
@@ -117,19 +118,16 @@ impl CollectionsPanel {
         for collection_info in collection_infos {
             let collection_data = &collection_info.data;
             let collection_path = &collection_data.path;
-            let item_id = format!("collection_{}", collection_path.replace('/', "_"));
-
-            // Build child tree items for all requests
-            let requests: Vec<crate::request_editor::RequestData> =
-                collection_info.requests.values().cloned().collect();
+            let collection_id = format!("collection_{}", collection_path.replace('/', "_"));
 
             let mut child_items = Vec::new();
-            for (index, request) in requests.iter().enumerate() {
+
+            // Add direct collection requests (root level)
+            for (index, (file_path, request)) in collection_info.requests.iter().enumerate() {
                 let request_id = format!("request_{}_{}", collection_path.replace('/', "_"), index);
                 let request_tree_item =
                     TreeItem::new(request_id.clone(), request.name.clone()).children(vec![]);
 
-                // Store metadata for this request
                 let request_metadata = TreeItemMetadata {
                     name: request.name.clone(),
                     kind: TreeItemKind::Request,
@@ -139,6 +137,7 @@ impl CollectionsPanel {
                         color: request.method.get_color(cx),
                     },
                     collection_path: collection_data.path.clone(),
+                    group_path: None, // Root level request
                 };
 
                 self.tree_item_metadata
@@ -147,11 +146,70 @@ impl CollectionsPanel {
                 child_items.push(request_tree_item);
             }
 
-            total_requests += requests.len();
+            // Add group folders and their requests
+            for (group_name, group_info) in &collection_info.groups {
+                let group_id =
+                    format!("group_{}_{}", collection_path.replace('/', "_"), group_name);
 
-            // Create the collection tree item with all its requests as children
+                // Build child items for group requests
+                let mut group_child_items = Vec::new();
+                for (index, (file_path, request)) in group_info.requests.iter().enumerate() {
+                    let request_id = format!(
+                        "request_{}_{}_{}",
+                        collection_path.replace('/', "_"),
+                        group_name,
+                        index
+                    );
+                    let request_tree_item =
+                        TreeItem::new(request_id.clone(), request.name.clone()).children(vec![]);
+
+                    let request_metadata = TreeItemMetadata {
+                        name: request.name.clone(),
+                        kind: TreeItemKind::Request,
+                        icon: TreeItemIcon {
+                            icon: None,
+                            prefix: Some(SharedString::from(request.method.as_str())),
+                            color: request.method.get_color(cx),
+                        },
+                        collection_path: collection_data.path.clone(),
+                        group_path: Some(format!("{}/{}", collection_path, group_name)),
+                    };
+
+                    self.tree_item_metadata
+                        .insert(request_id.clone(), request_metadata);
+                    self.request_data_map.insert(request_id, request.clone());
+                    group_child_items.push(request_tree_item);
+                }
+
+                total_requests += group_info.requests.len();
+
+                // Create group tree item with its requests as children
+                let group_tree_item =
+                    TreeItem::new(group_id.clone(), group_name.clone()).children(group_child_items);
+
+                // Store metadata for this group
+                let group_metadata = TreeItemMetadata {
+                    name: group_name.clone(),
+                    kind: TreeItemKind::Group,
+                    icon: TreeItemIcon {
+                        icon: Some(IconName::Folder),
+                        prefix: None,
+                        color: cx.theme().magenta.into(), // Different color from collections
+                    },
+                    collection_path: collection_data.path.clone(),
+                    group_path: Some(format!("{}/{}", collection_path, group_name)),
+                };
+
+                self.tree_item_metadata.insert(group_id, group_metadata);
+                child_items.push(group_tree_item);
+            }
+
+            total_requests += collection_info.requests.len();
+
+            // Create the collection tree item with all its children
             let collection_tree_item =
-                TreeItem::new(item_id.clone(), collection_data.name.clone()).children(child_items);
+                TreeItem::new(collection_id.clone(), collection_data.name.clone())
+                    .children(child_items);
 
             // Store metadata for this collection
             let collection_metadata = TreeItemMetadata {
@@ -163,9 +221,11 @@ impl CollectionsPanel {
                     color: cx.theme().blue.into(),
                 },
                 collection_path: collection_data.path.clone(),
+                group_path: None,
             };
 
-            self.tree_item_metadata.insert(item_id, collection_metadata);
+            self.tree_item_metadata
+                .insert(collection_id, collection_metadata);
             tree_items.push(collection_tree_item);
         }
 
@@ -225,6 +285,26 @@ impl CollectionsPanel {
         // Emit NewRequest event to create the new request tab
         cx.emit(AppEvent::NewRequest {
             collection_path: collection_path.to_string().into(),
+            group_path: None,
+        });
+    }
+
+    /// Create a new request tab for a specific group
+    fn new_request_in_group_tab(
+        &mut self,
+        collection_path: &str,
+        group_path: &str,
+        cx: &mut Context<Self>,
+    ) {
+        tracing::info!(
+            "Creating new request tab for collection_path: {} in group: {}",
+            collection_path,
+            group_path
+        );
+
+        cx.emit(AppEvent::NewRequest {
+            collection_path: collection_path.to_string().into(),
+            group_path: Some(group_path.to_string().into()),
         });
     }
 
@@ -423,7 +503,26 @@ impl CollectionsPanel {
                             },
                         ))
                     }
-                    TreeItemKind::Group => this.label("Group"),
+                    TreeItemKind::Group => {
+                        let collection_path = metadata.collection_path.clone();
+                        let weak_panel_new = weak_panel.clone();
+                        let group_path = metadata.group_path.clone().unwrap_or_default();
+
+                        this.item(PopupMenuItem::new("New Request in Group").on_click(
+                            move |_, _window, cx| {
+                                // Create new request in this specific group
+                                if let Some(panel) = weak_panel_new.upgrade() {
+                                    panel.update(cx, |panel, cx| {
+                                        panel.new_request_in_group_tab(
+                                            &collection_path,
+                                            &group_path,
+                                            cx,
+                                        );
+                                    });
+                                }
+                            },
+                        ))
+                    }
                 }
             } else {
                 // Default context menu

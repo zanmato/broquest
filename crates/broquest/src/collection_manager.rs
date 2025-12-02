@@ -8,10 +8,18 @@ use std::fs;
 use std::path::Path;
 
 #[derive(Clone, Debug)]
+pub struct GroupInfo {
+    pub name: String,
+    pub requests: HashMap<String, RequestData>, // file_path -> RequestData within group
+    pub path: String, // Relative path from collection root
+}
+
+#[derive(Clone, Debug)]
 pub struct CollectionInfo {
     pub data: CollectionData,
     pub toml: CollectionToml,
     pub requests: HashMap<String, RequestData>, // file_path -> RequestData
+    pub groups: HashMap<String, GroupInfo>,     // group_name -> GroupInfo
 }
 
 pub struct CollectionManager {
@@ -69,13 +77,14 @@ impl CollectionManager {
                                     collection_data.path
                                 );
 
-                                // Load all requests in this collection
-                                let requests = self.load_collection_requests(collection_path)?;
+                                // Load all requests and groups in this collection
+                                let (requests, groups) = self.load_collection_structure(collection_path)?;
 
                                 let collection_info = CollectionInfo {
                                     data: collection_data,
                                     toml: collection_toml,
                                     requests,
+                                    groups,
                                 };
 
                                 self.collections
@@ -131,23 +140,48 @@ impl CollectionManager {
         Ok(collection_toml)
     }
 
-    /// Load all requests from a collection directory
-    pub fn load_collection_requests(
+    /// Load all requests and groups from a collection directory
+    pub fn load_collection_structure(
         &self,
         collection_dir: &Path,
-    ) -> Result<std::collections::HashMap<String, RequestData>> {
+    ) -> Result<(std::collections::HashMap<String, RequestData>, std::collections::HashMap<String, GroupInfo>)> {
         let mut requests = std::collections::HashMap::new();
+        let mut groups = std::collections::HashMap::new();
 
         for entry in fs::read_dir(collection_dir)? {
             let entry = entry?;
             let path = entry.path();
 
-            // Load .toml files that aren't collection.toml or in environments directory
+            // Skip collection.toml and environments directory
             if let Some(filename) = path.file_name()
                 && let Some(filename_str) = filename.to_str()
+                && (filename_str == "collection.toml" || filename_str == "environments")
+            {
+                continue;
+            }
+
+            // Check if this is a directory (potential group)
+            if path.is_dir() {
+                // Handle group directory
+                let group_name = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or_else(|| anyhow::anyhow!("Invalid group directory name"))?;
+
+                let group_requests = self.load_group_requests(&path)?;
+                let group_info = GroupInfo {
+                    name: group_name.to_string(),
+                    requests: group_requests,
+                    path: path.strip_prefix(collection_dir)
+                        .map_err(|_| anyhow::anyhow!("Failed to get relative group path"))?
+                        .to_string_lossy()
+                        .to_string(),
+                };
+                groups.insert(group_name.to_string(), group_info);
+            }
+            // Handle individual request files at collection root
+            else if let Some(filename) = path.file_name()
+                && let Some(filename_str) = filename.to_str()
                 && filename_str.ends_with(".toml")
-                && filename_str != "collection.toml"
-                && !path.parent().unwrap().ends_with("environments")
             {
                 match self.load_request_file(&path) {
                     Ok(request) => {
@@ -155,7 +189,37 @@ impl CollectionManager {
                         requests.insert(path_str, request);
                     }
                     Err(e) => {
-                        tracing::error!("Failed to load request from {:?}: {}", path, e)
+                        tracing::error!("Failed to load request from {:?}: {}", path, e);
+                    }
+                }
+            }
+        }
+
+        Ok((requests, groups))
+    }
+
+    /// Load requests from a group directory
+    fn load_group_requests(
+        &self,
+        group_dir: &Path,
+    ) -> Result<std::collections::HashMap<String, RequestData>> {
+        let mut requests = std::collections::HashMap::new();
+
+        for entry in fs::read_dir(group_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if let Some(filename) = path.file_name()
+                && let Some(filename_str) = filename.to_str()
+                && filename_str.ends_with(".toml")
+            {
+                match self.load_request_file(&path) {
+                    Ok(request) => {
+                        let path_str = path.to_string_lossy().to_string();
+                        requests.insert(path_str, request);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load request from group directory {:?}: {}", path, e);
                     }
                 }
             }
@@ -196,6 +260,7 @@ impl CollectionManager {
             },
             toml: collection_data.clone(),
             requests: HashMap::new(), // This will be populated when requests are loaded
+            groups: HashMap::new(), // This will be populated when groups are loaded
         };
 
         self.collections.insert(path.to_string(), collection_info);
@@ -231,15 +296,36 @@ impl CollectionManager {
         request_data: &RequestData,
         request_name: &str,
     ) -> Result<()> {
+        self.save_request_to_group(collection_path, request_data, request_name, None)
+    }
+
+    /// Save a request to a collection directory or group
+    pub fn save_request_to_group(
+        &mut self,
+        collection_path: &str,
+        request_data: &RequestData,
+        request_name: &str,
+        group_path: Option<&str>,
+    ) -> Result<()> {
         // Get collection info as mutable reference
         let collection_info = self
             .collections
             .get_mut(collection_path)
             .ok_or_else(|| anyhow::anyhow!("Collection with path {} not found", collection_path))?;
 
-        // Create the full file path
+        // Determine the target directory
         let collection_dir_path = Path::new(&collection_info.data.path);
-        let request_file_path = collection_dir_path.join(format!("{}.toml", request_name));
+        let target_dir = if let Some(group_path) = group_path {
+            collection_dir_path.join(group_path)
+        } else {
+            collection_dir_path.to_path_buf()
+        };
+
+        // Ensure directory exists
+        fs::create_dir_all(&target_dir)?;
+
+        // Create the full file path
+        let request_file_path = target_dir.join(format!("{}.toml", request_name));
 
         // Convert RequestData to RequestToml
         let request_toml: RequestToml = request_data.clone().into();
@@ -254,16 +340,51 @@ impl CollectionManager {
 
         // Check if request already exists by path and update, otherwise insert
         let request_path_str = request_file_path.to_string_lossy().to_string();
-        let is_update = collection_info.requests.contains_key(&request_path_str);
 
-        collection_info
-            .requests
-            .insert(request_path_str.clone(), request_data.clone());
+        // Determine if this is a group request or root request
+        let is_update = if let Some(group_path) = group_path {
+            // For group requests, store in the appropriate group
+            let group_name = Path::new(group_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(group_path);
+
+            if let Some(group_info) = collection_info.groups.get_mut(group_name) {
+                let is_update = group_info.requests.contains_key(&request_path_str);
+                group_info.requests.insert(request_path_str.clone(), request_data.clone());
+                is_update
+            } else {
+                // Group doesn't exist, create it
+                tracing::warn!("Group '{}' not found in collection, creating new group", group_name);
+                let mut new_group_requests = std::collections::HashMap::new();
+                new_group_requests.insert(request_path_str.clone(), request_data.clone());
+
+                let new_group = GroupInfo {
+                    name: group_name.to_string(),
+                    requests: new_group_requests,
+                    path: group_path.to_string(),
+                };
+                collection_info.groups.insert(group_name.to_string(), new_group);
+                false // New group, so this is a new request
+            }
+        } else {
+            // Root level request
+            let is_update = collection_info.requests.contains_key(&request_path_str);
+            collection_info.requests.insert(request_path_str.clone(), request_data.clone());
+            is_update
+        };
+
+        let location_info = if let Some(group_path) = group_path {
+            format!("group '{}' in collection", group_path)
+        } else {
+            format!("collection")
+        };
 
         tracing::info!(
-            "Request '{}' {} successfully to collection '{}'",
+            "Request '{}' {} successfully to {} '{}'",
             request_name,
             if is_update { "updated" } else { "saved" },
+            location_info,
             collection_info.data.name
         );
 

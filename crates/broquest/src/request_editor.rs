@@ -297,6 +297,7 @@ pub struct RequestEditor {
     active_response_tab: ResponseTab,
     is_loading: bool,
     collection_path: Option<String>,
+    group_path: Option<String>,
     method_select: Entity<SelectState<Vec<HttpMethod>>>,
     environment_select: Entity<SelectState<Vec<EnvironmentOption>>>,
     content_type_select: Entity<SelectState<Vec<ContentType>>>,
@@ -396,6 +397,7 @@ impl RequestEditor {
             active_response_tab: ResponseTab::Response,
             is_loading: false,
             collection_path: None,
+            group_path: None,
             method_select,
             environment_select,
             content_type_select,
@@ -416,6 +418,10 @@ impl RequestEditor {
 
     pub fn set_collection_path(&mut self, collection_path: Option<String>) {
         self.collection_path = collection_path;
+    }
+
+    pub fn set_group_path(&mut self, group_path: Option<String>) {
+        self.group_path = group_path;
     }
 
     pub fn set_request_data(
@@ -920,8 +926,13 @@ impl RequestEditor {
         if let Some(ref collection_path) = self.collection_path {
             // Use cx.update_global to call the save_request method on CollectionManager
             cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-                match collection_manager.save_request(collection_path, &request_data, request_name)
-                {
+                let group_path_ref = self.group_path.as_ref().map(|gp| gp.as_str());
+                match collection_manager.save_request_to_group(
+                    collection_path,
+                    &request_data,
+                    request_name,
+                    group_path_ref
+                ) {
                     Ok(()) => {
                         tracing::info!("Request saved successfully");
                     }

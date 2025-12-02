@@ -82,6 +82,7 @@ impl EditorPanel {
         &mut self,
         request_data: RequestData,
         collection_path: String,
+        group_path: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -107,6 +108,9 @@ impl EditorPanel {
         // Set the request data from the collection
         request_editor.update(cx, |editor, cx| {
             editor.set_collection_path(Some(collection_path.clone()));
+            if let Some(ref group_path) = group_path {
+                editor.set_group_path(Some(group_path.clone()));
+            }
             editor.set_request_data(request_data.clone(), window, cx);
         });
 

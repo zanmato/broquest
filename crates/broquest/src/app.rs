@@ -89,16 +89,17 @@ impl BroquestApp {
                         editor_panel.create_and_add_request_tab(
                             request_data.clone(),
                             collection_path.to_string(),
+                            None,
                             window,
                             cx,
                         );
                     });
                 }
 
-                if let AppEvent::NewRequest { collection_path } = event {
+                if let AppEvent::NewRequest { collection_path, group_path } = event {
                     tracing::info!(
-                        "Received NewRequest event for collection_path: {:?}",
-                        collection_path
+                        "Received NewRequest event for collection_path: {:?}, group_path: {:?}",
+                        collection_path, group_path
                     );
 
                     // Create a new empty request
@@ -118,6 +119,7 @@ impl BroquestApp {
                         editor_panel.create_and_add_request_tab(
                             request_data.clone(),
                             collection_path.to_string(),
+                            group_path.as_ref().map(|gp| gp.to_string()),
                             window,
                             cx,
                         );
