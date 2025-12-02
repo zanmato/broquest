@@ -38,3 +38,4 @@ llrt_modules = { workspace = true }
 
 # URL parsing and highlighting
 tree-sitter-url = { path = "../tree-sitter-url" }
+tree-sitter-xml = { workspace = true }

@@ -46,6 +46,7 @@ tokio = { version = "1.0", features = ["full"] }
 dirs = "5"
 toml = "0.8"
 anyhow = "1.0"
+tree-sitter-xml = { version = "0.7" }
 
 # Script execution dependencies
 rquickjs = { git = "https://github.com/DelSkayn/rquickjs.git", version = "0.10.0", features = [

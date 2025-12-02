@@ -19,5 +19,16 @@ pub fn register_url_highlighting(_cx: &mut App) {
         ),
     );
 
-    tracing::info!("URL highlighting registered successfully with tree-sitter-url grammar");
+    // Register XML language using tree-sitter-xml parser
+    LanguageRegistry::singleton().register(
+        "xml",
+        &LanguageConfig::new(
+            "xml",
+            tree_sitter_xml::LANGUAGE_XML.into(),
+            vec![],
+            tree_sitter_xml::XML_HIGHLIGHT_QUERY,
+            "",
+            "",
+        ),
+    );
 }
