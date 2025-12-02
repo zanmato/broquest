@@ -114,6 +114,5 @@ jobs:
       with:
         files: |
           artifacts/broquest-*/broquest*
-          artifacts/broquest-deb/broquest_*.deb
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
