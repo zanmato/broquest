@@ -4,8 +4,8 @@ use anyhow::Result;
 use rquickjs::{Context, Ctx, Function, Object, Runtime};
 use tracing::{error, info};
 
-// Base64 engine for compatibility
-use base64::{Engine as _, engine::general_purpose};
+// LLRT modules for buffer, crypto, and URL support
+use llrt_modules::{buffer, crypto, url};
 
 /// Script execution service using rquickjs for JavaScript execution
 #[derive(Clone)]
@@ -215,78 +215,19 @@ impl ScriptExecutionService {
         Ok(())
     }
 
+    
     /// Setup Node.js compatibility functions
     fn setup_nodejs_compatibility<'js>(&self, ctx: Ctx<'js>) -> Result<()> {
-        // btoa function (base64 encoding) - simplified for now
-        let btoa_fn = Function::new(
-            ctx.clone(),
-            |data: String| -> Result<String, rquickjs::Error> {
-                Ok(general_purpose::STANDARD.encode(data.as_bytes()))
-            },
-        )?;
-        ctx.globals().set("btoa", btoa_fn)?;
+        // Initialize LLRT modules following the pattern from llrt_modules README
 
-        // atob function (base64 decoding) - simplified for now
-        let atob_fn = Function::new(
-            ctx.clone(),
-            |data: String| -> Result<String, rquickjs::Error> {
-                match general_purpose::STANDARD.decode(data.as_bytes()) {
-                    Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
-                    Err(_) => Err(rquickjs::Error::from(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Base64 decode error"
-                    ))),
-                }
-            },
-        )?;
-        ctx.globals().set("atob", atob_fn)?;
+        // Initialize buffer module - this automatically sets up btoa, atob, and Buffer globals
+        buffer::init(&ctx)?;
 
-        // Buffer.from implementation (simplified version for common use cases)
-        let buffer_from_fn = Function::new(
-            ctx.clone(),
-            move |ctx: Ctx<'js>, input: rquickjs::Value<'js>, _encoding: Option<String>| -> Result<rquickjs::Value<'js>, rquickjs::Error> {
-                match input {
-                    value if value.is_string() => {
-                        let s = rquickjs::String::from_value(value)?;
-                        let string = s.to_string()?;
-                        let bytes = string.as_bytes().to_vec();
+        // Initialize crypto module - this sets up crypto.* global functions
+        crypto::init(&ctx)?;
 
-                        // Create a Uint8Array to represent the Buffer
-                        let array = rquickjs::Array::new(ctx)?;
-                        for (i, byte) in bytes.iter().enumerate() {
-                            array.set(i, *byte as i32)?;
-                        }
-                        Ok(array.into_value())
-                    },
-                    value if value.is_array() => {
-                        // If input is an array, treat it as byte values
-                        let arr = rquickjs::Array::from_value(value)?;
-                        let len = arr.len();
-                        let mut bytes = Vec::with_capacity(len);
-                        for i in 0..len {
-                            let value: i32 = arr.get(i)?;
-                            bytes.push(value as u8);
-                        }
-
-                        // Create a Uint8Array
-                        let array = rquickjs::Array::new(ctx)?;
-                        for (i, byte) in bytes.iter().enumerate() {
-                            array.set(i, *byte as i32)?;
-                        }
-                        Ok(array.into_value())
-                    },
-                    _ => Err(rquickjs::Error::from(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "Unsupported input type for Buffer.from"
-                    ))),
-                }
-            },
-        )?;
-
-        // Create Buffer object
-        let buffer_obj = Object::new(ctx.clone())?;
-        buffer_obj.set("from", buffer_from_fn)?;
-        ctx.globals().set("Buffer", buffer_obj)?;
+        // Initialize url module - this sets up URL and URLSearchParams globals
+        url::init(&ctx)?;
 
         Ok(())
     }

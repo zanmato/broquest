@@ -48,8 +48,11 @@ toml = "0.8"
 anyhow = "1.0"
 
 # Script execution dependencies
-rquickjs = { version = "0.10", features = ["parallel", "macro"] }
+rquickjs = { git = "https://github.com/DelSkayn/rquickjs.git", version = "0.10.0", features = ["parallel", "macro"] }
 base64 = "0.21"
+
+# LLRT modules for buffer, crypto, and URL support
+llrt_modules = { path = "vendor/llrt/llrt_modules", features = ["buffer", "crypto", "url"] }
 
 [workspace.lints.clippy]
 almost_complete_range = "allow"

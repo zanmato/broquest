@@ -1,0 +1,3 @@
+[submodule "vendor/llrt"]
+	path = vendor/llrt
+	url = https://github.com/awslabs/llrt.git
