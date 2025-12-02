@@ -53,7 +53,6 @@ rquickjs = { git = "https://github.com/DelSkayn/rquickjs.git", version = "0.10.0
     "parallel",
     "macro",
 ] }
-base64 = "0.21"
 
 # LLRT modules for buffer, crypto, and URL support
 llrt_modules = { path = "vendor/llrt/llrt_modules", features = [

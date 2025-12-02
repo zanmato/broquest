@@ -31,7 +31,6 @@ thiserror = { workspace = true }
 
 # Script execution dependencies
 rquickjs = { workspace = true }
-base64 = { workspace = true }
 
 # LLRT modules for buffer, crypto, and URL support
 llrt_modules = { workspace = true }
