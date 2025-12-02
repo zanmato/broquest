@@ -123,7 +123,7 @@ impl CollectionsPanel {
             let mut child_items = Vec::new();
 
             // Add direct collection requests (root level)
-            for (index, (file_path, request)) in collection_info.requests.iter().enumerate() {
+            for (index, (_file_path, request)) in collection_info.requests.iter().enumerate() {
                 let request_id = format!("request_{}_{}", collection_path.replace('/', "_"), index);
                 let request_tree_item =
                     TreeItem::new(request_id.clone(), request.name.clone()).children(vec![]);
@@ -153,7 +153,7 @@ impl CollectionsPanel {
 
                 // Build child items for group requests
                 let mut group_child_items = Vec::new();
-                for (index, (file_path, request)) in group_info.requests.iter().enumerate() {
+                for (index, (_file_path, request)) in group_info.requests.iter().enumerate() {
                     let request_id = format!(
                         "request_{}_{}_{}",
                         collection_path.replace('/', "_"),
@@ -251,7 +251,7 @@ impl CollectionsPanel {
             return;
         };
 
-        match collection_manager.load_collection_toml(std::path::Path::new(collection_path)) {
+        match collection_manager.read_collection_toml(std::path::Path::new(collection_path)) {
             Ok(collection_data) => {
                 tracing::info!(
                     "Successfully loaded collection data: {}",
@@ -358,7 +358,6 @@ impl CollectionsPanel {
         cx.emit(AppEvent::CollectionDeleted {
             collection_path: collection_path_for_event,
         });
-        tracing::info!("end delete collection");
     }
 
     /// Delete a request through CollectionManager
@@ -413,7 +412,7 @@ impl CollectionsPanel {
     fn build_context_menu(
         &self,
         item: &TreeItem,
-        weak_panel: gpui::WeakEntity<Self>,
+        cx: &mut Context<Self>,
     ) -> impl Fn(
         gpui_component::menu::PopupMenu,
         &mut Window,
@@ -421,106 +420,81 @@ impl CollectionsPanel {
     ) -> gpui_component::menu::PopupMenu
     + 'static {
         let item = item.clone();
+        let entity = cx.entity();
         let metadata = self.get_tree_item_metadata(&item.id).cloned();
 
-        move |this, _window, _cx| {
+        move |this, window, _cx| {
             // Build context menu based on item type using metadata
             if let Some(metadata) = &metadata {
                 match metadata.kind {
-                    TreeItemKind::Collection => {
-                        let collection_name = metadata.name.clone();
-                        let collection_name_open = collection_name.clone();
-                        let collection_name_new = collection_name.clone();
-                        let weak_panel_clone = weak_panel.clone();
-                        let weak_panel_new = weak_panel.clone();
-                        let weak_panel_delete = weak_panel.clone();
-                        let collection_path = metadata.collection_path.clone();
-                        let collection_path_for_new_request = collection_path.clone();
-
-                        this.item(PopupMenuItem::new("Open Collection").on_click({
-                            let collection_path = collection_path.clone();
-                            move |_, _window, cx| {
-                                tracing::info!("Open collection: {}", collection_name_open);
-                                {
-                                    // Use the weak_panel to call open_collection_tab
-                                    if let Some(panel) = weak_panel_clone.upgrade() {
-                                        panel.update(cx, |panel, cx| {
-                                            panel.open_collection_tab(&collection_path, cx);
-                                        });
-                                    }
-                                }
-                            }
-                        }))
+                    TreeItemKind::Collection => this
                         .item(
-                            PopupMenuItem::new("New Request").on_click(move |_, _window, cx| {
-                                tracing::info!(
-                                    "New request for collection: {}",
-                                    collection_name_new
-                                );
-
-                                // Call new_request_tab method through the panel context
-                                if let Some(panel) = weak_panel_new.upgrade() {
-                                    panel.update(cx, |panel, cx| {
-                                        panel.new_request_tab(&collection_path_for_new_request, cx);
-                                    });
-                                }
-                            }),
+                            PopupMenuItem::new("Open Collection").on_click(window.listener_for(
+                                &entity,
+                                {
+                                    let collection_path = metadata.collection_path.clone();
+                                    let collection_name = metadata.name.clone();
+                                    move |this, _, window, cx| {
+                                        tracing::info!("Open collection: {}", collection_name);
+                                        this.open_collection_tab(&collection_path, cx);
+                                        window.focus_prev();
+                                    }
+                                },
+                            )),
+                        )
+                        .item(
+                            PopupMenuItem::new("New Request").on_click(window.listener_for(
+                                &entity,
+                                {
+                                    let collection_path = metadata.collection_path.clone();
+                                    move |this, _, window, cx| {
+                                        this.new_request_tab(&collection_path, cx);
+                                        window.focus_prev();
+                                    }
+                                },
+                            )),
                         )
                         .separator()
-                        .item(
-                            PopupMenuItem::new("Remove Collection").on_click({
+                        .item(PopupMenuItem::new("Remove Collection").on_click(
+                            window.listener_for(&entity, {
                                 let collection_path = metadata.collection_path.clone();
-                                move |_, window, cx| {
+                                move |this, _, window, cx| {
                                     tracing::info!("Remove collection");
-
-                                    // Call delete_collection method through the panel context
-                                    if let Some(panel) = weak_panel_delete.upgrade() {
-                                        panel.update(cx, |panel, cx| {
-                                            panel.delete_collection(&collection_path, window, cx);
-                                        });
-                                    }
+                                    this.delete_collection(&collection_path, window, cx);
+                                    window.focus_prev();
                                 }
                             }),
-                        )
-                    }
+                        )),
                     TreeItemKind::Request => {
-                        let collection_path = metadata.collection_path.clone();
-                        let weak_panel_delete = weak_panel.clone();
-                        let request_id_for_deletion = item.id.clone();
-
                         this.item(PopupMenuItem::new("Delete Request").on_click(
-                            move |_, _window, cx| {
-                                // Call delete_request method through the panel context
-                                if let Some(panel) = weak_panel_delete.upgrade() {
-                                    panel.update(cx, |panel, cx| {
-                                        panel.delete_request(
-                                            &request_id_for_deletion,
-                                            &collection_path,
-                                            cx,
-                                        );
-                                    });
+                            window.listener_for(&entity, {
+                                let collection_path = metadata.collection_path.clone();
+                                let request_id_for_deletion = item.id.clone();
+                                move |this, _, window, cx| {
+                                    this.delete_request(
+                                        &request_id_for_deletion,
+                                        &collection_path,
+                                        cx,
+                                    );
+                                    window.focus_prev();
                                 }
-                            },
+                            }),
                         ))
                     }
                     TreeItemKind::Group => {
-                        let collection_path = metadata.collection_path.clone();
-                        let weak_panel_new = weak_panel.clone();
-                        let group_path = metadata.group_path.clone().unwrap_or_default();
-
                         this.item(PopupMenuItem::new("New Request in Group").on_click(
-                            move |_, _window, cx| {
-                                // Create new request in this specific group
-                                if let Some(panel) = weak_panel_new.upgrade() {
-                                    panel.update(cx, |panel, cx| {
-                                        panel.new_request_in_group_tab(
-                                            &collection_path,
-                                            &group_path,
-                                            cx,
-                                        );
-                                    });
+                            window.listener_for(&entity, {
+                                let collection_path = metadata.collection_path.clone();
+                                let group_path = metadata.group_path.clone().unwrap_or_default();
+                                move |this, _, window, cx| {
+                                    this.new_request_in_group_tab(
+                                        &collection_path,
+                                        &group_path,
+                                        cx,
+                                    );
+                                    window.focus_prev();
                                 }
-                            },
+                            }),
                         ))
                     }
                 }
@@ -587,7 +561,6 @@ impl CollectionsPanel {
     ) -> ListItem {
         let item = entry.item();
         let depth = entry.depth();
-        let weak_panel = cx.weak_entity();
 
         // Get icon from metadata
         let mut tree_item_icon = self
@@ -638,7 +611,7 @@ impl CollectionsPanel {
                         )
                     })
                     .child(Label::new(item.label.clone()).text_sm())
-                    .context_menu(self.build_context_menu(item, weak_panel))
+                    .context_menu(self.build_context_menu(item, cx))
                     .when(entry.is_folder(), |this| {
                         this.child(if entry.is_expanded() {
                             Icon::new(IconName::ChevronDown)

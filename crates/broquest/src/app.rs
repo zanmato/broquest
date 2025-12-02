@@ -96,10 +96,15 @@ impl BroquestApp {
                     });
                 }
 
-                if let AppEvent::NewRequest { collection_path, group_path } = event {
+                if let AppEvent::NewRequest {
+                    collection_path,
+                    group_path,
+                } = event
+                {
                     tracing::info!(
                         "Received NewRequest event for collection_path: {:?}, group_path: {:?}",
-                        collection_path, group_path
+                        collection_path,
+                        group_path
                     );
 
                     // Create a new empty request
@@ -234,8 +239,10 @@ impl BroquestApp {
                 && let Some(dir_path) = path.first()
                 && let Some(dir_str) = dir_path.to_str()
             {
+                let dir_str = dir_str.to_owned();
+
                 // Validate that the path contains a collection.toml file
-                let collection_file = std::path::PathBuf::from(dir_str).join("collection.toml");
+                let collection_file = std::path::PathBuf::from(&dir_str).join("collection.toml");
 
                 if collection_file.exists() {
                     let _ = window
@@ -244,9 +251,25 @@ impl BroquestApp {
                             let collection = cx.update_global(
                                 |collection_manager: &mut CollectionManager, cx| {
                                     match collection_manager.load_collection_toml(
-                                        std::path::PathBuf::from(dir_str).as_path(),
+                                        std::path::PathBuf::from(&dir_str).as_path(),
                                     ) {
-                                        Ok(col) => Some(col),
+                                        Ok(col) => {
+                                            window.push_notification(
+                                                (
+                                                    NotificationType::Success,
+                                                    SharedString::from(
+                                                        format!(
+                                                            "Opened {}",
+                                                            col.collection.name.clone()
+                                                        )
+                                                        .to_string(),
+                                                    ),
+                                                ),
+                                                cx,
+                                            );
+
+                                            Some(col)
+                                        }
                                         Err(e) => {
                                             window.push_notification(
                                                 (
@@ -272,7 +295,7 @@ impl BroquestApp {
                             if let Some(collection) = collection {
                                 let app_database = AppDatabase::global(cx).clone();
 
-                                let database_id = async_std::task::block_on(async {
+                                cx.spawn(async move |_| {
                                     app_database
                                         .save_collection(&CollectionData {
                                             id: None,
@@ -283,50 +306,8 @@ impl BroquestApp {
                                             updated_at: chrono::Utc::now(),
                                         })
                                         .await
-                                });
-
-                                match database_id {
-                                    Ok(_collection_id) => {
-                                        // Add collection to CollectionManager cache
-                                        cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-                                            match collection_manager.save_collection(&collection, dir_str) {
-                                                Ok(()) => {
-                                                    tracing::info!("Added collection '{}' to CollectionManager cache", collection.collection.name);
-                                                }
-                                                Err(e) => {
-                                                    tracing::error!("Failed to add collection to cache: {}", e);
-                                                }
-                                            }
-                                        });
-
-                                        // Collection was successfully added to the cache
-                                        tracing::info!("Collection '{}' was added to the CollectionManager cache.", collection.collection.name);
-
-                                        window.push_notification(
-                                            (
-                                                NotificationType::Success,
-                                                SharedString::from(
-                                                    format!(
-                                                        "Opened {}",
-                                                        collection.collection.name.clone()
-                                                    )
-                                                    .to_string(),
-                                                ),
-                                            ),
-                                            cx,
-                                        );
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to save collection to database: {}", e);
-                                        window.push_notification(
-                                            (
-                                                NotificationType::Error,
-                                                "Failed to save collection to database"
-                                            ),
-                                            cx,
-                                        );
-                                    }
-                                }
+                                })
+                                .detach();
                             }
                         })
                         .ok();

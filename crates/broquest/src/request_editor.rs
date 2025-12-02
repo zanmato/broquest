@@ -927,11 +927,11 @@ impl RequestEditor {
             // Use cx.update_global to call the save_request method on CollectionManager
             cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
                 let group_path_ref = self.group_path.as_ref().map(|gp| gp.as_str());
-                match collection_manager.save_request_to_group(
+                match collection_manager.save_request(
                     collection_path,
                     &request_data,
                     request_name,
-                    group_path_ref
+                    group_path_ref,
                 ) {
                     Ok(()) => {
                         tracing::info!("Request saved successfully");
