@@ -3,7 +3,7 @@ members = ["crates/broquest", "crates/gpui_tokio", "crates/tree-sitter-url"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = ["Andreas Johansson <z@zanmato.se>"]
 license = "Apache-2.0"
@@ -48,11 +48,18 @@ toml = "0.8"
 anyhow = "1.0"
 
 # Script execution dependencies
-rquickjs = { git = "https://github.com/DelSkayn/rquickjs.git", version = "0.10.0", features = ["parallel", "macro"] }
+rquickjs = { git = "https://github.com/DelSkayn/rquickjs.git", version = "0.10.0", features = [
+    "parallel",
+    "macro",
+] }
 base64 = "0.21"
 
 # LLRT modules for buffer, crypto, and URL support
-llrt_modules = { path = "vendor/llrt/llrt_modules", features = ["buffer", "crypto", "url"] }
+llrt_modules = { path = "vendor/llrt/llrt_modules", features = [
+    "buffer",
+    "crypto",
+    "url",
+] }
 
 [workspace.lints.clippy]
 almost_complete_range = "allow"
