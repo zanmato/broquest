@@ -3,23 +3,20 @@ use gpui_component::highlighter::{LanguageConfig, LanguageRegistry};
 
 /// Register URL syntax highlighting for the application
 pub fn register_url_highlighting(_cx: &mut App) {
-    // Load highlight rules from the tree-sitter-url crate
-    let url_highlights = include_str!("../../../tree-sitter-url/queries/highlights.scm");
-
-    // Register custom URL language using tree-sitter-url parser
+    // Register custom URL language using tree-sitter-url
     LanguageRegistry::singleton().register(
         "url",
         &LanguageConfig::new(
             "url",
             tree_sitter_url::LANGUAGE.into(),
             vec![],
-            url_highlights,
+            tree_sitter_url::HIGHLIGHTS_QUERY,
             "",
             "",
         ),
     );
 
-    // Register XML language using tree-sitter-xml parser
+    // Register XML language using tree-sitter-xml
     LanguageRegistry::singleton().register(
         "xml",
         &LanguageConfig::new(
