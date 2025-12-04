@@ -1,4 +1,4 @@
-use gpui::{App, Context, Entity, EventEmitter, Window, div, prelude::*, px};
+use gpui::{App, Context, Entity, EventEmitter, Focusable, Window, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
@@ -119,20 +119,26 @@ impl QueryParamEditor {
                 .default_value(&value)
         });
 
-        // Set up subscriptions for key and value input blur events
-        // Use blur instead of change to prevent focus stealing loops
+        // Set up subscriptions for key and value input change events
+        // Only emit events when the input is focused to avoid feedback loop
         let key_subscription = cx.subscribe_in(&key_input, window, {
-            move |_this: &mut Self, _input_state, event: &InputEvent, _window, cx| {
-                if let InputEvent::Blur = event {
-                    cx.emit(QueryParamEvent::ParameterChanged);
+            move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
+                if let InputEvent::Change = event {
+                    // Check if the key input is focused before emitting events
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(QueryParamEvent::ParameterChanged);
+                    }
                 }
             }
         });
 
         let value_subscription = cx.subscribe_in(&value_input, window, {
-            move |_this: &mut Self, _input_state, event: &InputEvent, _window, cx| {
-                if let InputEvent::Blur = event {
-                    cx.emit(QueryParamEvent::ParameterChanged);
+            move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
+                if let InputEvent::Change = event {
+                    // Check if the value input is focused before emitting events
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(QueryParamEvent::ParameterChanged);
+                    }
                 }
             }
         });

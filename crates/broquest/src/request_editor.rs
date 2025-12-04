@@ -1,5 +1,5 @@
 use gpui::{
-    App, AppContext, BorrowAppContext as _, Context, Entity, EventEmitter, FocusHandle,
+    App, AppContext, BorrowAppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeybindingKeystroke, Keystroke, ParentElement as _,
     Render, SharedString, Styled as _, Window, div, prelude::FluentBuilder, px,
 };
@@ -1213,8 +1213,13 @@ impl RequestEditor {
         let url_input = self.url_input.clone();
         let query_param_editor = self.query_param_editor.clone();
         let url_subscription = cx.subscribe_in(&url_input, window, {
-            move |this: &mut Self, _input_state, event: &InputEvent, window, cx| {
+            move |this: &mut Self, input_state, event: &InputEvent, window, cx| {
                 if let InputEvent::Change = event {
+                    // Check if the URL input is focused before emitting events
+                    if !input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        return;
+                    }
+
                     // Don't update query params if we're currently updating URL from params
                     if this._updating_url_from_params {
                         return;
