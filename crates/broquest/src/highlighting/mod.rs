@@ -1,8 +1,8 @@
 use gpui::App;
 use gpui_component::highlighter::{LanguageConfig, LanguageRegistry};
 
-/// Register URL syntax highlighting for the application
-pub fn register_url_highlighting(_cx: &mut App) {
+/// Register syntax highlighting for the application
+pub fn register_highlighting(_cx: &mut App) {
     // Register custom URL language using tree-sitter-url
     LanguageRegistry::singleton().register(
         "url",
