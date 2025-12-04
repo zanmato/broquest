@@ -21,6 +21,7 @@ use std::time::Duration;
 use crate::app_events::AppEvent;
 use crate::collection_manager::CollectionManager;
 use crate::collection_types::EnvironmentToml;
+use crate::form_editor::FormEditor;
 use crate::header_editor::HeaderEditor;
 use crate::http_client::{HttpError, ResponseFormat};
 use crate::icon::IconName;
@@ -309,6 +310,7 @@ pub struct RequestEditor {
     path_param_editor: Entity<PathParamEditor>,
     query_param_editor: Entity<QueryParamEditor>,
     header_editor: Entity<HeaderEditor>,
+    form_editor: Entity<FormEditor>,
     script_editor: Entity<ScriptEditor>,
     send_keystroke: KeybindingKeystroke,
     _subscriptions: Vec<gpui::Subscription>,
@@ -369,6 +371,8 @@ impl RequestEditor {
 
         let header_editor = cx.new(|cx| HeaderEditor::new(window, cx));
 
+        let form_editor = cx.new(|cx| FormEditor::new(window, cx));
+
         let script_editor = cx.new(|cx| ScriptEditor::new(window, cx));
 
         // Subscribe to Content-Type selection changes
@@ -409,6 +413,7 @@ impl RequestEditor {
             path_param_editor,
             query_param_editor,
             header_editor,
+            form_editor,
             script_editor,
             send_keystroke: KeybindingKeystroke::from_keystroke(Keystroke::parse("enter").unwrap()),
             _subscriptions: Vec::new(),
@@ -722,7 +727,30 @@ impl RequestEditor {
         cx.notify();
 
         // Get the current request data
-        let request_data = self.get_request_data(cx);
+        let mut request_data = self.get_request_data(cx);
+
+        // Check if Form Data content type is selected and update form data
+        if let Some(selected_content_type) = self.content_type_select.read(cx).selected_value() {
+            if selected_content_type == &ContentType::Form {
+                let form_data = self.form_editor.read(cx).get_form_data(cx);
+                // Convert form data to body format (key=value pairs, files as @path)
+                let form_body = form_data
+                    .iter()
+                    .filter(|field| field.enabled && !field.key.is_empty())
+                    .map(|field| {
+                        if field.value.starts_with('@') {
+                            // File reference
+                            format!("{}={}", field.key, field.value)
+                        } else {
+                            // Regular form field
+                            format!("{}={}", url_encode(&field.key), url_encode(&field.value))
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("&");
+                request_data.body = form_body;
+            }
+        }
 
         // Perform path parameter replacement on the URL
         let final_url = self
@@ -1030,38 +1058,49 @@ impl RequestEditor {
         match self.active_tab {
             RequestTab::Path => div().flex_1().child(self.path_param_editor.clone()),
             RequestTab::Query => div().flex_1().child(self.query_param_editor.clone()),
-            RequestTab::Body => div().flex_1().child(
-                v_flex()
-                    .gap_3()
-                    .h_full()
-                    .child(
-                        h_flex()
-                            .p_3()
-                            .gap_3()
-                            .items_center()
-                            .border_b_1()
-                            .border_color(cx.theme().border)
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("Content-Type"),
-                            )
-                            .child(
-                                div()
-                                    .w(px(150.))
-                                    .child(Select::new(&self.content_type_select).small()),
-                            ),
-                    )
-                    .child(
-                        Input::new(&self.body_input)
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_size(px(12.))
-                            .h_full()
-                            .bordered(false)
-                            .rounded_none(),
-                    ),
-            ),
+            RequestTab::Body => {
+                let selected_content_type = self.content_type_select.read(cx).selected_value().copied();
+
+                div().flex_1().child(
+                    v_flex()
+                        .gap_3()
+                        .h_full()
+                        .child(
+                            h_flex()
+                                .p_3()
+                                .gap_3()
+                                .items_center()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Content-Type"),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(150.))
+                                        .child(Select::new(&self.content_type_select).small()),
+                                ),
+                        )
+                        .child(match selected_content_type {
+                            Some(ContentType::Form) => {
+                                div().flex_1().child(self.form_editor.clone())
+                                    .into_any_element()
+                            }
+                            _ => {
+                                Input::new(&self.body_input)
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .text_size(px(12.))
+                                    .h_full()
+                                    .bordered(false)
+                                    .rounded_none()
+                                    .into_any_element()
+                            }
+                        }),
+                )
+            }
             RequestTab::Headers => div().flex_1().child(self.header_editor.clone()),
             RequestTab::Scripts => div().flex_1().child(self.script_editor.clone()),
         }

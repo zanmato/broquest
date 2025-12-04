@@ -11,6 +11,7 @@ mod collections_panel;
 mod editor_panel;
 mod environment_editor;
 mod environment_resolver;
+mod form_editor;
 mod header_editor;
 mod highlighting;
 mod http_client;

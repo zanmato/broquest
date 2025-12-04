@@ -168,7 +168,56 @@ impl HttpClientService {
                 | crate::request_editor::HttpMethod::Patch
         ) && !request_data.body.is_empty()
         {
-            request = request.body(request_data.body.clone());
+            // Check if this is form data with file uploads
+            if request_data.headers
+                .iter()
+                .find(|h| h.key.to_lowercase() == "content-type" && h.value == "application/x-www-form-urlencoded")
+                .is_some()
+            {
+                // Check if body contains file references (paths starting with @)
+                if request_data.body.contains('@') {
+                    // Parse form data and create multipart form
+                    let mut form = reqwest::multipart::Form::new();
+
+                    for pair in request_data.body.split('&') {
+                        if let Some(eq_pos) = pair.find('=') {
+                            let key = urlencoding::decode(&pair[..eq_pos]).unwrap_or_default();
+                            let value = urlencoding::decode(&pair[eq_pos + 1..]).unwrap_or_default();
+
+                            if let Some(value_str) = value.strip_prefix('@') {
+                                // This is a file upload
+                                match std::fs::read(value_str) {
+                                    Ok(file_contents) => {
+                                        let file_name = std::path::Path::new(value_str)
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("file");
+                                        let part = reqwest::multipart::Part::bytes(file_contents)
+                                            .file_name(file_name.to_string());
+                                        form = form.part(key.to_string(), part);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to read file '{}': {}", value_str, e);
+                                        // Fall back to regular form field
+                                        form = form.text(key.to_string(), value.to_string());
+                                    }
+                                }
+                            } else {
+                                // Regular form field
+                                form = form.text(key.to_string(), value.to_string());
+                            }
+                        }
+                    }
+
+                    request = request.multipart(form);
+                } else {
+                    // Regular form data without files
+                    request = request.body(request_data.body.clone());
+                }
+            } else {
+                // Regular body
+                request = request.body(request_data.body.clone());
+            }
         }
 
         // Execute the request
