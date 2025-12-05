@@ -78,10 +78,13 @@ impl CollectionsPanel {
     /// Load collections and all their requests from file system - call this after creating the panel
     pub fn load_collections(&mut self, cx: &mut Context<Self>) {
         // Get collections from the global CollectionManager
-        let collection_infos = {
+        let mut collection_infos = {
             let collection_manager = CollectionManager::global(cx);
             collection_manager.get_all_collections()
         };
+
+        // Sort collections alphabetically by name
+        collection_infos.sort_by(|a, b| a.data.name.cmp(&b.data.name));
 
         // Convert CollectionInfo to CollectionData for the tree
         self.collections = collection_infos
@@ -122,8 +125,11 @@ impl CollectionsPanel {
 
             let mut child_items = Vec::new();
 
-            // Add direct collection requests (root level)
-            for (index, (_file_path, request)) in collection_info.requests.iter().enumerate() {
+            // Add direct collection requests (root level) - sort alphabetically by name
+            let mut sorted_requests: Vec<_> = collection_info.requests.iter().collect();
+            sorted_requests.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+
+            for (index, (_file_path, request)) in sorted_requests.into_iter().enumerate() {
                 let request_id = format!("request_{}_{}", collection_path.replace('/', "_"), index);
                 let request_tree_item =
                     TreeItem::new(request_id.clone(), request.name.clone()).children(vec![]);
@@ -146,14 +152,20 @@ impl CollectionsPanel {
                 child_items.push(request_tree_item);
             }
 
-            // Add group folders and their requests
-            for (group_name, group_info) in &collection_info.groups {
+            // Add group folders and their requests - sort groups alphabetically
+            let mut sorted_groups: Vec<_> = collection_info.groups.iter().collect();
+            sorted_groups.sort_by(|a, b| a.0.cmp(&b.0));
+
+            for (group_name, group_info) in sorted_groups {
                 let group_id =
                     format!("group_{}_{}", collection_path.replace('/', "_"), group_name);
 
-                // Build child items for group requests
+                // Build child items for group requests - sort alphabetically by name
+                let mut sorted_group_requests: Vec<_> = group_info.requests.iter().collect();
+                sorted_group_requests.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+
                 let mut group_child_items = Vec::new();
-                for (index, (_file_path, request)) in group_info.requests.iter().enumerate() {
+                for (index, (_file_path, request)) in sorted_group_requests.into_iter().enumerate() {
                     let request_id = format!(
                         "request_{}_{}_{}",
                         collection_path.replace('/', "_"),
