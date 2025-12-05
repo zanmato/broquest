@@ -18,7 +18,6 @@ use gpui_tokio::Tokio;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::app_events::AppEvent;
 use crate::collection_manager::CollectionManager;
 use crate::collection_types::EnvironmentToml;
 use crate::form_editor::FormEditor;
@@ -29,6 +28,7 @@ use crate::path_parameter_editor::PathParamEditor;
 use crate::query_parameter_editor::QueryParamEditor;
 use crate::query_parameter_editor::QueryParamEvent;
 use crate::script_editor::ScriptEditor;
+use crate::{app_events::AppEvent, tab_badge::TabBadge};
 
 /// Basic URL encoding function
 fn url_encode(input: &str) -> String {
@@ -987,12 +987,12 @@ impl RequestEditor {
             .gap_3()
             .w_full()
             .child(
-                div().w(px(120.)).child(
-                    Select::new(&self.method_select)
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .font_bold()
-                        .text_color(method_color),
-                ),
+                div()
+                    .w(px(120.))
+                    .font_bold()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .w(px(120.))
+                    .child(Select::new(&self.method_select).text_color(method_color)),
             )
             .child(
                 div()
@@ -1027,6 +1027,13 @@ impl RequestEditor {
     }
 
     fn render_request_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // Calculate badge counts
+        let query_count = self.get_query_badge_count(cx);
+        let has_body = self.has_body_content(cx);
+        let headers_count = self.get_headers_badge_count(cx);
+        let path_count = self.get_path_badge_count(cx);
+        let scripts_count = self.get_scripts_badge_count(cx);
+
         TabBar::new("request-tabs")
             .left(px(-1.)) // Avoid double border with container
             .selected_index(match self.active_tab {
@@ -1047,11 +1054,23 @@ impl RequestEditor {
                 };
                 cx.notify();
             }))
-            .child(Tab::new().label("Query"))
-            .child(Tab::new().label("Body"))
-            .child(Tab::new().label("Headers"))
-            .child(Tab::new().label("Path"))
-            .child(Tab::new().label("Scripts"))
+            .child(Tab::new().label("Query").when(query_count > 0, |tab| {
+                tab.pr_2().suffix(TabBadge::new().count(query_count))
+            }))
+            .child(
+                Tab::new()
+                    .label("Body")
+                    .when(has_body, |tab| tab.pr_2().suffix(TabBadge::new().count(1))),
+            )
+            .child(Tab::new().label("Headers").when(headers_count > 0, |tab| {
+                tab.pr_2().suffix(TabBadge::new().count(headers_count))
+            }))
+            .child(Tab::new().label("Path").when(path_count > 0, |tab| {
+                tab.pr_2().suffix(TabBadge::new().count(path_count))
+            }))
+            .child(Tab::new().label("Scripts").when(scripts_count > 0, |tab| {
+                tab.pr_2().suffix(TabBadge::new().count(scripts_count))
+            }))
     }
 
     fn render_tab_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1342,6 +1361,49 @@ impl RequestEditor {
             }
         });
         self._subscriptions.push(query_param_subscription);
+
+        // Set up observers for all editors to update badge counts
+        // Observe path parameter editor changes
+        let path_param_subscription = cx.observe(&self.path_param_editor, |_this, _editor, cx| {
+            cx.notify();
+        });
+        self._subscriptions.push(path_param_subscription);
+
+        // Observe header editor changes
+        let header_subscription = cx.observe(&self.header_editor, |_this, _editor, cx| {
+            cx.notify();
+        });
+        self._subscriptions.push(header_subscription);
+
+        // Observe script editor changes
+        let script_subscription = cx.observe(&self.script_editor, |_this, _editor, cx| {
+            cx.notify();
+        });
+        self._subscriptions.push(script_subscription);
+
+        // Observe form editor changes
+        let form_subscription = cx.observe(&self.form_editor, |_this, _editor, cx| {
+            cx.notify();
+        });
+        self._subscriptions.push(form_subscription);
+
+        // Observe body input changes
+        let body_subscription =
+            cx.subscribe(&self.body_input, |_this, _input, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    cx.notify();
+                }
+            });
+        self._subscriptions.push(body_subscription);
+
+        // Observe content type changes (affects body badge)
+        let content_type_subscription = cx.subscribe(
+            &self.content_type_select,
+            |_this, _state, _event: &SelectEvent<Vec<ContentType>>, cx| {
+                cx.notify();
+            },
+        );
+        self._subscriptions.push(content_type_subscription);
     }
 
     /// Parse query parameters from a URL string
@@ -1449,6 +1511,89 @@ impl RequestEditor {
 }
 
 impl EventEmitter<AppEvent> for RequestEditor {}
+
+impl RequestEditor {
+    /// Calculate badge count for Query tab (number of enabled query params)
+    fn get_query_badge_count(&self, cx: &App) -> usize {
+        self.query_param_editor
+            .read(cx)
+            .get_query_parameters(cx)
+            .iter()
+            .filter(|param| param.enabled && !param.key.is_empty())
+            .count()
+    }
+
+    /// Calculate if Body tab should show a badge (has content)
+    fn has_body_content(&self, cx: &App) -> bool {
+        let selected_content_type = self.content_type_select.read(cx).selected_value().copied();
+
+        match selected_content_type {
+            Some(ContentType::Form) => {
+                // Check if form editor has any non-empty fields
+                self.form_editor
+                    .read(cx)
+                    .get_form_data(cx)
+                    .iter()
+                    .any(|field| {
+                        field.enabled && (!field.key.is_empty() || !field.value.is_empty())
+                    })
+            }
+            Some(ContentType::UrlEncoded) => {
+                // Check if form editor has any non-empty fields
+                self.form_editor
+                    .read(cx)
+                    .get_form_data(cx)
+                    .iter()
+                    .any(|field| {
+                        field.enabled && (!field.key.is_empty() || !field.value.is_empty())
+                    })
+            }
+            _ => {
+                // For other content types, check if body has content
+                !self.body_input.read(cx).value().trim().is_empty()
+            }
+        }
+    }
+
+    /// Calculate badge count for Headers tab (number of enabled headers)
+    fn get_headers_badge_count(&self, cx: &App) -> usize {
+        self.header_editor
+            .read(cx)
+            .get_headers(cx)
+            .iter()
+            .filter(|header| header.enabled && !header.key.is_empty())
+            .count()
+    }
+
+    /// Calculate badge count for Path tab (number of enabled path params)
+    fn get_path_badge_count(&self, cx: &App) -> usize {
+        self.path_param_editor
+            .read(cx)
+            .get_path_parameters(cx)
+            .iter()
+            .filter(|param| param.enabled && !param.key.is_empty())
+            .count()
+    }
+
+    /// Calculate badge count for Scripts tab (number of scripts)
+    fn get_scripts_badge_count(&self, cx: &App) -> usize {
+        let script_editor = self.script_editor.read(cx);
+        let pre_request = script_editor.get_pre_request_script(cx);
+        let post_response = script_editor.get_post_response_script(cx);
+
+        let count = if pre_request.is_some() && !pre_request.unwrap().trim().is_empty() {
+            1
+        } else {
+            0
+        };
+        let count = if post_response.is_some() && !post_response.unwrap().trim().is_empty() {
+            count + 1
+        } else {
+            count
+        };
+        count
+    }
+}
 
 impl Render for RequestEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
