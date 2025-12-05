@@ -87,8 +87,7 @@ impl ScriptEditor {
                 h_flex()
                     .items_center()
                     .justify_between()
-                    .px_3()
-                    .py_2()
+                    .p_3()
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(

@@ -1059,11 +1059,11 @@ impl RequestEditor {
             RequestTab::Path => div().flex_1().child(self.path_param_editor.clone()),
             RequestTab::Query => div().flex_1().child(self.query_param_editor.clone()),
             RequestTab::Body => {
-                let selected_content_type = self.content_type_select.read(cx).selected_value().copied();
+                let selected_content_type =
+                    self.content_type_select.read(cx).selected_value().copied();
 
                 div().flex_1().child(
                     v_flex()
-                        .gap_3()
                         .h_full()
                         .child(
                             h_flex()
@@ -1085,19 +1085,18 @@ impl RequestEditor {
                                 ),
                         )
                         .child(match selected_content_type {
-                            Some(ContentType::Form) => {
-                                div().flex_1().child(self.form_editor.clone())
-                                    .into_any_element()
-                            }
-                            _ => {
-                                Input::new(&self.body_input)
-                                    .font_family(cx.theme().mono_font_family.clone())
-                                    .text_size(px(12.))
-                                    .h_full()
-                                    .bordered(false)
-                                    .rounded_none()
-                                    .into_any_element()
-                            }
+                            Some(ContentType::Form) => div()
+                                .flex_1()
+                                .child(self.form_editor.clone())
+                                .into_any_element(),
+                            _ => Input::new(&self.body_input)
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .text_size(px(12.))
+                                .h_full()
+                                .bordered(false)
+                                .rounded_none()
+                                .py_3()
+                                .into_any_element(),
                         }),
                 )
             }
