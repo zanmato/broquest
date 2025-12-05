@@ -65,6 +65,9 @@ impl CollectionManager {
             Ok(collections) => {
                 tracing::info!("Loaded {} collections from database", collections.len());
 
+                // Create a local HashMap to store collections
+                let mut local_collections: HashMap<String, CollectionInfo> = HashMap::new();
+
                 for collection_data in collections {
                     // Try to load the TOML data from the file system path
                     let collection_path = Path::new(&collection_data.path);
@@ -88,7 +91,7 @@ impl CollectionManager {
                                     groups,
                                 };
 
-                                self.collections
+                                local_collections
                                     .insert(collection_info.data.path.clone(), collection_info);
                             }
                             Err(e) => {
@@ -108,7 +111,10 @@ impl CollectionManager {
                     }
                 }
 
-                tracing::info!("Total cached collections: {}", self.collections.len());
+                tracing::info!("Total cached collections: {}", local_collections.len());
+
+                // Replace the contents of self.collections with the local collections
+                self.collections = local_collections;
             }
             Err(e) => {
                 tracing::error!("Failed to load collections from database: {}", e);

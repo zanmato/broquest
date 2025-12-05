@@ -17,7 +17,7 @@ use gpui_component::{
 
 use crate::app_database::{AppDatabase, CollectionData};
 use crate::app_events::AppEvent;
-use crate::collection_manager::CollectionManager;
+use crate::collection_manager::{CollectionInfo, CollectionManager};
 use crate::icon::IconName;
 
 /// Icon and color combination for tree items
@@ -26,16 +26,6 @@ pub struct TreeItemIcon {
     pub icon: Option<IconName>,
     pub prefix: Option<SharedString>,
     pub color: gpui::Rgba,
-}
-
-impl std::fmt::Debug for TreeItemIcon {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "TreeItemIcon {{ icon: IconName({:?}), color: rgba(...) }}",
-            std::mem::discriminant(&self.icon)
-        )
-    }
 }
 
 pub struct CollectionsPanel {
@@ -54,7 +44,7 @@ pub enum TreeItemKind {
 }
 
 /// Metadata for tree items to enable proper context menu actions
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TreeItemMetadata {
     pub name: String,
     pub kind: TreeItemKind,
@@ -75,9 +65,17 @@ impl CollectionsPanel {
         }
     }
 
-    /// Load collections and all their requests from file system - call this after creating the panel
+    pub fn refresh_collections(&mut self, cx: &mut Context<Self>) {
+        // Load collections, this will cause the observe global to call Self::load_collections
+        cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
+            if let Err(e) = collection_manager.load_saved(_cx) {
+                tracing::error!("Failed to load collections from database: {}", e);
+            }
+        });
+    }
+
     pub fn load_collections(&mut self, cx: &mut Context<Self>) {
-        // Get collections from the global CollectionManager
+        // Get collections from the global CollectionManager after loading
         let mut collection_infos = {
             let collection_manager = CollectionManager::global(cx);
             collection_manager.get_all_collections()
@@ -98,7 +96,7 @@ impl CollectionsPanel {
         );
 
         // Clone the collection info to avoid borrow issues
-        let collection_infos_owned: Vec<crate::collection_manager::CollectionInfo> =
+        let collection_infos_owned: Vec<CollectionInfo> =
             collection_infos.iter().map(|&info| info.clone()).collect();
 
         // Build the complete tree with all collections and their requests
@@ -108,7 +106,7 @@ impl CollectionsPanel {
     /// Build the complete tree with all collections, groups, and requests
     fn build_tree_from_collections(
         &mut self,
-        collection_infos: &[crate::collection_manager::CollectionInfo],
+        collection_infos: &[CollectionInfo],
         cx: &mut Context<Self>,
     ) {
         // Clear existing metadata
@@ -165,7 +163,8 @@ impl CollectionsPanel {
                 sorted_group_requests.sort_by(|a, b| a.1.name.cmp(&b.1.name));
 
                 let mut group_child_items = Vec::new();
-                for (index, (_file_path, request)) in sorted_group_requests.into_iter().enumerate() {
+                for (index, (_file_path, request)) in sorted_group_requests.into_iter().enumerate()
+                {
                     let request_id = format!(
                         "request_{}_{}_{}",
                         collection_path.replace('/', "_"),
@@ -257,7 +256,7 @@ impl CollectionsPanel {
     fn open_collection_tab(&mut self, collection_path: &str, cx: &mut Context<Self>) {
         tracing::info!("Opening collection tab for path: {}", collection_path);
 
-        let collection_manager = cx.try_global::<crate::collection_manager::CollectionManager>();
+        let collection_manager = cx.try_global::<CollectionManager>();
         let Some(collection_manager) = collection_manager else {
             tracing::error!("Global CollectionManager not found");
             return;
@@ -337,11 +336,9 @@ impl CollectionsPanel {
             .retain(|collection| collection.path != collection_path);
 
         // Update global CollectionManager to remove the collection
-        cx.update_global(
-            |collection_manager: &mut crate::collection_manager::CollectionManager, _cx| {
-                collection_manager.remove_collection(collection_path);
-            },
-        );
+        cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
+            collection_manager.remove_collection(collection_path);
+        });
 
         // Remove the collection from AppDatabase
         let db = AppDatabase::global(cx).clone();
@@ -393,31 +390,28 @@ impl CollectionsPanel {
 
         // Use CollectionManager to delete the request
         cx.update_global(
-            |collection_manager: &mut crate::collection_manager::CollectionManager, _cx| {
-                match collection_manager.delete_request(collection_path, &request_data) {
-                    Ok(_) => {
-                        tracing::info!(
-                            "Successfully deleted request '{}' from collection {}",
-                            request_name,
-                            collection_path
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to delete request '{}' from CollectionManager: {}",
-                            request_name,
-                            e
-                        );
-                    }
+            |collection_manager: &mut CollectionManager, _cx| match collection_manager
+                .delete_request(collection_path, &request_data)
+            {
+                Ok(_) => {
+                    tracing::info!(
+                        "Successfully deleted request '{}' from collection {}",
+                        request_name,
+                        collection_path
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to delete request '{}' from CollectionManager: {}",
+                        request_name,
+                        e
+                    );
                 }
             },
         );
 
         // Reload collections to rebuild the tree
         self.load_collections(cx);
-
-        // TODO: Emit event to notify other parts of the app if needed
-        // cx.emit(AppEvent::RequestDeleted { request_id: request_id.to_string(), collection_id });
     }
 
     /// Build context menu for a tree item based on its type
@@ -547,7 +541,7 @@ impl CollectionsPanel {
                             .icon(Icon::new(IconName::Refresh).size(px(14.)))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 tracing::info!("Refresh collections clicked");
-                                this.load_collections(cx);
+                                this.refresh_collections(cx);
                             })),
                     ),
             )
