@@ -297,18 +297,30 @@ impl CollectionManager {
         // Update or add the collection in the in-memory cache using path as key
         let collection_name = &collection_data.collection.name;
 
+        // Check if collection already exists in cache to preserve existing requests and groups
+        let (existing_requests, existing_groups, existing_created_at) =
+            if let Some(existing_collection) = self.collections.get(path) {
+                (
+                    existing_collection.requests.clone(),
+                    existing_collection.groups.clone(),
+                    existing_collection.data.created_at,
+                )
+            } else {
+                (HashMap::new(), HashMap::new(), chrono::Utc::now())
+            };
+
         let collection_info = CollectionInfo {
             data: crate::app_database::CollectionData {
                 id: None, // We don't use IDs anymore
                 name: collection_name.clone(),
                 path: path.to_string(),
                 position: 0,
-                created_at: chrono::Utc::now(),
+                created_at: existing_created_at,
                 updated_at: chrono::Utc::now(),
             },
             toml: collection_data.clone(),
-            requests: HashMap::new(), // This will be populated when requests are loaded
-            groups: HashMap::new(),   // This will be populated when groups are loaded
+            requests: existing_requests,
+            groups: existing_groups,
         };
 
         self.collections.insert(path.to_string(), collection_info);
