@@ -18,6 +18,7 @@ use gpui_tokio::Tokio;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+use crate::app_events::AppEvent;
 use crate::collection_manager::CollectionManager;
 use crate::collection_types::EnvironmentToml;
 use crate::form_editor::FormEditor;
@@ -28,7 +29,7 @@ use crate::path_parameter_editor::PathParamEditor;
 use crate::query_parameter_editor::QueryParamEditor;
 use crate::query_parameter_editor::QueryParamEvent;
 use crate::script_editor::ScriptEditor;
-use crate::{app_events::AppEvent, tab_badge::TabBadge};
+use crate::ui::tab_badge::TabBadge;
 
 /// Basic URL encoding function
 fn url_encode(input: &str) -> String {

@@ -21,8 +21,8 @@ mod query_parameter_editor;
 mod request_editor;
 mod script_editor;
 mod script_engine;
-mod tab_badge;
 mod themes_manager;
+mod ui;
 mod variable_store;
 
 use assets::Assets;
