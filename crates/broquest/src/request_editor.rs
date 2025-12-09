@@ -449,7 +449,8 @@ impl RequestEditor {
 
         // Update URL input
         self.url_input.update(cx, |state, cx| {
-            state.set_value(data.url.clone(), window, cx);
+            let url = self.build_url_with_query_params(&data.url, &data.query_params);
+            state.set_value(url, window, cx);
         });
 
         // Update name input

@@ -66,7 +66,7 @@ impl BroquestApp {
 
         let editor_panel =
             cx.new(|cx| EditorPanel::new_with_saved_tabs(window, cx, false, saved_tabs));
-        let app_menu_bar = AppMenuBar::new(window, cx);
+        let app_menu_bar = AppMenuBar::new(cx);
 
         let mut subscriptions = Vec::new();
 
