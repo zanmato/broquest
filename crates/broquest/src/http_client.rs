@@ -1,7 +1,7 @@
 use gpui::Global;
 use std::collections::HashMap;
 use std::time::Duration;
-use zed_reqwest as reqwest;
+use reqwest;
 
 use crate::environment_resolver::EnvironmentResolver;
 use crate::request_editor::{KeyValuePair, RequestData, ResponseData};
@@ -13,6 +13,13 @@ use crate::variable_store::VariableStore;
 pub struct HttpError {
     pub summary: String,
     pub details: String,
+}
+
+impl std::error::Error for HttpError {}
+impl std::fmt::Display for HttpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.details)
+    }
 }
 
 impl HttpError {
@@ -42,14 +49,6 @@ impl HttpError {
         }
     }
 }
-
-impl std::fmt::Display for HttpError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.details)
-    }
-}
-
-impl std::error::Error for HttpError {}
 
 /// Global HTTP client service for sending API requests
 #[derive(Clone)]
@@ -220,9 +219,8 @@ impl HttpClientService {
             }
         }
 
-        // Execute the request
-        let response = request
-            .send()
+        // Execute the request with async-compat
+        let response = async_compat::Compat::new(request.send())
             .await
             .map_err(|e| HttpError::from_reqwest_error(&e))?;
 
@@ -243,13 +241,15 @@ impl HttpClientService {
             })
             .collect::<Vec<_>>();
 
-        // Get response body
-        let response_body = response.text().await.map_err(|e| {
-            HttpError::new(
-                "Failed to read response body",
-                format!("Failed to read response body: {}", e),
-            )
-        })?;
+        // Get response body with async-compat
+        let response_body = async_compat::Compat::new(response.text())
+            .await
+            .map_err(|e| {
+                HttpError::new(
+                    "Failed to read response body",
+                    format!("Failed to read response body: {}", e),
+                )
+            })?;
 
         let latency = start_time.elapsed();
         let response_size = response_body.len();

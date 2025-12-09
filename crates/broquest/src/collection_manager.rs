@@ -59,7 +59,7 @@ impl CollectionManager {
 
         // Load collections from the database
         let db_collections =
-            async_std::task::block_on(async move { app_database.load_collections().await });
+            smol::block_on(async move { app_database.load_collections().await });
 
         match db_collections {
             Ok(collections) => {

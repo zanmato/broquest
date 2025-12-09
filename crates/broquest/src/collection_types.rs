@@ -122,7 +122,7 @@ impl EnvironmentVariable {
         );
 
         let read_task = cx.read_credentials(&credential_path);
-        async_std::task::block_on(async {
+        smol::block_on(async {
             match read_task.await? {
                 Some((_, secret_bytes)) => Ok(Some(String::from_utf8(secret_bytes)?)),
                 None => Ok(None),

@@ -13,7 +13,6 @@ use gpui_component::{
     tab::{Tab, TabBar},
     v_flex,
 };
-use gpui_tokio::Tokio;
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -23,7 +22,7 @@ use crate::collection_manager::CollectionManager;
 use crate::collection_types::EnvironmentToml;
 use crate::form_editor::FormEditor;
 use crate::header_editor::HeaderEditor;
-use crate::http_client::{HttpError, ResponseFormat};
+use crate::http_client::ResponseFormat;
 use crate::icon::IconName;
 use crate::path_parameter_editor::PathParamEditor;
 use crate::query_parameter_editor::QueryParamEditor;
@@ -810,28 +809,22 @@ impl RequestEditor {
         // Get the HTTP client after updating UI to avoid borrow issues
         let http_client = crate::http_client::HttpClientService::global(cx);
 
-        // Execute request using Tokio runtime and return data to UI
-        let request_data_clone1 = final_request_data.clone();
-        let http_client_clone = http_client.clone();
-
-        // Create the task using Tokio::spawn_result - this returns a Task directly
-        let task = Tokio::spawn_result(cx, async move {
-            http_client_clone
-                .send_request(request_data_clone1, variables, secrets)
-                .await
-                .map_err(|e| anyhow::anyhow!(e))
-        });
-
         // Clone necessary data before moving into async closure
         let collection_path = self.collection_path.clone();
         let selected_env_for_later = self.get_selected_environment(cx);
-
-        // Spawn a GPUI task to wait for the HTTP response
         let response_input = self.response_input.clone();
         let raw_response_input = self.raw_response_input.clone();
         let editor_entity = cx.entity().clone();
+
+        // Execute request using async-compat and GPUI's spawn
+        let request_data_clone1 = final_request_data.clone();
+        let http_client_clone = http_client.clone();
+
         cx.spawn_in(window, async move |_this, window| {
-            match task.await {
+            match async_compat::Compat::new(
+                http_client_clone
+                    .send_request(request_data_clone1, variables, secrets)
+            ).await {
                 Ok((response_data, variable_store)) => {
                     // Check for dirty environment variables
                     let dirty_vars = variable_store.get_dirty_env_vars();
@@ -898,10 +891,8 @@ impl RequestEditor {
                     })?;
                 }
                 Err(error) => {
-                    // HTTP request failed - extract HttpError from anyhow::Error
-                    let http_error = error.downcast_ref::<HttpError>()
-                        .cloned()
-                        .unwrap_or_else(|| HttpError::new("Request failed", error.to_string()));
+                    // HTTP request failed - error is already HttpError
+                    let http_error = error;
 
                     let error_summary = SharedString::from(http_error.summary.clone());
 

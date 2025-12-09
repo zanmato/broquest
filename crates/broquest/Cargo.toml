@@ -7,7 +7,6 @@ edition = "2024"
 # Workspace dependencies
 gpui = { workspace = true }
 gpui-component = { workspace = true }
-gpui_tokio = { path = "../gpui_tokio" }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -15,7 +14,7 @@ chrono = { workspace = true, features = ["serde"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 sqlx = { workspace = true }
-async-std = { workspace = true }
+smol = { workspace = true }
 dirs = { workspace = true }
 rust-embed = { workspace = true }
 
@@ -23,8 +22,8 @@ rust-embed = { workspace = true }
 env_logger = { workspace = true }
 
 # HTTP client for AI chat
-zed-reqwest = { workspace = true }
-tokio = { workspace = true }
+reqwest = { workspace = true }
+async-compat = { workspace = true }
 urlencoding = "2.1"
 toml = { workspace = true }
 thiserror = { workspace = true }

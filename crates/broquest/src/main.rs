@@ -47,7 +47,6 @@ fn main() {
             .init();
 
         gpui_component::init(cx);
-        gpui_tokio::init(cx);
 
         // Register syntax highlighting
         register_highlighting(cx);
@@ -60,7 +59,7 @@ fn main() {
         }
 
         // Initialize app database
-        let db = async_std::task::block_on(async {
+        let db = smol::block_on(async {
             match app_database::AppDatabase::new().await {
                 Ok(db) => {
                     tracing::info!("App database initialized");
@@ -76,7 +75,7 @@ fn main() {
 
         // Get user settings from database
         let user_settings =
-            async_std::task::block_on(async { db.get_user_settings().await }).unwrap();
+            smol::block_on(async { db.get_user_settings().await }).unwrap();
 
         // Load and watch themes from ./themes directory
         let theme_name = match user_settings {

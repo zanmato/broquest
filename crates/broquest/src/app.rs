@@ -41,7 +41,7 @@ impl BroquestApp {
         let app_db = AppDatabase::global(cx).clone();
 
         // Synchronously load tabs from database - wait for database to be initialized
-        let saved_tabs = async_std::task::block_on(async {
+        let saved_tabs = smol::block_on(async {
             match app_db.load_tabs().await {
                 Ok(tabs) => {
                     tracing::info!("Loaded {} tabs from database", tabs.len());
