@@ -141,15 +141,27 @@ impl HttpMethod {
     }
 
     /// Get color for HTTP method
-    pub fn get_color(&self, cx: &App) -> gpui::Rgba {
+    pub fn get_color(&self, cx: &App) -> gpui::Hsla {
         match self {
-            HttpMethod::Get => cx.theme().green.into(),
-            HttpMethod::Post => cx.theme().blue.into(),
-            HttpMethod::Put => cx.theme().yellow.into(),
-            HttpMethod::Delete => cx.theme().red.into(),
-            HttpMethod::Patch => cx.theme().yellow.into(),
-            HttpMethod::Head => cx.theme().blue.into(),
-            HttpMethod::Options => cx.theme().cyan.into(),
+            HttpMethod::Get => cx.theme().green,
+            HttpMethod::Post => cx.theme().blue,
+            HttpMethod::Put => cx.theme().yellow,
+            HttpMethod::Delete => cx.theme().red,
+            HttpMethod::Patch => cx.theme().yellow,
+            HttpMethod::Head => cx.theme().blue,
+            HttpMethod::Options => cx.theme().cyan,
+        }
+    }
+
+    pub fn get_color_fn(&self) -> fn(cx: &App) -> gpui::Hsla {
+        match self {
+            HttpMethod::Get => |cx| cx.theme().green,
+            HttpMethod::Post => |cx| cx.theme().blue,
+            HttpMethod::Put => |cx| cx.theme().yellow,
+            HttpMethod::Delete => |cx| cx.theme().red,
+            HttpMethod::Patch => |cx| cx.theme().yellow,
+            HttpMethod::Head => |cx| cx.theme().blue,
+            HttpMethod::Options => |cx| cx.theme().cyan,
         }
     }
 }
@@ -933,7 +945,7 @@ impl RequestEditor {
         .detach();
     }
 
-    fn save_request(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Get current request data
         let request_data = self.get_request_data(cx);
 
@@ -962,6 +974,14 @@ impl RequestEditor {
                     }
                 }
             });
+
+            window.push_notification(
+                (
+                    NotificationType::Success,
+                    SharedString::from(format!("Saved {}", request_name).to_string()),
+                ),
+                cx,
+            );
         } else {
             tracing::warn!("Cannot save request: no collection_id set");
         }

@@ -141,8 +141,16 @@ impl EditorPanel {
                     for tab in editor_panel.tabs.iter_mut() {
                         if let TabType::Request(request_tab) = tab {
                             // Check if this is the same request editor by comparing the name_input entity
-                            if request_tab.request_editor.read(cx).name_input().clone() == name_input_for_closure {
-                                let current_name = request_tab.request_editor.read(cx).name_input().read(cx).value().to_string();
+                            if request_tab.request_editor.read(cx).name_input().clone()
+                                == name_input_for_closure
+                            {
+                                let current_name = request_tab
+                                    .request_editor
+                                    .read(cx)
+                                    .name_input()
+                                    .read(cx)
+                                    .value()
+                                    .to_string();
 
                                 if request_tab.title != current_name {
                                     request_tab.title = current_name;
@@ -160,13 +168,26 @@ impl EditorPanel {
         let method_select = request_editor.read(cx).method_select().clone();
         let method_select_for_closure = method_select.clone();
         let method_subscription = cx.subscribe_in(&method_select, window, {
-            move |editor_panel: &mut Self, _select_state, _event: &SelectEvent<Vec<HttpMethod>>, _window, cx| {
+            move |editor_panel: &mut Self,
+                  _select_state,
+                  _event: &SelectEvent<Vec<HttpMethod>>,
+                  _window,
+                  cx| {
                 // Find the request tab that corresponds to this request editor
                 for tab in editor_panel.tabs.iter_mut() {
                     if let TabType::Request(request_tab) = tab {
                         // Check if this is the same request editor by comparing the method_select entity
-                        if request_tab.request_editor.read(cx).method_select().clone() == method_select_for_closure {
-                            let current_method = request_tab.request_editor.read(cx).method_select().read(cx).selected_value().copied().unwrap_or(HttpMethod::Get);
+                        if request_tab.request_editor.read(cx).method_select().clone()
+                            == method_select_for_closure
+                        {
+                            let current_method = request_tab
+                                .request_editor
+                                .read(cx)
+                                .method_select()
+                                .read(cx)
+                                .selected_value()
+                                .copied()
+                                .unwrap_or(HttpMethod::Get);
 
                             if request_tab.method != current_method {
                                 request_tab.method = current_method;
@@ -208,7 +229,10 @@ impl EditorPanel {
                     editor.set_environments(&environments, window, cx);
                 });
             } else {
-                tracing::warn!("No environments found for collection_path: {}", collection_path);
+                tracing::warn!(
+                    "No environments found for collection_path: {}",
+                    collection_path
+                );
             }
         }
     }
@@ -231,12 +255,7 @@ impl EditorPanel {
         };
 
         let collection_editor = cx.new(|cx| {
-            CollectionEditor::new(
-                window,
-                cx,
-                collection_data.clone(),
-                collection_path.clone(),
-            )
+            CollectionEditor::new(window, cx, collection_data.clone(), collection_path.clone())
         });
 
         let collection_tab = CollectionTab {
@@ -256,8 +275,20 @@ impl EditorPanel {
                     for tab in editor_panel.tabs.iter_mut() {
                         if let TabType::Collection(collection_tab) = tab {
                             // Check if this is the same collection editor by comparing the name_input entity
-                            if collection_tab.collection_editor.read(cx).name_input().clone() == name_input_for_closure {
-                                let current_name = collection_tab.collection_editor.read(cx).name_input().read(cx).value().to_string();
+                            if collection_tab
+                                .collection_editor
+                                .read(cx)
+                                .name_input()
+                                .clone()
+                                == name_input_for_closure
+                            {
+                                let current_name = collection_tab
+                                    .collection_editor
+                                    .read(cx)
+                                    .name_input()
+                                    .read(cx)
+                                    .value()
+                                    .to_string();
                                 let tab_name = if current_name.is_empty() {
                                     "New Collection".to_string()
                                 } else {
@@ -350,6 +381,7 @@ impl Render for EditorPanel {
             .child(
                 // Tab bar
                 TabBar::new("editor-tabs")
+                    .menu(true)
                     .w_full()
                     .min_h(px(32.))
                     .selected_index(self.active_tab_ix)

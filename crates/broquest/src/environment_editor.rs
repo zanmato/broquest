@@ -74,7 +74,17 @@ impl EnvironmentEditor {
             // Load variables and secrets from the unified variables map
             for (key, env_var) in &env_toml.variables {
                 if env_var.secret {
-                    self.add_secret_row(key.clone(), true, window, cx, &mut secrets);
+                    let value = match EnvironmentVariable::read_credential(
+                        &self.collection_name,
+                        &env_toml.name,
+                        &key,
+                        cx,
+                    ) {
+                        Ok(v) => v,
+                        Err(_) => None,
+                    };
+
+                    self.add_secret_row(key.clone(), value, true, window, cx, &mut secrets);
                 } else {
                     // This is a regular variable
                     self.add_variable_row(
@@ -303,6 +313,7 @@ impl EnvironmentEditor {
     fn add_secret_row(
         &mut self,
         key: String,
+        value: Option<String>,
         enabled: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -313,7 +324,14 @@ impl EnvironmentEditor {
 
         let key_input = cx.new(|cx| InputState::new(window, cx).default_value(&key));
 
-        let value_input = cx.new(|cx| InputState::new(window, cx).default_value(""));
+        // Try to read the secret value from secure storage (synchronous since read_credential uses block_on internally)
+        let secret_value = value.unwrap_or_default();
+
+        let value_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(&secret_value)
+                .masked(true)
+        });
 
         secrets.push(SecretRow {
             id,
@@ -348,7 +366,7 @@ impl EnvironmentEditor {
         self.next_id += 1;
 
         let key_input = cx.new(|cx| InputState::new(window, cx));
-        let value_input = cx.new(|cx| InputState::new(window, cx));
+        let value_input = cx.new(|cx| InputState::new(window, cx).masked(true));
 
         let secret = SecretRow {
             id,
@@ -500,7 +518,8 @@ impl EnvironmentEditor {
                             .small()
                             .bordered(false)
                             .text_sm()
-                            .font_family(cx.theme().mono_font_family.clone()),
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .mask_toggle(),
                     ),
             )
             .child(
