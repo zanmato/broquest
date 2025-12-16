@@ -1,9 +1,8 @@
 use gpui::{
-    AppContext, ClickEvent, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
+    App, AppContext, ClickEvent, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px,
 };
 use gpui::{BorrowAppContext, SharedString};
-use gpui_component::menu::ContextMenuExt;
 use gpui_component::{
     ActiveTheme as _, Icon, Sizable, StyledExt,
     button::{Button, ButtonVariants},
@@ -11,7 +10,6 @@ use gpui_component::{
     label::Label,
     list::ListItem,
     menu::PopupMenuItem,
-    tree::{TreeEntry, TreeItem, TreeState, tree},
     v_flex,
 };
 
@@ -19,20 +17,223 @@ use crate::app_database::{AppDatabase, CollectionData};
 use crate::app_events::AppEvent;
 use crate::collection_manager::{CollectionInfo, CollectionManager};
 use crate::icon::IconName;
+use crate::ui::tree::{Tree, TreeDelegate, TreeEntry, TreeItem, TreeState};
 
 /// Icon and color combination for tree items
 #[derive(Clone)]
 pub struct TreeItemIcon {
     pub icon: Option<IconName>,
     pub prefix: Option<SharedString>,
-    pub color: gpui::Rgba,
+    pub color_fn: fn(&App) -> gpui::Hsla,
 }
 
 pub struct CollectionsPanel {
     collections: Vec<CollectionData>,
-    tree_state: Entity<TreeState>,
+    tree_state: Entity<TreeState<CollectionsTreeDelegate>>,
     tree_item_metadata: std::collections::HashMap<String, TreeItemMetadata>, // Map hierarchical key -> metadata
     request_data_map: std::collections::HashMap<String, crate::request_editor::RequestData>, // Map item_id -> RequestData
+}
+
+struct CollectionsTreeDelegate {
+    parent: Entity<CollectionsPanel>,
+}
+
+impl TreeDelegate for CollectionsTreeDelegate {
+    fn render_item(
+        &self,
+        ix: usize,
+        entry: &TreeEntry,
+        selected: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ListItem {
+        let item = entry.item();
+        let depth = entry.depth();
+
+        let connections_panel = self.parent.read(cx);
+
+        // Get icon from metadata
+        let mut tree_item_icon = connections_panel
+            .get_tree_item_metadata(&item.id)
+            .map(|metadata| metadata.icon.clone())
+            .unwrap_or_else(|| TreeItemIcon {
+                icon: None,
+                prefix: None,
+                color_fn: |cx: &App| cx.theme().foreground,
+            });
+
+        // Update folder icons based on expansion state (check if it's a collection or group by looking at metadata)
+        if let Some(metadata) = connections_panel.get_tree_item_metadata(&item.id)
+            && (metadata.kind == TreeItemKind::Collection || metadata.kind == TreeItemKind::Group)
+            && entry.is_expanded()
+        {
+            // This is an expanded collection/group, change icon to FolderOpen
+            tree_item_icon = TreeItemIcon {
+                icon: Some(IconName::FolderOpen),
+                prefix: None,
+                color_fn: |cx: &App| cx.theme().foreground,
+            };
+        }
+
+        ListItem::new(ix)
+            .selected(selected)
+            .w_full()
+            .px_3()
+            .pl(px(12.) * depth as f32 + px(12.)) // Indent based on depth
+            .my_0p5()
+            .child(
+                h_flex()
+                    .id(("tree-item", ix))
+                    .gap_2()
+                    .items_center()
+                    .when_some(tree_item_icon.icon, |this, icon_name| {
+                        this.child(Icon::new(icon_name).text_color((tree_item_icon.color_fn)(cx)))
+                    })
+                    .when_some(tree_item_icon.prefix, |this, prefix| {
+                        this.child(
+                            div()
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .text_sm()
+                                .font_bold()
+                                .text_color((tree_item_icon.color_fn)(cx))
+                                .pt(px(3.))
+                                .child(prefix),
+                        )
+                    })
+                    .child(Label::new(item.label.clone()).text_sm())
+                    //.context_menu(self.build_context_menu(item, cx))
+                    .when(entry.is_folder(), |this| {
+                        this.child(if entry.is_expanded() {
+                            Icon::new(IconName::ChevronDown)
+                        } else {
+                            Icon::new(IconName::ChevronRight)
+                        })
+                    }),
+            )
+            .on_click(window.listener_for(&self.parent, {
+                let item = entry.item().clone();
+                move |this: &mut CollectionsPanel, event: &ClickEvent, _window, cx| {
+                    tracing::info!(
+                        "Click event received for tree item: {} (click_count: {})",
+                        item.id,
+                        event.click_count()
+                    );
+
+                    if event.click_count() == 2 {
+                        // Double-click - open in tab
+                        if let Some(metadata) = this.get_tree_item_metadata(&item.id) {
+                            let metadata = metadata.clone();
+                            match metadata.kind {
+                                TreeItemKind::Request => {
+                                    // Open request in new tab
+                                    if let Some(request_data) =
+                                        this.request_data_map.get(item.id.as_ref()).cloned()
+                                    {
+                                        tracing::info!(
+                                            "Opening request in new tab: {}",
+                                            metadata.name
+                                        );
+                                        cx.emit(AppEvent::CreateNewRequestTab {
+                                            request_data,
+                                            collection_path: metadata
+                                                .collection_path
+                                                .clone()
+                                                .into(),
+                                        });
+                                    }
+                                }
+                                TreeItemKind::Collection => {
+                                    // Open collection in new tab
+                                    this.open_collection_tab(&metadata.collection_path, cx);
+                                }
+                                TreeItemKind::Group => {}
+                            }
+                        }
+                    }
+                    // Single-click is handled by the tree component for expansion
+                }
+            }))
+    }
+
+    fn context_menu(
+        &self,
+        _ix: usize,
+        entry: &TreeEntry,
+        menu: gpui_component::menu::PopupMenu,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> gpui_component::menu::PopupMenu {
+        let item = entry.item().clone();
+        let collections_panel = self.parent.read(cx);
+        let metadata = collections_panel.get_tree_item_metadata(&item.id).cloned();
+
+        // Build context menu based on item type using metadata
+        if let Some(metadata) = &metadata {
+            match metadata.kind {
+                TreeItemKind::Collection => menu
+                    .item(
+                        PopupMenuItem::new("Open Collection").on_click(window.listener_for(
+                            &self.parent,
+                            {
+                                let collection_path = metadata.collection_path.clone();
+                                let collection_name = metadata.name.clone();
+                                move |this, _, _, cx| {
+                                    tracing::info!("Open collection: {}", collection_name);
+                                    this.open_collection_tab(&collection_path, cx);
+                                }
+                            },
+                        )),
+                    )
+                    .item(
+                        PopupMenuItem::new("New Request").on_click(window.listener_for(
+                            &self.parent,
+                            {
+                                let collection_path = metadata.collection_path.clone();
+                                move |this, _, _, cx| {
+                                    this.new_request_tab(&collection_path, cx);
+                                }
+                            },
+                        )),
+                    )
+                    .separator()
+                    .item(
+                        PopupMenuItem::new("Remove Collection").on_click(window.listener_for(
+                            &self.parent,
+                            {
+                                let collection_path = metadata.collection_path.clone();
+                                move |this, _, window, cx| {
+                                    tracing::info!("Remove collection");
+                                    this.delete_collection(&collection_path, window, cx);
+                                }
+                            },
+                        )),
+                    ),
+                TreeItemKind::Request => menu.item(PopupMenuItem::new("Delete Request").on_click(
+                    window.listener_for(&self.parent, {
+                        let collection_path = metadata.collection_path.clone();
+                        let request_id_for_deletion = item.id.clone();
+                        move |this, _, _, cx| {
+                            this.delete_request(&request_id_for_deletion, &collection_path, cx);
+                        }
+                    }),
+                )),
+                TreeItemKind::Group => {
+                    menu.item(PopupMenuItem::new("New Request in Group").on_click(
+                        window.listener_for(&self.parent, {
+                            let collection_path = metadata.collection_path.clone();
+                            let group_path = metadata.group_path.clone().unwrap_or_default();
+                            move |this, _, _, cx| {
+                                this.new_request_in_group_tab(&collection_path, &group_path, cx);
+                            }
+                        }),
+                    ))
+                }
+            }
+        } else {
+            // Default context menu
+            menu.label(item.label.clone())
+        }
+    }
 }
 
 /// Type of tree item in the metadata context
@@ -55,7 +256,15 @@ pub struct TreeItemMetadata {
 
 impl CollectionsPanel {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let tree_state = cx.new(|cx| TreeState::new(cx));
+        let parent_entity = cx.entity();
+        let tree_state = cx.new(|cx| {
+            TreeState::new(
+                CollectionsTreeDelegate {
+                    parent: parent_entity,
+                },
+                cx,
+            )
+        });
 
         Self {
             collections: Vec::new(),
@@ -109,6 +318,16 @@ impl CollectionsPanel {
         collection_infos: &[CollectionInfo],
         cx: &mut Context<Self>,
     ) {
+        // Collect IDs of expanded items before clearing
+        let expanded_item_ids: std::collections::HashSet<SharedString> = self
+            .tree_state
+            .read(cx)
+            .entries()
+            .iter()
+            .filter(|entry| entry.is_expanded())
+            .map(|entry| entry.item().id.clone())
+            .collect();
+
         // Clear existing metadata
         self.tree_item_metadata.clear();
         self.request_data_map.clear();
@@ -129,8 +348,9 @@ impl CollectionsPanel {
 
             for (index, (_file_path, request)) in sorted_requests.into_iter().enumerate() {
                 let request_id = format!("request_{}_{}", collection_path.replace('/', "_"), index);
-                let request_tree_item =
-                    TreeItem::new(request_id.clone(), request.name.clone()).children(vec![]);
+                let request_tree_item = TreeItem::new(request_id.clone(), request.name.clone())
+                    .children(vec![])
+                    .expanded(expanded_item_ids.contains(&SharedString::from(request_id.clone())));
 
                 let request_metadata = TreeItemMetadata {
                     name: request.name.clone(),
@@ -138,7 +358,7 @@ impl CollectionsPanel {
                     icon: TreeItemIcon {
                         icon: None,
                         prefix: Some(SharedString::from(request.method.as_str())),
-                        color: request.method.get_color(cx),
+                        color_fn: request.method.get_color_fn(),
                     },
                     collection_path: collection_data.path.clone(),
                     group_path: None, // Root level request
@@ -180,7 +400,7 @@ impl CollectionsPanel {
                         icon: TreeItemIcon {
                             icon: None,
                             prefix: Some(SharedString::from(request.method.as_str())),
-                            color: request.method.get_color(cx),
+                            color_fn: request.method.get_color_fn(),
                         },
                         collection_path: collection_data.path.clone(),
                         group_path: Some(format!("{}/{}", collection_path, group_name)),
@@ -195,8 +415,9 @@ impl CollectionsPanel {
                 total_requests += group_info.requests.len();
 
                 // Create group tree item with its requests as children
-                let group_tree_item =
-                    TreeItem::new(group_id.clone(), group_name.clone()).children(group_child_items);
+                let group_tree_item = TreeItem::new(group_id.clone(), group_name.clone())
+                    .children(group_child_items)
+                    .expanded(expanded_item_ids.contains(&SharedString::from(group_id.clone())));
 
                 // Store metadata for this group
                 let group_metadata = TreeItemMetadata {
@@ -205,7 +426,7 @@ impl CollectionsPanel {
                     icon: TreeItemIcon {
                         icon: Some(IconName::Folder),
                         prefix: None,
-                        color: cx.theme().magenta.into(), // Different color from collections
+                        color_fn: |cx: &App| cx.theme().magenta,
                     },
                     collection_path: collection_data.path.clone(),
                     group_path: Some(format!("{}/{}", collection_path, group_name)),
@@ -220,7 +441,10 @@ impl CollectionsPanel {
             // Create the collection tree item with all its children
             let collection_tree_item =
                 TreeItem::new(collection_id.clone(), collection_data.name.clone())
-                    .children(child_items);
+                    .children(child_items)
+                    .expanded(
+                        expanded_item_ids.contains(&SharedString::from(collection_id.clone())),
+                    );
 
             // Store metadata for this collection
             let collection_metadata = TreeItemMetadata {
@@ -229,7 +453,7 @@ impl CollectionsPanel {
                 icon: TreeItemIcon {
                     icon: Some(IconName::Folder),
                     prefix: None,
-                    color: cx.theme().blue.into(),
+                    color_fn: |cx: &App| cx.theme().blue,
                 },
                 collection_path: collection_data.path.clone(),
                 group_path: None,
@@ -414,103 +638,6 @@ impl CollectionsPanel {
         self.load_collections(cx);
     }
 
-    /// Build context menu for a tree item based on its type
-    fn build_context_menu(
-        &self,
-        item: &TreeItem,
-        cx: &mut Context<Self>,
-    ) -> impl Fn(
-        gpui_component::menu::PopupMenu,
-        &mut Window,
-        &mut gpui::Context<gpui_component::menu::PopupMenu>,
-    ) -> gpui_component::menu::PopupMenu
-    + 'static {
-        let item = item.clone();
-        let entity = cx.entity();
-        let metadata = self.get_tree_item_metadata(&item.id).cloned();
-
-        move |this, window, _cx| {
-            // Build context menu based on item type using metadata
-            if let Some(metadata) = &metadata {
-                match metadata.kind {
-                    TreeItemKind::Collection => this
-                        .item(
-                            PopupMenuItem::new("Open Collection").on_click(window.listener_for(
-                                &entity,
-                                {
-                                    let collection_path = metadata.collection_path.clone();
-                                    let collection_name = metadata.name.clone();
-                                    move |this, _, window, cx| {
-                                        tracing::info!("Open collection: {}", collection_name);
-                                        this.open_collection_tab(&collection_path, cx);
-                                        window.focus_prev();
-                                    }
-                                },
-                            )),
-                        )
-                        .item(
-                            PopupMenuItem::new("New Request").on_click(window.listener_for(
-                                &entity,
-                                {
-                                    let collection_path = metadata.collection_path.clone();
-                                    move |this, _, window, cx| {
-                                        this.new_request_tab(&collection_path, cx);
-                                        window.focus_prev();
-                                    }
-                                },
-                            )),
-                        )
-                        .separator()
-                        .item(PopupMenuItem::new("Remove Collection").on_click(
-                            window.listener_for(&entity, {
-                                let collection_path = metadata.collection_path.clone();
-                                move |this, _, window, cx| {
-                                    tracing::info!("Remove collection");
-                                    this.delete_collection(&collection_path, window, cx);
-                                    window.focus_prev();
-                                }
-                            }),
-                        )),
-                    TreeItemKind::Request => {
-                        this.item(PopupMenuItem::new("Delete Request").on_click(
-                            window.listener_for(&entity, {
-                                let collection_path = metadata.collection_path.clone();
-                                let request_id_for_deletion = item.id.clone();
-                                move |this, _, window, cx| {
-                                    this.delete_request(
-                                        &request_id_for_deletion,
-                                        &collection_path,
-                                        cx,
-                                    );
-                                    window.focus_prev();
-                                }
-                            }),
-                        ))
-                    }
-                    TreeItemKind::Group => {
-                        this.item(PopupMenuItem::new("New Request in Group").on_click(
-                            window.listener_for(&entity, {
-                                let collection_path = metadata.collection_path.clone();
-                                let group_path = metadata.group_path.clone().unwrap_or_default();
-                                move |this, _, window, cx| {
-                                    this.new_request_in_group_tab(
-                                        &collection_path,
-                                        &group_path,
-                                        cx,
-                                    );
-                                    window.focus_prev();
-                                }
-                            }),
-                        ))
-                    }
-                }
-            } else {
-                // Default context menu
-                this.label(item.label.clone())
-            }
-        }
-    }
-
     /// Get tree item metadata by item_id
     fn get_tree_item_metadata(&self, item_id: &str) -> Option<&TreeItemMetadata> {
         self.tree_item_metadata.get(item_id)
@@ -546,130 +673,6 @@ impl CollectionsPanel {
                     ),
             )
     }
-
-    fn render_collections_tree(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let view = cx.entity();
-
-        tree(&self.tree_state, move |ix, entry, selected, window, cx| {
-            view.update(cx, |this, cx| {
-                this.render_tree_item(ix, entry, selected, window, cx)
-            })
-        })
-    }
-
-    fn render_tree_item(
-        &self,
-        ix: usize,
-        entry: &TreeEntry,
-        selected: bool,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ListItem {
-        let item = entry.item();
-        let depth = entry.depth();
-
-        // Get icon from metadata
-        let mut tree_item_icon = self
-            .get_tree_item_metadata(&item.id)
-            .map(|metadata| metadata.icon.clone())
-            .unwrap_or_else(|| TreeItemIcon {
-                icon: None,
-                prefix: None,
-                color: cx.theme().foreground.into(),
-            });
-
-        // Update folder icons based on expansion state (check if it's a collection or group by looking at metadata)
-        if let Some(metadata) = self.get_tree_item_metadata(&item.id)
-            && (metadata.kind == TreeItemKind::Collection || metadata.kind == TreeItemKind::Group)
-            && entry.is_expanded()
-        {
-            // This is an expanded collection/group, change icon to FolderOpen
-            tree_item_icon = TreeItemIcon {
-                icon: Some(IconName::FolderOpen),
-                prefix: None,
-                color: tree_item_icon.color,
-            };
-        }
-
-        ListItem::new(ix)
-            .selected(selected)
-            .w_full()
-            .px_3()
-            .pl(px(12.) * depth as f32 + px(12.)) // Indent based on depth
-            .my_0p5()
-            .child(
-                h_flex()
-                    .id(("tree-item", ix))
-                    .gap_2()
-                    .items_center()
-                    .when_some(tree_item_icon.icon, |this, icon_name| {
-                        this.child(Icon::new(icon_name).text_color(tree_item_icon.color))
-                    })
-                    .when_some(tree_item_icon.prefix, |this, prefix| {
-                        this.child(
-                            div()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .text_sm()
-                                .font_bold()
-                                .text_color(tree_item_icon.color)
-                                .pt(px(3.))
-                                .child(prefix),
-                        )
-                    })
-                    .child(Label::new(item.label.clone()).text_sm())
-                    .context_menu(self.build_context_menu(item, cx))
-                    .when(entry.is_folder(), |this| {
-                        this.child(if entry.is_expanded() {
-                            Icon::new(IconName::ChevronDown)
-                        } else {
-                            Icon::new(IconName::ChevronRight)
-                        })
-                    }),
-            )
-            .on_click(cx.listener({
-                let item = entry.item().clone();
-                move |this, event: &ClickEvent, _window, cx| {
-                    tracing::info!(
-                        "Click event received for tree item: {} (click_count: {})",
-                        item.id,
-                        event.click_count()
-                    );
-
-                    if event.click_count() == 2 {
-                        // Double-click - open in tab
-                        if let Some(metadata) = this.get_tree_item_metadata(&item.id) {
-                            let metadata = metadata.clone();
-                            match metadata.kind {
-                                TreeItemKind::Request => {
-                                    // Open request in new tab
-                                    if let Some(request_data) =
-                                        this.request_data_map.get(item.id.as_ref()).cloned()
-                                    {
-                                        tracing::info!(
-                                            "Opening request in new tab: {}",
-                                            metadata.name
-                                        );
-                                        cx.emit(AppEvent::CreateNewRequestTab {
-                                            request_data,
-                                            collection_path: metadata
-                                                .collection_path
-                                                .clone()
-                                                .into(),
-                                        });
-                                    }
-                                }
-                                TreeItemKind::Collection => {
-                                    // Open collection in new tab
-                                    this.open_collection_tab(&metadata.collection_path, cx);
-                                }
-                                TreeItemKind::Group => {}
-                            }
-                        }
-                    }
-                    // Single-click is handled by the tree component for expansion
-                }
-            }))
-    }
 }
 
 impl Render for CollectionsPanel {
@@ -680,7 +683,7 @@ impl Render for CollectionsPanel {
             .bg(cx.theme().sidebar_primary_foreground)
             .px(px(1.))
             .child(self.render_header_section(cx))
-            .child(self.render_collections_tree(cx))
+            .child(Tree::new(&self.tree_state))
     }
 }
 
