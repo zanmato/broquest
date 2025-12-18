@@ -36,27 +36,6 @@ impl BroquestApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         init_menus(cx);
 
-        // Load saved tabs from database
-        tracing::info!("Loading saved tabs from database");
-        let app_db = AppDatabase::global(cx).clone();
-
-        // Synchronously load tabs from database - wait for database to be initialized
-        let saved_tabs = smol::block_on(async {
-            match app_db.load_tabs().await {
-                Ok(tabs) => {
-                    tracing::info!("Loaded {} tabs from database", tabs.len());
-                    for tab in &tabs {
-                        tracing::debug!("Tab {:?}", tab);
-                    }
-                    tabs
-                }
-                Err(e) => {
-                    tracing::error!("Failed to load tabs: {}", e);
-                    Vec::new()
-                }
-            }
-        });
-
         let collections_panel = cx.new(|cx| CollectionsPanel::new(window, cx));
 
         // Load collections after creating the panel
@@ -64,8 +43,7 @@ impl BroquestApp {
             panel.load_collections(cx);
         });
 
-        let editor_panel =
-            cx.new(|cx| EditorPanel::new_with_saved_tabs(window, cx, false, saved_tabs));
+        let editor_panel = cx.new(|cx| EditorPanel::new(window, cx, false));
         let app_menu_bar = AppMenuBar::new(cx);
 
         let mut subscriptions = Vec::new();

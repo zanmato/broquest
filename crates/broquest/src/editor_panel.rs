@@ -1,7 +1,7 @@
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, Styled, Window, div, prelude::FluentBuilder,
-    px,
+    IntoElement, MouseButton, ParentElement, Render, ScrollHandle, Styled, Window, div,
+    prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, Sizable, StyledExt,
@@ -13,10 +13,10 @@ use gpui_component::{
 };
 
 use crate::collection_editor::CollectionEditor;
+use crate::collection_manager::CollectionManager;
 use crate::collection_types::CollectionToml;
 use crate::icon::IconName;
 use crate::request_editor::{RequestData, RequestEditor};
-use crate::{app_database::TabData, collection_manager::CollectionManager};
 use crate::{app_events::AppEvent, request_editor::HttpMethod};
 
 pub enum TabType {
@@ -52,10 +52,23 @@ pub struct EditorPanel {
     active_tab_ix: usize,
     next_tab_id: usize,
     sidebar_collapsed: bool,
+    tabbar_scroll_handle: ScrollHandle,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
 impl EditorPanel {
+    pub fn new(_: &mut Window, cx: &mut Context<Self>, sidebar_collapsed: bool) -> Self {
+        Self {
+            focus_handle: cx.focus_handle(),
+            tabs: vec![],
+            active_tab_ix: 0,
+            next_tab_id: 0,
+            sidebar_collapsed,
+            tabbar_scroll_handle: ScrollHandle::default(),
+            _subscriptions: Vec::new(),
+        }
+    }
+
     pub fn set_sidebar_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
         self.sidebar_collapsed = collapsed;
         cx.notify();
@@ -203,6 +216,7 @@ impl EditorPanel {
 
         self.tabs.push(TabType::Request(request_tab));
         self.active_tab_ix = tab_id;
+        self.scroll_tabbar_to_the_end(window);
 
         cx.notify();
     }
@@ -310,53 +324,19 @@ impl EditorPanel {
 
         self.tabs.push(TabType::Collection(collection_tab));
         self.active_tab_ix = tab_id;
+        self.scroll_tabbar_to_the_end(window);
 
         cx.notify();
     }
 
-    fn set_active_tab(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
-        if ix < self.tabs.len() {
-            // Tab switching no longer saves automatically - tabs are only saved on query execution
-            self.active_tab_ix = ix;
-            cx.notify();
-        }
-    }
-
-    /// Load saved query tabs from the app database
-    pub fn new_with_saved_tabs(
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        sidebar_collapsed: bool,
-        saved_tabs: Vec<TabData>,
-    ) -> Self {
-        tracing::info!("Loading {} saved tabs", saved_tabs.len());
-
-        let mut panel = Self {
-            focus_handle: cx.focus_handle(),
-            tabs: vec![],
-            active_tab_ix: 0,
-            next_tab_id: 0,
-            sidebar_collapsed,
-            _subscriptions: Vec::new(),
-        };
-
-        panel.restore_saved_tabs_with_connections_sync(saved_tabs, window, cx);
-
-        panel
-    }
-
-    /// Restore saved tabs
-    pub fn restore_saved_tabs_with_connections_sync(
-        &mut self,
-        saved_tabs: Vec<TabData>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        if saved_tabs.is_empty() {
-            tracing::debug!("No saved tabs to restore");
-        }
-
-        // TODO: Restore saved tabs
+    fn scroll_tabbar_to_the_end(&self, window: &mut Window) {
+        let scroll_handle = self.tabbar_scroll_handle.clone();
+        window.on_next_frame(move |window, _| {
+            window.on_next_frame(move |_, _| {
+                let max_offset = scroll_handle.max_offset();
+                scroll_handle.set_offset(gpui::point(-max_offset.width, gpui::px(0.0)));
+            })
+        });
     }
 }
 
@@ -385,9 +365,10 @@ impl Render for EditorPanel {
                     .w_full()
                     .min_h(px(32.))
                     .selected_index(self.active_tab_ix)
-                    .on_click(cx.listener(|this, ix: &usize, window, cx| {
-                        this.set_active_tab(*ix, window, cx);
+                    .on_click(cx.listener(|this, ix: &usize, _, _| {
+                        this.active_tab_ix = *ix;
                     }))
+                    .track_scroll(&self.tabbar_scroll_handle)
                     .prefix(
                         Button::new("toggle-sidebar")
                             .ghost()
