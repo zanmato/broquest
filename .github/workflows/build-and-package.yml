@@ -83,7 +83,7 @@ jobs:
         APP_IDENTIFIER="se.zanmato.broquest"
         APP_VERSION="${GITHUB_REF#refs/tags/v}"
         YEAR="$(date +%Y)"
-        APP_PATH="dist/${APP_NAME}.app"
+        APP_PATH="${APP_NAME}.app"
         BINARY="dist/broquest${{ matrix.asset_name }}"
 
         # Create .app bundle structure
