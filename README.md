@@ -19,6 +19,10 @@ A modern, native desktop API client built with [GPUI](https://www.gpui.rs) and [
 - **Local-first** - All your data stays on your machine with no cloud dependencies
 - **Cross-platform** - Available for Linux, macOS and Windows
 
+## macOS
+
+**IMPORTANT:** After downloading you have to run `xattr -r -d com.apple.quarantine Broquest.app` in the folder of the app since the app isn't notarized.
+
 ## Scripting
 
 Broquest supports JavaScript scripting for pre-request and post-response hooks using [QuickJS](https://bellard.org/quickjs/) with [LLRT modules](https://github.com/awslabs/llrt) that provide Node.js-compatible APIs.
