@@ -76,6 +76,37 @@ jobs:
         mkdir -p dist
         cp "${{ matrix.bin_path }}/broquest${{ matrix.extension || '' }}" "dist/broquest${{ matrix.asset_name }}"
 
+    - name: Package .app bundle
+      if: runner.os == 'macOS'
+      run: |
+        APP_NAME="Broquest"
+        APP_IDENTIFIER="se.zanmato.broquest"
+        APP_VERSION="${GITHUB_REF#refs/tags/v}"
+        YEAR="$(date +%Y)"
+        APP_PATH="dist/${APP_NAME}.app"
+        BINARY="dist/broquest${{ matrix.asset_name }}"
+
+        # Create .app bundle structure
+        mkdir -p "${APP_PATH}/Contents/MacOS"
+        mkdir -p "${APP_PATH}/Contents/Resources"
+
+        # Copy binary
+        cp "${BINARY}" "${APP_PATH}/Contents/MacOS/${APP_NAME}"
+        chmod +x "${APP_PATH}/Contents/MacOS/${APP_NAME}"
+
+        # Copy icon
+        cp crates/broquest/resources/AppIcon.icns "${APP_PATH}/Contents/Resources/" || true
+
+        # Create and substitute Info.plist variables
+        sed -e "s|{{APP_NAME}}|${APP_NAME}|g" \
+            -e "s|{{APP_IDENTIFIER}}|${APP_IDENTIFIER}|g" \
+            -e "s|{{APP_VERSION}}|${APP_VERSION}|g" \
+            -e "s|{{YEAR}}|${YEAR}|g" \
+            crates/broquest/resources/Info.plist > "${APP_PATH}/Contents/Info.plist"
+
+        # Create .tar.gz archive
+        tar -czf "dist/broquest${{ matrix.asset_name }}.tar.gz" "${APP_NAME}.app"
+        rm "dist/broquest${{ matrix.asset_name }}"
     - name: Package .deb
       if: runner.os == 'Linux'
       env:
@@ -85,11 +116,11 @@ jobs:
         ./script/package-deb
 
     - name: Upload binary artifact
-      if: runner.os != 'Linux'
       uses: actions/upload-artifact@v4
       with:
         name: broquest-${{ matrix.target }}
-        path: dist/broquest*
+        path: |
+          dist/broquest*
 
     - name: Upload .deb artifact
       if: runner.os == 'Linux'
