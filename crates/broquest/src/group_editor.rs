@@ -1,17 +1,22 @@
 use gpui::{
-    AppContext, BorrowAppContext, Context, Entity, EventEmitter, IntoElement, ParentElement,
-    Render, Styled, Window, div,
+    App, AppContext, BorrowAppContext, Context, Entity, EventEmitter, IntoElement, KeyBinding,
+    ParentElement, Render, Styled, Window, actions, div, prelude::*,
 };
 use gpui_component::{
     ActiveTheme as _, StyledExt, WindowExt,
     button::Button,
     h_flex,
     input::{Input, InputState},
+    kbd::Kbd,
     notification::NotificationType,
     v_flex,
 };
 
 use crate::{app_events::AppEvent, collection_manager::CollectionManager, icon::IconName};
+
+const CONTEXT: &str = "group_editor";
+
+actions!(group_editor, [Save]);
 
 pub struct GroupEditor {
     collection_path: String,
@@ -20,6 +25,10 @@ pub struct GroupEditor {
 }
 
 impl GroupEditor {
+    pub fn init(cx: &mut App) {
+        cx.bind_keys([KeyBinding::new("secondary-s", Save, Some(CONTEXT))]);
+    }
+
     pub fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -100,13 +109,18 @@ impl EventEmitter<AppEvent> for GroupEditor {}
 impl Render for GroupEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .key_context(CONTEXT)
+            .on_action(cx.listener(|this: &mut GroupEditor, &Save, window, cx| {
+                this.save_group(window, cx);
+            }))
             .flex_1()
             .size_full()
-            .gap_4()
-            .p_6()
             .child(
+                // Content area with padding
                 v_flex()
-                    .gap_2()
+                    .flex_1()
+                    .gap_3()
+                    .p_3()
                     .child(
                         div()
                             .text_sm()
@@ -117,12 +131,26 @@ impl Render for GroupEditor {
                     .child(div().child(Input::new(&self.name_input))),
             )
             .child(
-                h_flex().gap_2().justify_end().child(
-                    Button::new("save_group")
-                        .icon(IconName::Save)
-                        .label("Save Group")
-                        .on_click(cx.listener(|this, _, window, cx| this.save_group(window, cx))),
-                ),
+                h_flex()
+                    .gap_2()
+                    .p_3()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
+                    .justify_end()
+                    .child(
+                        Button::new("save_group")
+                            .outline()
+                            .compact()
+                            .icon(IconName::Save)
+                            .label("Save Group")
+                            .children(vec![
+                                Kbd::new(gpui::Keystroke::parse("secondary-s").unwrap())
+                                    .into_any_element(),
+                            ])
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.save_group(window, cx)),
+                            ),
+                    ),
             )
     }
 }

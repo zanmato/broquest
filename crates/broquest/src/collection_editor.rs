@@ -1,20 +1,26 @@
-use gpui::{App, Context, Entity, Window, div, prelude::*, px};
+use gpui::{App, Context, Entity, KeyBinding, Window, actions, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, StyledExt, WindowExt,
     button::Button,
     h_flex,
     input::{Input, InputState},
+    kbd::Kbd,
     notification::NotificationType,
     tab::{Tab, TabBar},
     v_flex,
 };
 
 use crate::{
-    app_database::AppDatabase, collection_types::CollectionMeta,
+    app_database::{AppDatabase, CollectionData},
+    collection_manager::CollectionManager,
+    collection_types::{CollectionMeta, CollectionToml},
     environment_editor::EnvironmentEditor,
+    icon::IconName,
 };
-use crate::{app_database::CollectionData, icon::IconName};
-use crate::{collection_manager::CollectionManager, collection_types::CollectionToml};
+
+const CONTEXT: &str = "collection_editor";
+
+actions!(collection_editor, [Save]);
 
 pub struct CollectionEditor {
     active_tab: usize,
@@ -26,6 +32,10 @@ pub struct CollectionEditor {
 }
 
 impl CollectionEditor {
+    pub fn init(cx: &mut App) {
+        cx.bind_keys([KeyBinding::new("secondary-s", Save, Some(CONTEXT))]);
+    }
+
     pub fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -300,6 +310,12 @@ impl CollectionEditor {
 impl Render for CollectionEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .key_context(CONTEXT)
+            .on_action(
+                cx.listener(|this: &mut CollectionEditor, &Save, window, cx| {
+                    this.handle_save_collection(window, cx);
+                }),
+            )
             .flex_1()
             .size_full()
             .child(
@@ -320,8 +336,14 @@ impl Render for CollectionEditor {
                     .justify_end()
                     .child(
                         Button::new("save_collection_bottom")
+                            .outline()
+                            .compact()
                             .icon(IconName::Save)
                             .label("Save Collection")
+                            .children(vec![
+                                Kbd::new(gpui::Keystroke::parse("secondary-s").unwrap())
+                                    .into_any_element(),
+                            ])
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.handle_save_collection(window, cx)
                             })),

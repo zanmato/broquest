@@ -14,8 +14,8 @@ mod environment_resolver;
 mod form_editor;
 mod group_editor;
 mod header_editor;
-mod http;
 mod highlighting;
+mod http;
 mod http_client;
 mod icon;
 mod path_parameter_editor;
@@ -50,6 +50,9 @@ fn main() {
 
         gpui_component::init(cx);
         ui::draggable_tree::init(cx);
+        request_editor::RequestEditor::init(cx);
+        group_editor::GroupEditor::init(cx);
+        collection_editor::CollectionEditor::init(cx);
 
         // Register syntax highlighting
         register_highlighting(cx);

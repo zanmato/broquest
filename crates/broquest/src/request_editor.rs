@@ -1,14 +1,15 @@
 use gpui::{
     App, AppContext, BorrowAppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeybindingKeystroke, Keystroke, ParentElement as _,
-    Render, SharedString, Styled as _, Subscription, Task, WeakEntity, Window, div,
-    prelude::FluentBuilder, px,
+    InteractiveElement as _, IntoElement, KeyBinding, KeybindingKeystroke, Keystroke,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, Task, WeakEntity, Window,
+    actions, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, IndexPath, Sizable, StyledExt, WindowExt,
     button::Button,
     h_flex,
     input::{Input, InputEvent, InputState},
+    kbd::Kbd,
     notification::NotificationType,
     select::{Select, SelectEvent, SelectItem, SelectState},
     tab::{Tab, TabBar},
@@ -35,6 +36,10 @@ use crate::query_parameter_editor::QueryParamEvent;
 use crate::script_editor::ScriptEditor;
 use crate::script_editor::ScriptEditorEvent;
 use crate::ui::tab_badge::TabBadge;
+
+const CONTEXT: &str = "request_editor";
+
+actions!(request_editor, [Save]);
 
 /// Basic URL encoding function
 fn url_encode(input: &str) -> String {
@@ -236,6 +241,10 @@ pub struct RequestEditor {
 }
 
 impl RequestEditor {
+    pub fn init(cx: &mut App) {
+        cx.bind_keys([KeyBinding::new("secondary-s", Save, Some(CONTEXT))]);
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let method_select = cx.new(|cx| {
             SelectState::new(
@@ -293,23 +302,22 @@ impl RequestEditor {
 
         let script_editor = cx.new(|cx| ScriptEditor::new(window, cx));
 
+        let mut subscriptions = Vec::new();
         // Subscribe to Content-Type selection changes
-        cx.subscribe(
+        subscriptions.push(cx.subscribe(
             &content_type_select,
             |this, _state, _event: &SelectEvent<Vec<ContentType>>, cx| {
                 this.on_content_type_change(cx);
             },
-        )
-        .detach();
+        ));
 
         // Subscribe to environment selection changes
-        cx.subscribe(
+        subscriptions.push(cx.subscribe(
             &environment_select,
             |this, _state, _event: &SelectEvent<Vec<EnvironmentOption>>, cx| {
                 this.on_environment_change(cx);
             },
-        )
-        .detach();
+        ));
 
         Self {
             _focus_handle: cx.focus_handle(),
@@ -335,7 +343,7 @@ impl RequestEditor {
             form_editor,
             script_editor,
             send_keystroke: KeybindingKeystroke::from_keystroke(Keystroke::parse("enter").unwrap()),
-            _subscriptions: Vec::new(),
+            _subscriptions: subscriptions,
             _updating_url_from_params: false,
             _was_dirty: false,
             _dirty_check_task: Task::ready(()),
@@ -1207,6 +1215,10 @@ impl RequestEditor {
                             .compact()
                             .label("Save Request")
                             .icon(IconName::Save)
+                            .children(vec![
+                                Kbd::new(Keystroke::parse("secondary-s").unwrap())
+                                    .into_any_element(),
+                            ])
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.save_request(window, cx);
                             })),
@@ -1659,6 +1671,11 @@ impl RequestEditor {
 impl Render for RequestEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .key_context(CONTEXT)
+            .on_action(cx.listener(|this: &mut RequestEditor, &Save, window, cx| {
+                tracing::info!("Save action triggered");
+                this.save_request(window, cx);
+            }))
             .size_full()
             .bg(cx.theme().background)
             .child(
