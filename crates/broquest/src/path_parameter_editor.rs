@@ -1,14 +1,19 @@
-use gpui::{App, Context, Entity, Window, div, prelude::*, px};
+use gpui::{App, Context, Entity, EventEmitter, Focusable, Window, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     v_flex,
 };
 
 use crate::icon::IconName;
 use crate::request_editor::KeyValuePair;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PathParamEvent {
+    ParamChanged,
+}
 
 #[derive(Debug, Clone)]
 pub struct PathParameterRow {
@@ -21,13 +26,17 @@ pub struct PathParameterRow {
 pub struct PathParamEditor {
     rows: Vec<PathParameterRow>,
     next_id: usize,
+    _subscriptions: Vec<gpui::Subscription>,
 }
+
+impl EventEmitter<PathParamEvent> for PathParamEditor {}
 
 impl PathParamEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut editor = Self {
             rows: Vec::new(),
             next_id: 0,
+            _subscriptions: Vec::new(),
         };
         // Always start with one empty row
         editor.add_parameter_row(String::new(), String::new(), true, window, cx);
@@ -133,12 +142,36 @@ impl PathParamEditor {
                 .default_value(&value)
         });
 
+        // Set up subscriptions for key and value input change events
+        let key_subscription = cx.subscribe_in(&key_input, window, {
+            move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
+                if let InputEvent::Change = event {
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(PathParamEvent::ParamChanged);
+                    }
+                }
+            }
+        });
+
+        let value_subscription = cx.subscribe_in(&value_input, window, {
+            move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
+                if let InputEvent::Change = event {
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(PathParamEvent::ParamChanged);
+                    }
+                }
+            }
+        });
+
         self.rows.push(PathParameterRow {
             id,
             key_input,
             value_input,
             enabled,
         });
+
+        self._subscriptions.push(key_subscription);
+        self._subscriptions.push(value_subscription);
 
         cx.notify();
     }
@@ -152,22 +185,27 @@ impl PathParamEditor {
         {
             self.add_parameter_row(String::new(), String::new(), true, window, cx);
         }
+        cx.emit(PathParamEvent::ParamChanged);
     }
 
     fn remove_parameter(&mut self, id: usize, cx: &mut Context<Self>) {
         self.rows.retain(|row| row.id != id);
+        cx.emit(PathParamEvent::ParamChanged);
         cx.notify();
     }
 
     fn toggle_parameter(&mut self, id: usize, cx: &mut Context<Self>) {
         if let Some(row) = self.rows.iter_mut().find(|row| row.id == id) {
             row.enabled = !row.enabled;
+            cx.emit(PathParamEvent::ParamChanged);
             cx.notify();
         }
     }
 
-    fn clear_all_parameters(&mut self, cx: &mut Context<Self>) {
+    fn clear_all_parameters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.rows.clear();
+        self.add_parameter_row(String::new(), String::new(), true, window, cx);
+        cx.emit(PathParamEvent::ParamChanged);
         cx.notify();
     }
 
@@ -278,8 +316,8 @@ impl Render for PathParamEditor {
                             .outline()
                             .icon(IconName::Trash)
                             .label("Clear All")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.clear_all_parameters(cx);
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.clear_all_parameters(window, cx);
                             })),
                     ),
             )

@@ -1,18 +1,28 @@
 use crate::icon::IconName;
-use gpui::{App, Context, Entity, Window, div, prelude::*, px};
+use gpui::{
+    App, Context, Entity, EventEmitter, Focusable, Subscription, Window, div, prelude::*, px,
+};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::Button,
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     v_flex,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScriptEditorEvent {
+    ScriptChanged,
+}
+
+#[derive(Debug)]
 pub struct ScriptEditor {
     pre_request_input: Entity<InputState>,
     post_response_input: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
 }
+
+impl EventEmitter<ScriptEditorEvent> for ScriptEditor {}
 
 impl ScriptEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -21,9 +31,39 @@ impl ScriptEditor {
         let post_response_input =
             cx.new(|cx| InputState::new(window, cx).code_editor("javascript"));
 
+        // Set up subscriptions for script input change events
+        let pre_subscription = cx.subscribe_in(&pre_request_input, window, {
+            move |_this: &mut Self,
+                  input_state: &Entity<InputState>,
+                  event: &InputEvent,
+                  window,
+                  cx| {
+                if let InputEvent::Change = event {
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(ScriptEditorEvent::ScriptChanged);
+                    }
+                }
+            }
+        });
+
+        let post_subscription = cx.subscribe_in(&post_response_input, window, {
+            move |_this: &mut Self,
+                  input_state: &Entity<InputState>,
+                  event: &InputEvent,
+                  window,
+                  cx| {
+                if let InputEvent::Change = event {
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(ScriptEditorEvent::ScriptChanged);
+                    }
+                }
+            }
+        });
+
         Self {
             pre_request_input,
             post_response_input,
+            _subscriptions: vec![pre_subscription, post_subscription],
         }
     }
 
@@ -110,6 +150,7 @@ impl ScriptEditor {
                                     input.update(cx, |input, cx| {
                                         input.set_value("", window, cx);
                                     });
+                                    cx.emit(ScriptEditorEvent::ScriptChanged);
                                 }
                             })),
                     ),

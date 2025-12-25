@@ -1,14 +1,19 @@
-use gpui::{App, Context, Entity, Window, div, prelude::*, px};
+use gpui::{App, Context, Entity, EventEmitter, Focusable, Window, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     v_flex,
 };
 
 use crate::icon::IconName;
 use crate::request_editor::KeyValuePair;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum HeaderEditorEvent {
+    ParamChanged,
+}
 
 #[derive(Debug, Clone)]
 pub struct HeaderRow {
@@ -21,13 +26,17 @@ pub struct HeaderRow {
 pub struct HeaderEditor {
     rows: Vec<HeaderRow>,
     next_id: usize,
+    _subscriptions: Vec<gpui::Subscription>,
 }
+
+impl EventEmitter<HeaderEditorEvent> for HeaderEditor {}
 
 impl HeaderEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut editor = Self {
             rows: Vec::new(),
             next_id: 0,
+            _subscriptions: Vec::new(),
         };
         // Always start with one empty row
         editor.add_header_row(String::new(), String::new(), true, window, cx);
@@ -112,12 +121,36 @@ impl HeaderEditor {
                 .default_value(&value)
         });
 
+        // Set up subscriptions for key and value input change events
+        let key_subscription = cx.subscribe_in(&key_input, window, {
+            move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
+                if let InputEvent::Change = event {
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(HeaderEditorEvent::ParamChanged);
+                    }
+                }
+            }
+        });
+
+        let value_subscription = cx.subscribe_in(&value_input, window, {
+            move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
+                if let InputEvent::Change = event {
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(HeaderEditorEvent::ParamChanged);
+                    }
+                }
+            }
+        });
+
         self.rows.push(HeaderRow {
             id,
             key_input,
             value_input,
             enabled,
         });
+
+        self._subscriptions.push(key_subscription);
+        self._subscriptions.push(value_subscription);
 
         cx.notify();
     }
@@ -131,22 +164,27 @@ impl HeaderEditor {
         {
             self.add_header_row(String::new(), String::new(), true, window, cx);
         }
+        cx.emit(HeaderEditorEvent::ParamChanged);
     }
 
     fn remove_header(&mut self, id: usize, cx: &mut Context<Self>) {
         self.rows.retain(|row| row.id != id);
+        cx.emit(HeaderEditorEvent::ParamChanged);
         cx.notify();
     }
 
     fn toggle_header(&mut self, id: usize, cx: &mut Context<Self>) {
         if let Some(row) = self.rows.iter_mut().find(|row| row.id == id) {
             row.enabled = !row.enabled;
+            cx.emit(HeaderEditorEvent::ParamChanged);
             cx.notify();
         }
     }
 
-    fn clear_all_headers(&mut self, cx: &mut Context<Self>) {
+    fn clear_all_headers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.rows.clear();
+        self.add_header_row(String::new(), String::new(), true, window, cx);
+        cx.emit(HeaderEditorEvent::ParamChanged);
         cx.notify();
     }
 
@@ -253,8 +291,8 @@ impl Render for HeaderEditor {
                             .outline()
                             .icon(IconName::Trash)
                             .label("Clear All")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.clear_all_headers(cx);
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.clear_all_headers(window, cx);
                             })),
                     ),
             )

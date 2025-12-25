@@ -1,14 +1,19 @@
-use gpui::{App, Context, Entity, Window, div, prelude::*, px};
+use gpui::{App, Context, Entity, EventEmitter, Focusable, Window, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     v_flex,
 };
 
 use crate::icon::IconName;
 use crate::request_editor::KeyValuePair;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormEditorEvent {
+    ParamChanged,
+}
 
 #[derive(Debug, Clone)]
 pub struct FormRow {
@@ -21,13 +26,17 @@ pub struct FormRow {
 pub struct FormEditor {
     rows: Vec<FormRow>,
     next_id: usize,
+    _subscriptions: Vec<gpui::Subscription>,
 }
+
+impl EventEmitter<FormEditorEvent> for FormEditor {}
 
 impl FormEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut editor = Self {
             rows: Vec::new(),
             next_id: 0,
+            _subscriptions: Vec::new(),
         };
         // Always start with one empty row
         editor.add_form_row(String::new(), String::new(), true, window, cx);
@@ -77,12 +86,36 @@ impl FormEditor {
                 .default_value(&value)
         });
 
+        // Set up subscriptions for key and value input change events
+        let key_subscription = cx.subscribe_in(&key_input, window, {
+            move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
+                if let InputEvent::Change = event {
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(FormEditorEvent::ParamChanged);
+                    }
+                }
+            }
+        });
+
+        let value_subscription = cx.subscribe_in(&value_input, window, {
+            move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
+                if let InputEvent::Change = event {
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(FormEditorEvent::ParamChanged);
+                    }
+                }
+            }
+        });
+
         self.rows.push(FormRow {
             id,
             key_input,
             value_input,
             enabled,
         });
+
+        self._subscriptions.push(key_subscription);
+        self._subscriptions.push(value_subscription);
 
         cx.notify();
     }
@@ -96,22 +129,27 @@ impl FormEditor {
         {
             self.add_form_row(String::new(), String::new(), true, window, cx);
         }
+        cx.emit(FormEditorEvent::ParamChanged);
     }
 
     fn remove_form_field(&mut self, id: usize, cx: &mut Context<Self>) {
         self.rows.retain(|row| row.id != id);
+        cx.emit(FormEditorEvent::ParamChanged);
         cx.notify();
     }
 
     fn toggle_form_field(&mut self, id: usize, cx: &mut Context<Self>) {
         if let Some(row) = self.rows.iter_mut().find(|row| row.id == id) {
             row.enabled = !row.enabled;
+            cx.emit(FormEditorEvent::ParamChanged);
             cx.notify();
         }
     }
 
-    fn clear_all_form_fields(&mut self, cx: &mut Context<Self>) {
+    fn clear_all_form_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.rows.clear();
+        self.add_form_row(String::new(), String::new(), true, window, cx);
+        cx.emit(FormEditorEvent::ParamChanged);
         cx.notify();
     }
 
@@ -119,6 +157,7 @@ impl FormEditor {
         // Find the row and clone the value input entity
         if let Some(row) = self.rows.iter().find(|row| row.id == id) {
             let value_input = row.value_input.clone();
+            let form_editor = cx.entity().downgrade();
 
             // Use GPUI's prompt_for_paths to select a file
             let path_future = cx.prompt_for_paths(gpui::PathPromptOptions {
@@ -144,6 +183,12 @@ impl FormEditor {
                                         state.set_value(file_path, window, cx);
                                         cx.notify();
                                     });
+                                    // Emit ParamChanged event when file is selected
+                                    if let Some(form_editor) = form_editor.upgrade() {
+                                        let _ = form_editor.update(cx, |_this, cx| {
+                                            cx.emit(FormEditorEvent::ParamChanged);
+                                        });
+                                    }
                                 });
                             }
                         }
@@ -281,8 +326,8 @@ impl Render for FormEditor {
                             .outline()
                             .icon(IconName::Trash)
                             .label("Clear All")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.clear_all_form_fields(cx);
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.clear_all_form_fields(window, cx);
                             })),
                     ),
             )

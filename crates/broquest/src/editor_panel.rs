@@ -19,7 +19,7 @@ use crate::collection_types::CollectionToml;
 use crate::group_editor::GroupEditor;
 use crate::http::HttpMethod;
 use crate::icon::IconName;
-use crate::request_editor::{RequestData, RequestEditor};
+use crate::request_editor::{RequestData, RequestEditor, RequestEditorEvent};
 
 pub enum TabType {
     Request(RequestTab),
@@ -36,6 +36,7 @@ pub struct RequestTab {
     pub request_editor: Entity<RequestEditor>,
     #[allow(dead_code)]
     pub collection_path: String, // Link to the collection this request belongs to
+    pub is_dirty: bool,
 }
 
 pub struct CollectionTab {
@@ -154,6 +155,7 @@ impl EditorPanel {
             collection_name: collection_suffix.clone(),
             request_editor: request_editor.clone(),
             collection_path: collection_path.clone(),
+            is_dirty: false,
         };
 
         // Set up subscriptions to update tab title when request name or method changes
@@ -225,6 +227,26 @@ impl EditorPanel {
             }
         });
         self._subscriptions.push(method_subscription);
+
+        // Subscribe to dirty state changes from request editor
+        let request_editor_for_closure = request_editor.clone();
+        let dirty_subscription = cx.subscribe_in(&request_editor, window, {
+            move |editor_panel: &mut Self, _editor, event: &RequestEditorEvent, _window, cx| {
+                let RequestEditorEvent::DirtyStateChanged { is_dirty } = event;
+                for tab in editor_panel.tabs.iter_mut() {
+                    if let TabType::Request(request_tab) = tab {
+                        if request_tab.request_editor.clone() == request_editor_for_closure {
+                            if request_tab.is_dirty != *is_dirty {
+                                request_tab.is_dirty = *is_dirty;
+                                cx.notify();
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        self._subscriptions.push(dirty_subscription);
 
         self.tabs.push(TabType::Request(request_tab));
         self.active_tab_ix = tab_id;
@@ -473,11 +495,22 @@ impl Render for EditorPanel {
                                 Tab::new()
                                     .label(request_tab.title.clone())
                                     .prefix(
-                                        div()
+                                        h_flex()
+                                            .gap_3()
                                             .pl_3()
                                             .pt(px(3.))
                                             .font_family(cx.theme().mono_font_family.clone())
                                             .font_bold()
+                                            .when(request_tab.is_dirty, |this| {
+                                                this.child(
+                                                    div()
+                                                        .w(px(6.))
+                                                        .h(px(6.))
+                                                        .rounded_full()
+                                                        .bg(cx.theme().blue)
+                                                        .ml_1(),
+                                                )
+                                            })
                                             .text_color(request_tab.method.get_color(cx))
                                             .child(request_tab.method.as_str()),
                                     )

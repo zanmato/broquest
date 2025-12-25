@@ -1,7 +1,8 @@
 use gpui::{
     App, AppContext, BorrowAppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeybindingKeystroke, Keystroke, ParentElement as _,
-    Render, SharedString, Styled as _, Window, div, prelude::FluentBuilder, px,
+    Render, SharedString, Styled as _, Subscription, Task, WeakEntity, Window, div,
+    prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, IndexPath, Sizable, StyledExt, WindowExt,
@@ -21,14 +22,18 @@ use crate::app_events::AppEvent;
 use crate::collection_manager::CollectionManager;
 use crate::collection_types::EnvironmentToml;
 use crate::form_editor::FormEditor;
+use crate::form_editor::FormEditorEvent;
 use crate::header_editor::HeaderEditor;
+use crate::header_editor::HeaderEditorEvent;
 use crate::http::{ContentType, HttpMethod};
 use crate::http_client::ResponseFormat;
 use crate::icon::IconName;
 use crate::path_parameter_editor::PathParamEditor;
+use crate::path_parameter_editor::PathParamEvent;
 use crate::query_parameter_editor::QueryParamEditor;
 use crate::query_parameter_editor::QueryParamEvent;
 use crate::script_editor::ScriptEditor;
+use crate::script_editor::ScriptEditorEvent;
 use crate::ui::tab_badge::TabBadge;
 
 /// Basic URL encoding function
@@ -114,6 +119,32 @@ impl Default for KeyValuePair {
     }
 }
 
+impl KeyValuePair {
+    /// Check if two KeyValuePair vectors are equal (order-independent comparison).
+    /// Filters out entries with empty keys and compares the remaining entries.
+    pub fn vec_equals(left: &[KeyValuePair], right: &[KeyValuePair]) -> bool {
+        // Filter out entries with empty keys (they don't represent real data)
+        let left_filtered: Vec<_> = left.iter().filter(|p| !p.key.trim().is_empty()).collect();
+        let right_filtered: Vec<_> = right.iter().filter(|p| !p.key.trim().is_empty()).collect();
+
+        if left_filtered.len() != right_filtered.len() {
+            return false;
+        }
+
+        // For each item in left, find a matching item in right
+        for l in &left_filtered {
+            if !right_filtered
+                .iter()
+                .any(|r| l.key == r.key && l.value == r.value && l.enabled == r.enabled)
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RequestData {
     pub name: String,
@@ -169,9 +200,15 @@ pub enum ResponseTab {
     Raw,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequestEditorEvent {
+    DirtyStateChanged { is_dirty: bool },
+}
+
 pub struct RequestEditor {
     _focus_handle: FocusHandle,
     request_data: RequestData,
+    original_request_data: Option<RequestData>,
     response_data: ResponseData,
     active_tab: RequestTab,
     active_response_tab: ResponseTab,
@@ -192,8 +229,10 @@ pub struct RequestEditor {
     form_editor: Entity<FormEditor>,
     script_editor: Entity<ScriptEditor>,
     send_keystroke: KeybindingKeystroke,
-    _subscriptions: Vec<gpui::Subscription>,
+    _subscriptions: Vec<Subscription>,
     _updating_url_from_params: bool,
+    _was_dirty: bool,
+    _dirty_check_task: Task<()>,
 }
 
 impl RequestEditor {
@@ -275,6 +314,7 @@ impl RequestEditor {
         Self {
             _focus_handle: cx.focus_handle(),
             request_data: RequestData::default(),
+            original_request_data: None,
             response_data: ResponseData::default(),
             active_tab: RequestTab::Query,
             active_response_tab: ResponseTab::Response,
@@ -297,6 +337,8 @@ impl RequestEditor {
             send_keystroke: KeybindingKeystroke::from_keystroke(Keystroke::parse("enter").unwrap()),
             _subscriptions: Vec::new(),
             _updating_url_from_params: false,
+            _was_dirty: false,
+            _dirty_check_task: Task::ready(()),
         }
     }
 
@@ -314,7 +356,9 @@ impl RequestEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.original_request_data = Some(data.clone());
         self.request_data = data.clone();
+        self._was_dirty = false; // Reset dirty state when loading saved data
 
         // Update method selector
         self.method_select.update(cx, |state, cx| {
@@ -576,6 +620,71 @@ impl RequestEditor {
         data
     }
 
+    pub fn is_dirty(&self, cx: &Context<Self>) -> bool {
+        let Some(original) = &self.original_request_data else {
+            return false;
+        };
+
+        let current = self.get_request_data(cx);
+
+        // Compare scalar fields
+        if original.name != current.name
+            || original.method != current.method
+            || original.url != current.url
+            || original.body != current.body
+        {
+            return true;
+        }
+
+        // Compare script options
+        match (&original.pre_request_script, &current.pre_request_script) {
+            (None, None) => {}
+            (Some(o), Some(c)) if o == c => {}
+            _ => return true,
+        }
+
+        match (
+            &original.post_response_script,
+            &current.post_response_script,
+        ) {
+            (None, None) => {}
+            (Some(o), Some(c)) if o == c => {}
+            _ => return true,
+        }
+
+        // Compare vectors using order-independent comparison
+        if !KeyValuePair::vec_equals(&original.path_params, &current.path_params) {
+            return true;
+        }
+
+        if !KeyValuePair::vec_equals(&original.query_params, &current.query_params) {
+            return true;
+        }
+
+        if !KeyValuePair::vec_equals(&original.headers, &current.headers) {
+            return true;
+        }
+
+        false
+    }
+
+    fn schedule_dirty_check(&mut self, cx: &mut Context<Self>) {
+        self._dirty_check_task = cx.spawn(
+            async move |weak_entity: WeakEntity<RequestEditor>, async_cx| {
+                smol::Timer::after(std::time::Duration::from_millis(1)).await;
+                let _ = weak_entity.update(async_cx, |this: &mut RequestEditor, cx| {
+                    let is_now_dirty = this.is_dirty(cx);
+                    if is_now_dirty != this._was_dirty {
+                        this._was_dirty = is_now_dirty;
+                        cx.emit(RequestEditorEvent::DirtyStateChanged {
+                            is_dirty: is_now_dirty,
+                        });
+                    }
+                });
+            },
+        );
+    }
+
     fn on_content_type_change(&mut self, cx: &mut Context<Self>) {
         // Get the selected content type
         let content_type = {
@@ -593,8 +702,6 @@ impl RequestEditor {
 
             // Update request data to include proper Content-Type header
             self.request_data = self.get_request_data(cx);
-
-            tracing::info!("Content-Type changed to: {}", content_type.as_str());
         }
     }
 
@@ -607,9 +714,6 @@ impl RequestEditor {
         } else {
             tracing::info!("Environment changed to: None");
         }
-
-        // TODO: Apply environment variable resolution to request data
-        // This would integrate with the environment resolver later
 
         cx.notify();
     }
@@ -839,37 +943,48 @@ impl RequestEditor {
 
         // Get request name from the request data
         let request_name = if request_data.name.is_empty() || request_data.name == "New Request" {
-            "untitled_request"
+            "untitled_request".to_string()
         } else {
-            &request_data.name
+            request_data.name.clone()
         };
 
         if let Some(ref collection_path) = self.collection_path {
             // Use cx.update_global to call the save_request method on CollectionManager
-            cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-                let group_path_ref = self.group_path.as_deref();
-                match collection_manager.save_request(
-                    collection_path,
-                    &request_data,
-                    request_name,
-                    group_path_ref,
-                ) {
-                    Ok(()) => {
-                        tracing::info!("Request saved successfully");
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to save request: {}", e);
-                    }
-                }
-            });
+            let group_path_ref = self.group_path.as_deref();
+            let save_result =
+                cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
+                    collection_manager.save_request(
+                        collection_path,
+                        &request_data,
+                        &request_name,
+                        group_path_ref,
+                    )
+                });
 
-            window.push_notification(
-                (
-                    NotificationType::Success,
-                    SharedString::from(format!("Saved {}", request_name).to_string()),
-                ),
-                cx,
-            );
+            match save_result {
+                Ok(()) => {
+                    tracing::info!("Request saved successfully");
+                    // Reset dirty state after successful save
+                    self.original_request_data = Some(request_data);
+                    self._was_dirty = false;
+
+                    // Emit clean state event
+                    cx.emit(RequestEditorEvent::DirtyStateChanged { is_dirty: false });
+
+                    cx.notify();
+
+                    window.push_notification(
+                        (
+                            NotificationType::Success,
+                            SharedString::from(format!("Saved {}", request_name).to_string()),
+                        ),
+                        cx,
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("Failed to save request: {}", e);
+                }
+            }
         } else {
             tracing::warn!("Cannot save request: no collection_id set");
         }
@@ -1235,6 +1350,9 @@ impl RequestEditor {
                             editor.set_parameters(&merged_params, window, cx);
                         }
                     });
+
+                    // Schedule dirty state check after URL change
+                    this.schedule_dirty_check(cx);
                 }
             }
         });
@@ -1257,50 +1375,91 @@ impl RequestEditor {
                             state.set_value(new_url, window, cx);
                         });
                         this._updating_url_from_params = false;
+
+                        // Schedule dirty state check after query param change
+                        this.schedule_dirty_check(cx);
                     }
                 }
             }
         });
         self._subscriptions.push(query_param_subscription);
 
-        // Set up observers for all editors to update badge counts
-        // Observe path parameter editor changes
-        let path_param_subscription = cx.observe(&self.path_param_editor, |_this, _editor, cx| {
-            cx.notify();
-        });
+        // Set up subscription for name input changes (for dirty state)
+        let name_input = self.name_input.clone();
+        let name_subscription =
+            cx.subscribe(&name_input, |this, _input, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    this.schedule_dirty_check(cx);
+                }
+            });
+        self._subscriptions.push(name_subscription);
+
+        // Set up subscription for method select changes (for dirty state)
+        let method_select = self.method_select.clone();
+        let method_subscription = cx.subscribe(
+            &method_select,
+            |this, _state, _event: &SelectEvent<Vec<HttpMethod>>, cx| {
+                this.schedule_dirty_check(cx);
+            },
+        );
+        self._subscriptions.push(method_subscription);
+
+        // Set up subscriptions for all editors to track dirty state changes
+        // Subscribe to path parameter editor changes
+        let path_param_subscription = cx.subscribe(
+            &self.path_param_editor,
+            |this, _editor, _: &PathParamEvent, cx| {
+                this.schedule_dirty_check(cx);
+                cx.notify();
+            },
+        );
         self._subscriptions.push(path_param_subscription);
 
-        // Observe header editor changes
-        let header_subscription = cx.observe(&self.header_editor, |_this, _editor, cx| {
-            cx.notify();
-        });
+        // Subscribe to header editor changes
+        let header_subscription = cx.subscribe(
+            &self.header_editor,
+            |this, _editor, _: &HeaderEditorEvent, cx| {
+                this.schedule_dirty_check(cx);
+                cx.notify();
+            },
+        );
         self._subscriptions.push(header_subscription);
 
-        // Observe script editor changes
-        let script_subscription = cx.observe(&self.script_editor, |_this, _editor, cx| {
-            cx.notify();
-        });
+        // Subscribe to script editor changes
+        let script_subscription = cx.subscribe(
+            &self.script_editor,
+            |this, _editor, _: &ScriptEditorEvent, cx| {
+                this.schedule_dirty_check(cx);
+                cx.notify();
+            },
+        );
         self._subscriptions.push(script_subscription);
 
-        // Observe form editor changes
-        let form_subscription = cx.observe(&self.form_editor, |_this, _editor, cx| {
-            cx.notify();
-        });
+        // Subscribe to form editor changes
+        let form_subscription = cx.subscribe(
+            &self.form_editor,
+            |this, _editor, _: &FormEditorEvent, cx| {
+                this.schedule_dirty_check(cx);
+                cx.notify();
+            },
+        );
         self._subscriptions.push(form_subscription);
 
-        // Observe body input changes
+        // Subscribe to body input changes
         let body_subscription =
-            cx.subscribe(&self.body_input, |_this, _input, event: &InputEvent, cx| {
+            cx.subscribe(&self.body_input, |this, _input, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
+                    this.schedule_dirty_check(cx);
                     cx.notify();
                 }
             });
         self._subscriptions.push(body_subscription);
 
-        // Observe content type changes (affects body badge)
+        // Subscribe to content type changes (affects body badge)
         let content_type_subscription = cx.subscribe(
             &self.content_type_select,
-            |_this, _state, _event: &SelectEvent<Vec<ContentType>>, cx| {
+            |this, _state, _event: &SelectEvent<Vec<ContentType>>, cx| {
+                this.schedule_dirty_check(cx);
                 cx.notify();
             },
         );
@@ -1412,6 +1571,7 @@ impl RequestEditor {
 }
 
 impl EventEmitter<AppEvent> for RequestEditor {}
+impl EventEmitter<RequestEditorEvent> for RequestEditor {}
 
 impl RequestEditor {
     /// Calculate badge count for Query tab (number of enabled query params)
