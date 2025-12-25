@@ -15,6 +15,7 @@ use gpui_component::{
 use crate::collection_editor::CollectionEditor;
 use crate::collection_manager::CollectionManager;
 use crate::collection_types::CollectionToml;
+use crate::group_editor::GroupEditor;
 use crate::icon::IconName;
 use crate::request_editor::{RequestData, RequestEditor};
 use crate::{app_events::AppEvent, request_editor::HttpMethod};
@@ -22,6 +23,7 @@ use crate::{app_events::AppEvent, request_editor::HttpMethod};
 pub enum TabType {
     Request(RequestTab),
     Collection(CollectionTab),
+    Group(GroupTab),
 }
 
 pub struct RequestTab {
@@ -40,6 +42,15 @@ pub struct CollectionTab {
     pub id: usize,
     pub title: String,
     pub collection_editor: Entity<CollectionEditor>,
+    #[allow(dead_code)]
+    pub collection_path: String, // Link to the collection this belongs to
+}
+
+pub struct GroupTab {
+    #[allow(dead_code)]
+    pub id: usize,
+    pub title: String,
+    pub group_editor: Entity<GroupEditor>,
     #[allow(dead_code)]
     pub collection_path: String, // Link to the collection this belongs to
 }
@@ -329,6 +340,77 @@ impl EditorPanel {
         cx.notify();
     }
 
+    /// Create and add a group tab for editing an existing group
+    pub fn create_and_add_group_tab_with_name(
+        &mut self,
+        collection_path: String,
+        group_name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = self.next_tab_id;
+        self.next_tab_id += 1;
+
+        let group_tab_title = group_name
+            .clone()
+            .unwrap_or_else(|| "New Group".to_string());
+
+        let group_editor =
+            cx.new(|cx| GroupEditor::new(window, cx, collection_path.clone(), group_name.clone()));
+
+        let group_tab = GroupTab {
+            id: tab_id,
+            title: group_tab_title,
+            group_editor: group_editor.clone(),
+            collection_path,
+        };
+
+        // Set up subscription to update tab title when group name changes
+        let name_input = group_editor.read(cx).name_input().clone();
+        let name_input_for_closure = name_input.clone();
+        let subscription = cx.subscribe_in(&name_input, window, {
+            move |editor_panel: &mut Self, _input_state, event: &InputEvent, _window, cx| {
+                if let InputEvent::Change = event {
+                    // Find the group tab that corresponds to this group editor
+                    for tab in editor_panel.tabs.iter_mut() {
+                        if let TabType::Group(group_tab) = tab {
+                            // Check if this is the same group editor by comparing the name_input entity
+                            if group_tab.group_editor.read(cx).name_input().clone()
+                                == name_input_for_closure
+                            {
+                                let current_name = group_tab
+                                    .group_editor
+                                    .read(cx)
+                                    .name_input()
+                                    .read(cx)
+                                    .value()
+                                    .to_string();
+                                let tab_name = if current_name.is_empty() {
+                                    "New Group".to_string()
+                                } else {
+                                    current_name
+                                };
+
+                                if group_tab.title != tab_name {
+                                    group_tab.title = tab_name;
+                                    cx.notify();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        self._subscriptions.push(subscription);
+
+        self.tabs.push(TabType::Group(group_tab));
+        self.active_tab_ix = tab_id;
+        self.scroll_tabbar_to_the_end(window);
+
+        cx.notify();
+    }
+
     fn scroll_tabbar_to_the_end(&self, window: &mut Window) {
         let scroll_handle = self.tabbar_scroll_handle.clone();
         window.on_next_frame(move |window, _| {
@@ -471,6 +553,43 @@ impl Render for EditorPanel {
                                             .into_any_element(),
                                     )
                             }
+                            TabType::Group(group_tab) => {
+                                let tab_index = ix;
+
+                                // Clone the tab title to avoid lifetime issues
+                                let tab_title = group_tab.title.clone();
+                                Tab::new()
+                                    .label(&tab_title)
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(
+                                            move |_this,
+                                                  _event: &gpui::MouseDownEvent,
+                                                  _window,
+                                                  cx| {
+                                                // Single click - activate the tab by setting active tab index
+                                                cx.emit(AppEvent::TabChanged { tab_id: tab_index });
+                                            },
+                                        ),
+                                    )
+                                    .suffix(
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                Button::new(("close-tab", ix))
+                                                    .ghost()
+                                                    .xsmall()
+                                                    .icon(IconName::Close)
+                                                    .on_click(cx.listener(
+                                                        move |this, _, _, cx| {
+                                                            this.close_tab(tab_index, cx);
+                                                        },
+                                                    )),
+                                            )
+                                            .into_any_element(),
+                                    )
+                            }
                         }
                     })),
             )
@@ -497,6 +616,15 @@ impl Render for EditorPanel {
                                         .flex_1()
                                         .h_full()
                                         .child(collection_tab.collection_editor.clone()),
+                                )
+                            }
+                            TabType::Group(group_tab) => {
+                                this.child(
+                                    // Show the GroupEditor directly
+                                    div()
+                                        .flex_1()
+                                        .h_full()
+                                        .child(group_tab.group_editor.clone()),
                                 )
                             }
                         }

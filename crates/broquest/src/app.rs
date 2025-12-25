@@ -50,6 +50,7 @@ impl BroquestApp {
 
         // Set up event handling for CreateNewRequestTab events with window access
         let editor_panel_clone = editor_panel.clone();
+        let collections_panel_clone = collections_panel.clone();
         let subscription = cx.subscribe_in(
             &collections_panel,
             window,
@@ -128,8 +129,41 @@ impl BroquestApp {
                     });
                 }
 
+                if let AppEvent::CreateNewGroupTab {
+                    collection_path,
+                    group_name,
+                } = event
+                {
+                    tracing::info!(
+                        "Received CreateNewGroupTab event for: {:?}",
+                        group_name.as_ref().map(|s| s.as_ref())
+                    );
+                    editor_panel_clone.update(cx, |editor_panel, cx| {
+                        editor_panel.create_and_add_group_tab_with_name(
+                            collection_path.to_string(),
+                            group_name.as_ref().map(|s| s.to_string()),
+                            window,
+                            cx,
+                        );
+                    });
+                }
+
                 if let AppEvent::CollectionDeleted { collection_path } = event {
                     tracing::info!("Received CollectionDeleted event for: {}", collection_path);
+                }
+
+                if let AppEvent::GroupCreated { .. } = event {
+                    // Reload collections panel to pick up the new group
+                    collections_panel_clone.update(cx, |panel, cx| {
+                        panel.load_collections(cx);
+                    });
+                }
+
+                if let AppEvent::GroupDeleted { .. } = event {
+                    // Reload collections panel to remove the deleted group
+                    collections_panel_clone.update(cx, |panel, cx| {
+                        panel.load_collections(cx);
+                    });
                 }
             },
         );

@@ -12,6 +12,7 @@ mod editor_panel;
 mod environment_editor;
 mod environment_resolver;
 mod form_editor;
+mod group_editor;
 mod header_editor;
 mod highlighting;
 mod http_client;
@@ -47,7 +48,7 @@ fn main() {
             .init();
 
         gpui_component::init(cx);
-        ui::tree::init(cx);
+        ui::draggable_tree::init(cx);
 
         // Register syntax highlighting
         register_highlighting(cx);

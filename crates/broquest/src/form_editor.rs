@@ -133,18 +133,18 @@ impl FormEditor {
                 match path_future.await {
                     Ok(result) => match result {
                         Ok(Some(paths)) => {
-                            if let Some(path) = paths.first() {
-                                if let Some(path_str) = path.to_str() {
-                                    let file_path = format!("@{}", path_str);
+                            if let Some(path) = paths.first()
+                                && let Some(path_str) = path.to_str()
+                            {
+                                let file_path = format!("@{}", path_str);
 
-                                    // Update the value input with the selected file path
-                                    let _ = window.update(|window, cx| {
-                                        value_input.update(cx, |state, cx| {
-                                            state.set_value(file_path, window, cx);
-                                            cx.notify();
-                                        });
+                                // Update the value input with the selected file path
+                                let _ = window.update(|window, cx| {
+                                    value_input.update(cx, |state, cx| {
+                                        state.set_value(file_path, window, cx);
+                                        cx.notify();
                                     });
-                                }
+                                });
                             }
                         }
                         Ok(None) => {

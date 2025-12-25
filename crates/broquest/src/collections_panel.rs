@@ -4,20 +4,26 @@ use gpui::{
 };
 use gpui::{BorrowAppContext, SharedString};
 use gpui_component::{
-    ActiveTheme as _, Icon, Sizable, StyledExt,
+    ActiveTheme as _, Icon, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     label::Label,
     list::ListItem,
     menu::PopupMenuItem,
+    notification::NotificationType,
     v_flex,
 };
+use smol::Timer;
+use std::collections::HashMap;
 
 use crate::app_database::{AppDatabase, CollectionData};
 use crate::app_events::AppEvent;
 use crate::collection_manager::{CollectionInfo, CollectionManager};
 use crate::icon::IconName;
-use crate::ui::tree::{Tree, TreeDelegate, TreeEntry, TreeItem, TreeState};
+use crate::ui::draggable_tree::{
+    DragIcon, DraggableTree, DraggableTreeDelegate, DraggableTreeState, DraggedTreeItem, TreeEntry,
+    TreeItem,
+};
 
 /// Icon and color combination for tree items
 #[derive(Clone)]
@@ -29,16 +35,16 @@ pub struct TreeItemIcon {
 
 pub struct CollectionsPanel {
     collections: Vec<CollectionData>,
-    tree_state: Entity<TreeState<CollectionsTreeDelegate>>,
-    tree_item_metadata: std::collections::HashMap<String, TreeItemMetadata>, // Map hierarchical key -> metadata
-    request_data_map: std::collections::HashMap<String, crate::request_editor::RequestData>, // Map item_id -> RequestData
+    tree_state: Entity<DraggableTreeState<CollectionsTreeDelegate>>,
+    tree_item_metadata: HashMap<String, TreeItemMetadata>, // Map hierarchical key -> metadata
+    request_data_map: HashMap<String, crate::request_editor::RequestData>, // Map item_id -> RequestData
 }
 
 struct CollectionsTreeDelegate {
     parent: Entity<CollectionsPanel>,
 }
 
-impl TreeDelegate for CollectionsTreeDelegate {
+impl DraggableTreeDelegate for CollectionsTreeDelegate {
     fn render_item(
         &self,
         ix: usize,
@@ -146,7 +152,14 @@ impl TreeDelegate for CollectionsTreeDelegate {
                                     // Open collection in new tab
                                     this.open_collection_tab(&metadata.collection_path, cx);
                                 }
-                                TreeItemKind::Group => {}
+                                TreeItemKind::Group => {
+                                    // Open group in new tab for editing
+                                    this.open_group_tab(
+                                        &metadata.collection_path,
+                                        &metadata.name,
+                                        cx,
+                                    );
+                                }
                             }
                         }
                     }
@@ -195,6 +208,17 @@ impl TreeDelegate for CollectionsTreeDelegate {
                             },
                         )),
                     )
+                    .item(
+                        PopupMenuItem::new("New Group").on_click(window.listener_for(
+                            &self.parent,
+                            {
+                                let collection_path = metadata.collection_path.clone();
+                                move |this, _, _, cx| {
+                                    this.new_group_tab(&collection_path, cx);
+                                }
+                            },
+                        )),
+                    )
                     .separator()
                     .item(
                         PopupMenuItem::new("Remove Collection").on_click(window.listener_for(
@@ -218,21 +242,173 @@ impl TreeDelegate for CollectionsTreeDelegate {
                     }),
                 )),
                 TreeItemKind::Group => {
-                    menu.item(PopupMenuItem::new("New Request in Group").on_click(
-                        window.listener_for(&self.parent, {
-                            let collection_path = metadata.collection_path.clone();
-                            let group_path = metadata.group_path.clone().unwrap_or_default();
-                            move |this, _, _, cx| {
-                                this.new_request_in_group_tab(&collection_path, &group_path, cx);
-                            }
-                        }),
-                    ))
+                    let group_name = metadata.name.clone();
+                    menu.item(
+                        PopupMenuItem::new("New Request").on_click(window.listener_for(
+                            &self.parent,
+                            {
+                                let collection_path = metadata.collection_path.clone();
+                                let group_path = metadata.group_path.clone().unwrap_or_default();
+                                move |this, _, _, cx| {
+                                    this.new_request_in_group_tab(
+                                        &collection_path,
+                                        &group_path,
+                                        cx,
+                                    );
+                                }
+                            },
+                        )),
+                    )
+                    .separator()
+                    .item(
+                        PopupMenuItem::new("Delete Group").on_click(window.listener_for(
+                            &self.parent,
+                            {
+                                let collection_path = metadata.collection_path.clone();
+                                move |this, _, window, cx| {
+                                    this.delete_group(&collection_path, &group_name, window, cx);
+                                }
+                            },
+                        )),
+                    )
                 }
             }
         } else {
             // Default context menu
             menu.label(item.label.clone())
         }
+    }
+
+    // === DRAG AND DROP METHODS ===
+
+    fn can_drag(&self, item_id: &str, _entry: &TreeEntry, cx: &App) -> bool {
+        let panel = self.parent.read(cx);
+
+        // Only requests can be dragged
+        panel
+            .get_tree_item_metadata(item_id)
+            .is_some_and(|m| m.kind == TreeItemKind::Request)
+    }
+
+    fn create_drag_data(
+        &self,
+        item_id: &str,
+        entry: &TreeEntry,
+        cx: &App,
+    ) -> Option<DraggedTreeItem> {
+        let panel = self.parent.read(cx);
+        let metadata = panel.get_tree_item_metadata(item_id)?;
+
+        Some(DraggedTreeItem {
+            item_id: entry.item().id.clone(),
+            label: entry.item().label.clone(),
+            collection_path: metadata.collection_path.clone().into(),
+            icon: None,
+        })
+    }
+
+    fn can_drop_on(
+        &self,
+        dragged_item: &DraggedTreeItem,
+        target_entry: &TreeEntry,
+        cx: &App,
+    ) -> bool {
+        let panel = self.parent.read(cx);
+
+        // Get target metadata
+        let target_metadata = panel.get_tree_item_metadata(target_entry.item().id.as_ref());
+
+        let Some(target_metadata) = target_metadata else {
+            return false;
+        };
+
+        // Must be same collection
+        if target_metadata.collection_path != dragged_item.collection_path.as_ref() {
+            return false;
+        }
+
+        // Can drop on Groups (to add request to group), Collection (for root level), or Requests (to insert between)
+        true
+    }
+
+    fn can_drop_on_root(&self, _dragged_item: &DraggedTreeItem) -> bool {
+        // Can drop to root level to move request out of any group
+        // (at collection level)
+        true
+    }
+
+    fn on_drop(
+        &mut self,
+        dragged_item: &DraggedTreeItem,
+        target_entry_id: Option<&str>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        // Clone the data we need before the update
+        let item_id = dragged_item.item_id.clone();
+        let collection_path = dragged_item.collection_path.to_string();
+        let target_entry_id_owned = target_entry_id.map(|s| s.to_string());
+
+        // Determine target group path
+        let target_group_path = self.parent.update(cx, |panel, _cx| {
+            target_entry_id_owned.and_then(|id| {
+                panel
+                    .get_tree_item_metadata(&id)
+                    .and_then(|m| m.group_path.clone())
+            })
+        });
+
+        // Get the request data being moved
+        let request_data = self.parent.update(cx, |panel, _cx| {
+            panel.request_data_map.get(item_id.as_ref()).cloned()
+        });
+
+        let Some(request_data) = request_data else {
+            tracing::error!("Request data not found for item_id: {}", item_id);
+            return;
+        };
+
+        // Use CollectionManager to move the request
+        let result = cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
+            collection_manager.move_request(
+                &collection_path,
+                &request_data,
+                target_group_path.as_deref(),
+            )
+        });
+
+        if let Err(e) = result {
+            tracing::error!("Failed to move request: {}", e);
+            window.push_notification("Failed to move request", cx);
+        } else {
+            // Spawn a background task to reload the tree after the drop completes
+            // This avoids borrow conflicts since the update runs asynchronously
+            let parent_weak = self.parent.downgrade();
+            cx.spawn(async move |cx| {
+                // Small delay to ensure the drop completes first
+                Timer::after(std::time::Duration::from_millis(50)).await;
+                if let Some(parent) = parent_weak.upgrade() {
+                    let _ = parent.update(cx, |panel, cx| {
+                        panel.load_collections(cx);
+                    });
+                }
+                Some(())
+            })
+            .detach();
+        }
+    }
+
+    fn get_drag_icon(&self, item_id: &str, cx: &App) -> Option<DragIcon> {
+        let panel = self.parent.read(cx);
+        panel
+            .get_tree_item_metadata(item_id)
+            .map(|metadata| DragIcon {
+                prefix: None,
+                color_fn: match metadata.kind {
+                    TreeItemKind::Request => |cx: &App| cx.theme().foreground,
+                    _ => |cx: &App| cx.theme().muted_foreground,
+                },
+            })
     }
 }
 
@@ -258,7 +434,7 @@ impl CollectionsPanel {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         let parent_entity = cx.entity();
         let tree_state = cx.new(|cx| {
-            TreeState::new(
+            DraggableTreeState::new(
                 CollectionsTreeDelegate {
                     parent: parent_entity,
                 },
@@ -269,8 +445,8 @@ impl CollectionsPanel {
         Self {
             collections: Vec::new(),
             tree_state,
-            tree_item_metadata: std::collections::HashMap::new(),
-            request_data_map: std::collections::HashMap::new(),
+            tree_item_metadata: HashMap::new(),
+            request_data_map: HashMap::new(),
         }
     }
 
@@ -372,7 +548,7 @@ impl CollectionsPanel {
 
             // Add group folders and their requests - sort groups alphabetically
             let mut sorted_groups: Vec<_> = collection_info.groups.iter().collect();
-            sorted_groups.sort_by(|a, b| a.0.cmp(&b.0));
+            sorted_groups.sort_by(|a, b| a.0.cmp(b.0));
 
             for (group_name, group_info) in sorted_groups {
                 let group_id =
@@ -510,6 +686,21 @@ impl CollectionsPanel {
         }
     }
 
+    /// Open a group in a new tab for editing
+    fn open_group_tab(&mut self, collection_path: &str, group_name: &str, cx: &mut Context<Self>) {
+        tracing::info!(
+            "Opening group tab for collection_path: {}, group_name: {}",
+            collection_path,
+            group_name
+        );
+
+        // Emit CreateNewGroupTab event with group name
+        cx.emit(AppEvent::CreateNewGroupTab {
+            collection_path: collection_path.to_string().into(),
+            group_name: Some(group_name.to_string().into()),
+        });
+    }
+
     /// Create a new request tab for a collection
     fn new_request_tab(&mut self, collection_path: &str, cx: &mut Context<Self>) {
         tracing::info!(
@@ -638,6 +829,65 @@ impl CollectionsPanel {
         self.load_collections(cx);
     }
 
+    /// Create a new group tab
+    fn new_group_tab(&mut self, collection_path: &str, cx: &mut Context<Self>) {
+        tracing::info!(
+            "Creating new group tab for collection_path: {}",
+            collection_path
+        );
+
+        // Create a new group editor in a new tab
+        let collection_path_for_editor = collection_path.to_string();
+
+        cx.emit(AppEvent::CreateNewGroupTab {
+            collection_path: collection_path_for_editor.into(),
+            group_name: None, // No existing group name for new groups
+        });
+    }
+
+    /// Delete a group from CollectionManager
+    fn delete_group(
+        &mut self,
+        collection_path: &str,
+        group_name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        tracing::info!(
+            "Deleting group '{}' from collection: {}",
+            group_name,
+            collection_path
+        );
+
+        // Use CollectionManager to delete the group
+        let result = cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
+            collection_manager.delete_group(collection_path, group_name)
+        });
+
+        match result {
+            Ok(_) => {
+                tracing::info!("Successfully deleted group '{}'", group_name);
+                window.push_notification(
+                    (NotificationType::Success, "Group deleted successfully"),
+                    cx,
+                );
+
+                // Reload collections to rebuild the tree
+                self.load_collections(cx);
+            }
+            Err(e) => {
+                tracing::error!("Failed to delete group: {}", e);
+                window.push_notification((NotificationType::Error, "Failed to delete group"), cx);
+            }
+        }
+
+        // Emit event to notify other parts of the app
+        cx.emit(AppEvent::GroupDeleted {
+            collection_path: collection_path.to_string().into(),
+            group_name: group_name.to_string().into(),
+        });
+    }
+
     /// Get tree item metadata by item_id
     fn get_tree_item_metadata(&self, item_id: &str) -> Option<&TreeItemMetadata> {
         self.tree_item_metadata.get(item_id)
@@ -683,7 +933,7 @@ impl Render for CollectionsPanel {
             .bg(cx.theme().sidebar_primary_foreground)
             .px(px(1.))
             .child(self.render_header_section(cx))
-            .child(Tree::new(&self.tree_state))
+            .child(DraggableTree::new(&self.tree_state))
     }
 }
 

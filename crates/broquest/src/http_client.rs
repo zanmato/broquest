@@ -1,7 +1,6 @@
 use gpui::Global;
 use std::collections::HashMap;
 use std::time::Duration;
-use reqwest;
 
 use crate::environment_resolver::EnvironmentResolver;
 use crate::request_editor::{KeyValuePair, RequestData, ResponseData};
@@ -150,7 +149,9 @@ impl HttpClientService {
 
         // Apply query parameters to URL for proper encoding after variable substitution
         let url = Self::apply_query_parameters(&request_data.url, &request_data.query_params);
-        let mut request = self.client.request(map_http_method(request_data.method), &url);
+        let mut request = self
+            .client
+            .request(map_http_method(request_data.method), &url);
 
         // Add headers
         for header in &request_data.headers {
@@ -168,11 +169,10 @@ impl HttpClientService {
         ) && !request_data.body.is_empty()
         {
             // Check if this is form data with file uploads
-            if request_data.headers
-                .iter()
-                .find(|h| h.key.to_lowercase() == "content-type" && h.value == "application/x-www-form-urlencoded")
-                .is_some()
-            {
+            if request_data.headers.iter().any(|h| {
+                h.key.to_lowercase() == "content-type"
+                    && h.value == "application/x-www-form-urlencoded"
+            }) {
                 // Check if body contains file references (paths starting with @)
                 if request_data.body.contains('@') {
                     // Parse form data and create multipart form
@@ -181,7 +181,8 @@ impl HttpClientService {
                     for pair in request_data.body.split('&') {
                         if let Some(eq_pos) = pair.find('=') {
                             let key = urlencoding::decode(&pair[..eq_pos]).unwrap_or_default();
-                            let value = urlencoding::decode(&pair[eq_pos + 1..]).unwrap_or_default();
+                            let value =
+                                urlencoding::decode(&pair[eq_pos + 1..]).unwrap_or_default();
 
                             if let Some(value_str) = value.strip_prefix('@') {
                                 // This is a file upload
@@ -196,7 +197,11 @@ impl HttpClientService {
                                         form = form.part(key.to_string(), part);
                                     }
                                     Err(e) => {
-                                        tracing::error!("Failed to read file '{}': {}", value_str, e);
+                                        tracing::error!(
+                                            "Failed to read file '{}': {}",
+                                            value_str,
+                                            e
+                                        );
                                         // Fall back to regular form field
                                         form = form.text(key.to_string(), value.to_string());
                                     }
@@ -300,7 +305,7 @@ impl HttpClientService {
 
         Ok((response_data, variable_store))
     }
-  /// Apply query parameters to a URL, handling URL encoding
+    /// Apply query parameters to a URL, handling URL encoding
     fn apply_query_parameters(url: &str, params: &[KeyValuePair]) -> String {
         let mut result = url.to_string();
 

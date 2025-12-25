@@ -79,6 +79,13 @@ pub enum AppEvent {
         collection_path: SharedString,
         group_name: SharedString,
     },
+    /// Create a new group tab
+    CreateNewGroupTab {
+        collection_path: SharedString,
+        group_name: Option<SharedString>,
+    },
+    /// Request was moved (drag and drop)
+    RequestMoved,
 }
 
 /// Error severity levels

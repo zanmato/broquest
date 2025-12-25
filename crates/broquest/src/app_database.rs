@@ -23,21 +23,6 @@ pub struct CollectionData {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone)]
-pub struct TabData {
-    pub id: Option<i64>,
-    pub title: String,
-    pub collection_id: Option<i64>,
-    pub file_path: Option<String>,
-    pub request_data: String, // JSON serialized RequestData
-    pub environment: Option<String>,
-    pub position: i32,
-    #[allow(dead_code)]
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    #[allow(dead_code)]
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
 pub struct UserSetting {
     pub theme: String,
 }
@@ -88,25 +73,6 @@ impl AppDatabase {
         .execute(&self.pool)
         .await?;
 
-        // Tabs table
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS tabs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                collection_id INTEGER,
-                file_path TEXT,
-                request_data TEXT NOT NULL,
-                environment TEXT,
-                position INTEGER NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
         // Settings table
         sqlx::query(
             r#"
@@ -119,37 +85,6 @@ impl AppDatabase {
         )
         .execute(&self.pool)
         .await?;
-
-        // Add new columns if they don't exist (for migration)
-        // Check if collection_id column exists
-        let result = sqlx::query("PRAGMA table_info(tabs)")
-            .fetch_all(&self.pool)
-            .await?;
-
-        let has_collection_id = result
-            .iter()
-            .any(|row| row.get::<Option<String>, _>("name") == Some("collection_id".to_string()));
-
-        if !has_collection_id {
-            // Migrate existing tabs table
-            sqlx::query(
-                r#"
-                ALTER TABLE tabs ADD COLUMN collection_id INTEGER;
-                ALTER TABLE tabs ADD COLUMN file_path TEXT;
-                ALTER TABLE tabs ADD COLUMN request_data TEXT NOT NULL DEFAULT '{}';
-                ALTER TABLE tabs ADD COLUMN environment TEXT;
-                "#,
-            )
-            .execute(&self.pool)
-            .await?;
-
-            // Update existing tabs to have empty JSON request_data
-            sqlx::query(
-                "UPDATE tabs SET request_data = '{}' WHERE request_data IS NULL OR request_data = ''"
-            )
-            .execute(&self.pool)
-            .await?;
-        }
 
         Ok(())
     }
@@ -254,92 +189,5 @@ impl AppDatabase {
         } else {
             Ok(None)
         }
-    }
-
-    #[allow(dead_code)]
-    pub async fn save_tab(&self, tab: &TabData) -> Result<i64, sqlx::Error> {
-        let now = chrono::Utc::now().timestamp();
-
-        if let Some(id) = tab.id {
-            // Update existing tab
-            sqlx::query(
-                r#"
-                UPDATE tabs
-                SET title = ?, collection_id = ?, file_path = ?, request_data = ?, environment = ?, position = ?, updated_at = ?
-                WHERE id = ?
-                "#,
-            )
-            .bind(&tab.title)
-            .bind(tab.collection_id)
-            .bind(&tab.file_path)
-            .bind(&tab.request_data)
-            .bind(&tab.environment)
-            .bind(tab.position)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-            Ok(id)
-        } else {
-            // Insert new tab
-            let result = sqlx::query(
-                r#"
-                INSERT INTO tabs (title, collection_id, file_path, request_data, environment, position, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(&tab.title)
-            .bind(tab.collection_id)
-            .bind(&tab.file_path)
-            .bind(&tab.request_data)
-            .bind(&tab.environment)
-            .bind(tab.position)
-            .bind(now)
-            .bind(now)
-            .execute(&self.pool)
-            .await?;
-
-            Ok(result.last_insert_rowid())
-        }
-    }
-
-    pub async fn load_tabs(&self) -> Result<Vec<TabData>, sqlx::Error> {
-        let rows = sqlx::query(
-            r#"
-            SELECT t.id, t.title, t.collection_id, t.file_path, t.request_data, t.environment, t.position, t.created_at, t.updated_at
-            FROM tabs t
-            ORDER BY t.position ASC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        let tabs = rows
-            .into_iter()
-            .map(|row| TabData {
-                id: Some(row.get("id")),
-                title: row.get("title"),
-                collection_id: row.get("collection_id"),
-                file_path: row.get("file_path"),
-                request_data: row.get("request_data"),
-                environment: row.get("environment"),
-                position: row.get("position"),
-                created_at: chrono::DateTime::from_timestamp(row.get("created_at"), 0)
-                    .unwrap_or_default(),
-                updated_at: chrono::DateTime::from_timestamp(row.get("updated_at"), 0)
-                    .unwrap_or_default(),
-            })
-            .collect();
-
-        Ok(tabs)
-    }
-
-    #[allow(dead_code)]
-    pub async fn delete_tab(&self, id: i64) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM tabs WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
     }
 }

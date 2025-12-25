@@ -8,6 +8,7 @@ use std::fs;
 use std::path::Path;
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct GroupInfo {
     pub name: String,
     pub requests: HashMap<String, RequestData>, // file_path -> RequestData within group
@@ -58,8 +59,7 @@ impl CollectionManager {
         let app_database = AppDatabase::global(cx).clone();
 
         // Load collections from the database
-        let db_collections =
-            smol::block_on(async move { app_database.load_collections().await });
+        let db_collections = smol::block_on(async move { app_database.load_collections().await });
 
         match db_collections {
             Ok(collections) => {
@@ -442,7 +442,7 @@ impl CollectionManager {
         let location_info = if let Some(group_path) = group_path {
             format!("group '{}' in collection", group_path)
         } else {
-            format!("collection")
+            "collection".to_string()
         };
 
         tracing::info!(
@@ -607,6 +607,268 @@ impl CollectionManager {
             collection_info.data.name,
             environment_name
         );
+
+        Ok(())
+    }
+
+    /// Move a request to a different location in the same collection.
+    ///
+    /// - `collection_path`: The collection containing the request
+    /// - `request_data`: The request to move
+    /// - `target_group_path`: Optional path to target group (None = root level)
+    pub fn move_request(
+        &mut self,
+        collection_path: &str,
+        request_data: &RequestData,
+        target_group_path: Option<&str>,
+    ) -> Result<()> {
+        // First, find the current location of the request
+        let current_location = {
+            let collection_info = self.collections.get(collection_path).ok_or_else(|| {
+                anyhow::anyhow!("Collection with path {} not found", collection_path)
+            })?;
+
+            // First check root level requests
+            let mut found = None;
+            for (path, stored_request) in &collection_info.requests {
+                if stored_request.name == request_data.name
+                    && stored_request.method == request_data.method
+                    && stored_request.url == request_data.url
+                {
+                    found = Some(path.clone());
+                    break;
+                }
+            }
+
+            // Then check group requests
+            if found.is_none() {
+                for group_info in collection_info.groups.values() {
+                    for (path, stored_request) in &group_info.requests {
+                        if stored_request.name == request_data.name
+                            && stored_request.method == request_data.method
+                            && stored_request.url == request_data.url
+                        {
+                            found = Some(path.clone());
+                            break;
+                        }
+                    }
+                    if found.is_some() {
+                        break;
+                    }
+                }
+            }
+
+            found.ok_or_else(|| {
+                anyhow::anyhow!("Request '{}' not found in collection", request_data.name)
+            })?
+        };
+
+        // Remove from current location (in-memory)
+        let collection_info = self
+            .collections
+            .get_mut(collection_path)
+            .ok_or_else(|| anyhow::anyhow!("Collection with path {} not found", collection_path))?;
+
+        // Try to remove from root level requests
+        let removed_from_root = collection_info.requests.remove(&current_location);
+
+        // If not in root, try to remove from groups
+        if removed_from_root.is_none() {
+            for group_info in collection_info.groups.values_mut() {
+                if group_info.requests.remove(&current_location).is_some() {
+                    break;
+                }
+            }
+        }
+
+        // Delete the old file from disk
+        fs::remove_file(&current_location)
+            .with_context(|| format!("Failed to delete old request file {:?}", current_location))?;
+
+        // Save to the new location (this will update both disk and in-memory)
+        self.save_request(
+            collection_path,
+            request_data,
+            &request_data.name,
+            target_group_path,
+        )?;
+
+        tracing::info!(
+            "Request '{}' moved to {:?}",
+            request_data.name,
+            target_group_path.unwrap_or("root level")
+        );
+
+        Ok(())
+    }
+
+    /// Create a new group in a collection
+    pub fn create_group(&mut self, collection_path: &str, group_name: &str) -> Result<()> {
+        // Validate group name
+        if group_name.is_empty() {
+            return Err(anyhow::anyhow!("Group name cannot be empty"));
+        }
+
+        // Sanitize group name for filesystem
+        let sanitized_name = group_name
+            .chars()
+            .map(|c| match c {
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+                _ => c,
+            })
+            .collect::<String>();
+
+        // Get collection info
+        let collection_info = self.collections.get(collection_path).ok_or_else(|| {
+            anyhow::anyhow!("Collection with path '{}' not found", collection_path)
+        })?;
+
+        // Create the group directory
+        let collection_dir = Path::new(&collection_info.data.path);
+        let group_dir = collection_dir.join(&sanitized_name);
+
+        if group_dir.exists() {
+            return Err(anyhow::anyhow!(
+                "Group '{}' already exists in collection",
+                sanitized_name
+            ));
+        }
+
+        fs::create_dir_all(&group_dir)
+            .with_context(|| format!("Failed to create group directory {:?}", group_dir))?;
+
+        tracing::info!(
+            "Group '{}' created in collection '{}' at {:?}",
+            sanitized_name,
+            collection_info.data.name,
+            group_dir
+        );
+
+        // Reload the collection to pick up the new group (this modifies state and triggers observers)
+        self.reload_collection(collection_path)?;
+
+        Ok(())
+    }
+
+    /// Reload a single collection (used when groups are added/removed)
+    fn reload_collection(&mut self, collection_path: &str) -> Result<()> {
+        // Get the collection info to get the file path
+        let collection_dir = Path::new(collection_path);
+
+        // Load the structure
+        let (requests, groups) = self.load_collection_structure(collection_dir)?;
+
+        // Update the collection's requests and groups
+        if let Some(collection_info) = self.collections.get_mut(collection_path) {
+            collection_info.requests = requests;
+            collection_info.groups = groups;
+        }
+
+        Ok(())
+    }
+
+    /// Rename an existing group in a collection
+    pub fn rename_group(
+        &mut self,
+        collection_path: &str,
+        old_group_name: &str,
+        new_group_name: &str,
+    ) -> Result<()> {
+        // Validate new group name
+        if new_group_name.is_empty() {
+            return Err(anyhow::anyhow!("Group name cannot be empty"));
+        }
+
+        // Sanitize new group name for filesystem
+        let sanitized_new_name = new_group_name
+            .chars()
+            .map(|c| match c {
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+                _ => c,
+            })
+            .collect::<String>();
+
+        // Get collection info
+        let collection_info = self.collections.get(collection_path).ok_or_else(|| {
+            anyhow::anyhow!("Collection with path '{}' not found", collection_path)
+        })?;
+
+        // Get the old group path
+        let old_group_path = collection_info
+            .groups
+            .get(old_group_name)
+            .ok_or_else(|| anyhow::anyhow!("Group '{}' not found in collection", old_group_name))?
+            .path
+            .clone();
+
+        let collection_dir = Path::new(&collection_info.data.path);
+        let old_group_dir = collection_dir.join(&old_group_path);
+        let new_group_dir = collection_dir.join(&sanitized_new_name);
+
+        // Check if new name already exists (and it's not the same as old name)
+        if new_group_dir.exists() && sanitized_new_name != old_group_path {
+            return Err(anyhow::anyhow!(
+                "Group '{}' already exists in collection",
+                sanitized_new_name
+            ));
+        }
+
+        // Rename the directory
+        fs::rename(&old_group_dir, &new_group_dir).with_context(|| {
+            format!(
+                "Failed to rename group directory from {:?} to {:?}",
+                old_group_dir, new_group_dir
+            )
+        })?;
+
+        tracing::info!(
+            "Group '{}' renamed to '{}' in collection '{}'",
+            old_group_name,
+            sanitized_new_name,
+            collection_info.data.name
+        );
+
+        // Reload the collection to pick up the renamed group
+        self.reload_collection(collection_path)?;
+
+        Ok(())
+    }
+
+    /// Delete a group from a collection (including all requests inside)
+    pub fn delete_group(&mut self, collection_path: &str, group_name: &str) -> Result<()> {
+        // Get collection info
+        let collection_info = self.collections.get(collection_path).ok_or_else(|| {
+            anyhow::anyhow!("Collection with path '{}' not found", collection_path)
+        })?;
+
+        // Get the group path from the collection
+        let group_path = collection_info
+            .groups
+            .get(group_name)
+            .ok_or_else(|| anyhow::anyhow!("Group '{}' not found in collection", group_name))?
+            .path
+            .clone();
+
+        // Get the full path to the group directory
+        let collection_dir = Path::new(&collection_info.data.path);
+        let full_group_path = collection_dir.join(&group_path);
+
+        // Delete the entire group directory
+        if full_group_path.exists() {
+            fs::remove_dir_all(&full_group_path).with_context(|| {
+                format!("Failed to delete group directory {:?}", full_group_path)
+            })?;
+        }
+
+        tracing::info!(
+            "Group '{}' deleted from collection '{}' (removed directory: {:?})",
+            group_name,
+            collection_info.data.name,
+            full_group_path
+        );
+
+        // Reload the collection to update state and trigger observers
+        self.reload_collection(collection_path)?;
 
         Ok(())
     }

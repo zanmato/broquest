@@ -743,26 +743,26 @@ impl RequestEditor {
         let mut request_data = self.get_request_data(cx);
 
         // Check if Form Data content type is selected and update form data
-        if let Some(selected_content_type) = self.content_type_select.read(cx).selected_value() {
-            if selected_content_type == &ContentType::Form {
-                let form_data = self.form_editor.read(cx).get_form_data(cx);
-                // Convert form data to body format (key=value pairs, files as @path)
-                let form_body = form_data
-                    .iter()
-                    .filter(|field| field.enabled && !field.key.is_empty())
-                    .map(|field| {
-                        if field.value.starts_with('@') {
-                            // File reference
-                            format!("{}={}", field.key, field.value)
-                        } else {
-                            // Regular form field
-                            format!("{}={}", url_encode(&field.key), url_encode(&field.value))
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("&");
-                request_data.body = form_body;
-            }
+        if let Some(selected_content_type) = self.content_type_select.read(cx).selected_value()
+            && selected_content_type == &ContentType::Form
+        {
+            let form_data = self.form_editor.read(cx).get_form_data(cx);
+            // Convert form data to body format (key=value pairs, files as @path)
+            let form_body = form_data
+                .iter()
+                .filter(|field| field.enabled && !field.key.is_empty())
+                .map(|field| {
+                    if field.value.starts_with('@') {
+                        // File reference
+                        format!("{}={}", field.key, field.value)
+                    } else {
+                        // Regular form field
+                        format!("{}={}", url_encode(&field.key), url_encode(&field.value))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("&");
+            request_data.body = form_body;
         }
 
         // Perform path parameter replacement on the URL
@@ -959,7 +959,7 @@ impl RequestEditor {
         if let Some(ref collection_path) = self.collection_path {
             // Use cx.update_global to call the save_request method on CollectionManager
             cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-                let group_path_ref = self.group_path.as_ref().map(|gp| gp.as_str());
+                let group_path_ref = self.group_path.as_deref();
                 match collection_manager.save_request(
                     collection_path,
                     &request_data,
@@ -1599,12 +1599,12 @@ impl RequestEditor {
         } else {
             0
         };
-        let count = if post_response.is_some() && !post_response.unwrap().trim().is_empty() {
+
+        if post_response.is_some() && !post_response.unwrap().trim().is_empty() {
             count + 1
         } else {
             count
-        };
-        count
+        }
     }
 }
 

@@ -74,15 +74,13 @@ impl EnvironmentEditor {
             // Load variables and secrets from the unified variables map
             for (key, env_var) in &env_toml.variables {
                 if env_var.secret {
-                    let value = match EnvironmentVariable::read_credential(
+                    let value = EnvironmentVariable::read_credential(
                         &self.collection_name,
                         &env_toml.name,
-                        &key,
+                        key,
                         cx,
-                    ) {
-                        Ok(v) => v,
-                        Err(_) => None,
-                    };
+                    )
+                    .unwrap_or_default();
 
                     self.add_secret_row(key.clone(), value, true, window, cx, &mut secrets);
                 } else {
