@@ -22,6 +22,7 @@ use crate::collection_manager::CollectionManager;
 use crate::collection_types::EnvironmentToml;
 use crate::form_editor::FormEditor;
 use crate::header_editor::HeaderEditor;
+use crate::http::{ContentType, HttpMethod};
 use crate::http_client::ResponseFormat;
 use crate::icon::IconName;
 use crate::path_parameter_editor::PathParamEditor;
@@ -89,140 +90,6 @@ impl SelectItem for EnvironmentOption {
             EnvironmentOption::None => "No environment".into(),
             EnvironmentOption::Environment(env) => env.name.clone().into(),
         }
-    }
-
-    fn value(&self) -> &Self::Value {
-        self
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HttpMethod {
-    Get,
-    Post,
-    Put,
-    Delete,
-    Patch,
-    Head,
-    Options,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ContentType {
-    Json,
-    Xml,
-    Text,
-    Html,
-    Form,
-    UrlEncoded,
-}
-
-impl HttpMethod {
-    pub const ALL: [HttpMethod; 7] = [
-        HttpMethod::Get,
-        HttpMethod::Post,
-        HttpMethod::Put,
-        HttpMethod::Delete,
-        HttpMethod::Patch,
-        HttpMethod::Head,
-        HttpMethod::Options,
-    ];
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            HttpMethod::Get => "GET",
-            HttpMethod::Post => "POST",
-            HttpMethod::Put => "PUT",
-            HttpMethod::Delete => "DELETE",
-            HttpMethod::Patch => "PATCH",
-            HttpMethod::Head => "HEAD",
-            HttpMethod::Options => "OPTIONS",
-        }
-    }
-
-    /// Get color for HTTP method
-    pub fn get_color(&self, cx: &App) -> gpui::Hsla {
-        match self {
-            HttpMethod::Get => cx.theme().green,
-            HttpMethod::Post => cx.theme().blue,
-            HttpMethod::Put => cx.theme().yellow,
-            HttpMethod::Delete => cx.theme().red,
-            HttpMethod::Patch => cx.theme().yellow,
-            HttpMethod::Head => cx.theme().blue,
-            HttpMethod::Options => cx.theme().cyan,
-        }
-    }
-
-    pub fn get_color_fn(&self) -> fn(cx: &App) -> gpui::Hsla {
-        match self {
-            HttpMethod::Get => |cx| cx.theme().green,
-            HttpMethod::Post => |cx| cx.theme().blue,
-            HttpMethod::Put => |cx| cx.theme().yellow,
-            HttpMethod::Delete => |cx| cx.theme().red,
-            HttpMethod::Patch => |cx| cx.theme().yellow,
-            HttpMethod::Head => |cx| cx.theme().blue,
-            HttpMethod::Options => |cx| cx.theme().cyan,
-        }
-    }
-}
-
-impl ContentType {
-    pub const ALL: [ContentType; 6] = [
-        ContentType::Json,
-        ContentType::Xml,
-        ContentType::Text,
-        ContentType::Html,
-        ContentType::Form,
-        ContentType::UrlEncoded,
-    ];
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ContentType::Json => "application/json",
-            ContentType::Xml => "application/xml",
-            ContentType::Text => "text/plain",
-            ContentType::Html => "text/html",
-            ContentType::Form => "application/x-www-form-urlencoded",
-            ContentType::UrlEncoded => "application/x-www-form-urlencoded",
-        }
-    }
-
-    pub fn language(&self) -> &'static str {
-        match self {
-            ContentType::Json => "json",
-            ContentType::Xml => "xml",
-            ContentType::Text => "text",
-            ContentType::Html => "html",
-            ContentType::Form => "text",
-            ContentType::UrlEncoded => "text",
-        }
-    }
-}
-
-impl SelectItem for ContentType {
-    type Value = ContentType;
-
-    fn title(&self) -> SharedString {
-        match self {
-            ContentType::Json => "JSON".into(),
-            ContentType::Xml => "XML".into(),
-            ContentType::Text => "Plain Text".into(),
-            ContentType::Html => "HTML".into(),
-            ContentType::Form => "Form Data".into(),
-            ContentType::UrlEncoded => "URL Encoded".into(),
-        }
-    }
-
-    fn value(&self) -> &Self::Value {
-        self
-    }
-}
-
-impl SelectItem for HttpMethod {
-    type Value = HttpMethod;
-
-    fn title(&self) -> SharedString {
-        self.as_str().into()
     }
 
     fn value(&self) -> &Self::Value {
@@ -489,6 +356,27 @@ impl RequestEditor {
         self.header_editor.update(cx, |editor, cx| {
             editor.set_headers(&data.headers, window, cx);
         });
+
+        // Update content type selector based on Content-Type header
+        let content_type = data
+            .headers
+            .iter()
+            .find(|h| h.key.to_lowercase() == "content-type" && h.enabled)
+            .map(|h| ContentType::from_header(&h.value))
+            .unwrap_or(ContentType::Json);
+        let content_type_index = ContentType::ALL
+            .iter()
+            .position(|ct| *ct == content_type)
+            .unwrap_or(0);
+        self.content_type_select.update(cx, |state, cx| {
+            state.set_selected_index(
+                Some(IndexPath::default().row(content_type_index)),
+                window,
+                cx,
+            );
+        });
+
+        self.on_content_type_change(cx);
 
         // Update scripts
         self.script_editor.update(cx, |editor, cx| {

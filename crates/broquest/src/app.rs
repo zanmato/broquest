@@ -14,7 +14,8 @@ use crate::{
     collection_manager::CollectionManager,
     collections_panel::CollectionsPanel,
     editor_panel::EditorPanel,
-    request_editor::{HttpMethod, RequestData},
+    http::HttpMethod,
+    request_editor::RequestData,
 };
 
 actions!(broquest_app, [Quit, OpenNewCollectionTab, OpenCollection]);

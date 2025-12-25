@@ -1,3 +1,4 @@
+use crate::icon::IconName;
 use gpui::{App, Context, Entity, Window, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
@@ -101,6 +102,7 @@ impl ScriptEditor {
                         Button::new(button_id)
                             .small()
                             .outline()
+                            .icon(IconName::Trash)
                             .label("Clear")
                             .on_click(cx.listener({
                                 let input = input.clone();

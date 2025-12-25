@@ -14,6 +14,7 @@ mod environment_resolver;
 mod form_editor;
 mod group_editor;
 mod header_editor;
+mod http;
 mod highlighting;
 mod http_client;
 mod icon;

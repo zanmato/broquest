@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::environment_resolver::EnvironmentResolver;
+use crate::http::HttpMethod;
 use crate::request_editor::{KeyValuePair, RequestData, ResponseData};
 use crate::script_engine::ScriptExecutionService;
 use crate::variable_store::VariableStore;
@@ -163,9 +164,7 @@ impl HttpClientService {
         // Add body for POST, PUT, PATCH requests
         if matches!(
             request_data.method,
-            crate::request_editor::HttpMethod::Post
-                | crate::request_editor::HttpMethod::Put
-                | crate::request_editor::HttpMethod::Patch
+            HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch
         ) && !request_data.body.is_empty()
         {
             // Check if this is form data with file uploads
@@ -353,15 +352,15 @@ impl HttpClientService {
     }
 }
 
-fn map_http_method(method: crate::request_editor::HttpMethod) -> reqwest::Method {
+fn map_http_method(method: HttpMethod) -> reqwest::Method {
     match method {
-        crate::request_editor::HttpMethod::Get => reqwest::Method::GET,
-        crate::request_editor::HttpMethod::Post => reqwest::Method::POST,
-        crate::request_editor::HttpMethod::Put => reqwest::Method::PUT,
-        crate::request_editor::HttpMethod::Delete => reqwest::Method::DELETE,
-        crate::request_editor::HttpMethod::Patch => reqwest::Method::PATCH,
-        crate::request_editor::HttpMethod::Head => reqwest::Method::HEAD,
-        crate::request_editor::HttpMethod::Options => reqwest::Method::OPTIONS,
+        HttpMethod::Get => reqwest::Method::GET,
+        HttpMethod::Post => reqwest::Method::POST,
+        HttpMethod::Put => reqwest::Method::PUT,
+        HttpMethod::Delete => reqwest::Method::DELETE,
+        HttpMethod::Patch => reqwest::Method::PATCH,
+        HttpMethod::Head => reqwest::Method::HEAD,
+        HttpMethod::Options => reqwest::Method::OPTIONS,
     }
 }
 

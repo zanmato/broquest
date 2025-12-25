@@ -1,4 +1,5 @@
-use crate::request_editor::{HttpMethod, KeyValuePair};
+use crate::http::HttpMethod;
+use crate::request_editor::KeyValuePair;
 use serde::{Deserialize, Serialize};
 
 /// TOML structure for collection.toml files
@@ -67,7 +68,6 @@ pub struct RequestMeta {
 pub struct RequestHttp {
     pub method: String,
     pub url: String,
-    pub body: Option<String>,
     pub auth: String,
 }
 
@@ -206,7 +206,7 @@ impl From<RequestToml> for crate::request_editor::RequestData {
                 value: h.value,
                 enabled: true,
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         // Parse query params from TOML
         let query_params = toml
@@ -245,51 +245,52 @@ impl From<RequestToml> for crate::request_editor::RequestData {
             (None, None)
         };
 
-        // Extract body content from [body] section based on http.body type
-        let body = match toml.http.body.as_deref() {
-            Some("none") => String::new(), // Skip body entirely when http.body is "none"
-            Some(body_type) => {
-                if let Some(body_section) = toml.body {
-                    match body_type {
-                        "json" => body_section.json.unwrap_or_default(),
-                        "text" => body_section.text.unwrap_or_default(),
-                        "xml" => body_section.xml.unwrap_or_default(),
-                        "form" => {
-                            // Convert form data to URL-encoded string
-                            body_section
-                                .form
-                                .map(|form_map| {
-                                    form_map
-                                        .iter()
-                                        .map(|(k, v)| {
-                                            format!(
-                                                "{}={}",
-                                                urlencoding::encode(k),
-                                                urlencoding::encode(v)
-                                            )
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("&")
+        // Infer body type from Content-Type header
+        let content_type = headers
+            .iter()
+            .find(|h| h.key.to_lowercase() == "content-type" && h.enabled)
+            .map(|h| crate::http::ContentType::from_header(&h.value))
+            .unwrap_or(crate::http::ContentType::Json);
+        let body_type = content_type.body_type();
+
+        // Extract body content from [body] section based on inferred content type
+        let body = if body_type == "none" || toml.body.is_none() {
+            String::new()
+        } else {
+            let body_section = toml.body.unwrap();
+            match body_type {
+                "json" => body_section.json.unwrap_or_default(),
+                "text" => body_section.text.unwrap_or_default(),
+                "xml" => body_section.xml.unwrap_or_default(),
+                "form" => {
+                    // Convert form data to URL-encoded string
+                    body_section
+                        .form
+                        .map(|form_map| {
+                            form_map
+                                .iter()
+                                .map(|(k, v)| {
+                                    format!("{}={}", urlencoding::encode(k), urlencoding::encode(v))
                                 })
-                                .unwrap_or_default()
-                        }
-                        "graphql" => {
-                            // Convert GraphQL to JSON string
-                            body_section.graphql
-                                .map(|g| serde_json::json!({
-                                    "query": g.query.unwrap_or_default(),
-                                    "variables": g.variables.unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
-                                }).to_string())
-                                .unwrap_or_default()
-                        }
-                        _ => String::new(),
-                    }
-                } else {
-                    // If no body section but body_type is not "none", use the raw http.body value (for backward compatibility)
-                    toml.http.body.unwrap_or_default()
+                                .collect::<Vec<_>>()
+                                .join("&")
+                        })
+                        .unwrap_or_default()
                 }
+                "graphql" => {
+                    // Convert GraphQL to JSON string
+                    body_section.graphql
+                        .map(|g| {
+                            serde_json::json!({
+                                "query": g.query.unwrap_or_default(),
+                                "variables": g.variables.unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
+                            })
+                            .to_string()
+                        })
+                        .unwrap_or_default()
+                }
+                _ => String::new(),
             }
-            None => String::new(),
         };
 
         crate::request_editor::RequestData {
@@ -310,11 +311,12 @@ impl From<RequestToml> for crate::request_editor::RequestData {
 impl From<crate::request_editor::RequestData> for RequestToml {
     fn from(data: crate::request_editor::RequestData) -> Self {
         // Detect body type from headers before we consume headers
-        let body_type = if !data.body.is_empty() {
-            Some(get_body_type_from_headers(&data.headers))
-        } else {
-            Some("none".to_string())
-        };
+        let body_type = data
+            .headers
+            .iter()
+            .find(|h| h.key.to_lowercase() == "content-type" && h.enabled)
+            .map(|h| crate::http::ContentType::from_header(&h.value).body_type())
+            .unwrap_or("json");
 
         // Convert headers to TOML format
         let headers = if data.headers.is_empty() {
@@ -375,7 +377,6 @@ impl From<crate::request_editor::RequestData> for RequestToml {
             http: RequestHttp {
                 method: data.method.as_str().to_string(),
                 url: data.url,
-                body: body_type.clone(),
                 auth: "none".to_string(),
             },
             script: if data.pre_request_script.is_some() || data.post_response_script.is_some() {
@@ -392,37 +393,11 @@ impl From<crate::request_editor::RequestData> for RequestToml {
                 None
             } else {
                 // Create body section based on detected content type
-                create_body_toml(
-                    &data.body,
-                    body_type.as_ref().unwrap_or(&"json".to_string()),
-                )
+                create_body_toml(&data.body, &body_type)
             },
             params,
         }
     }
-}
-
-/// Get body type string from headers (Content-Type)
-fn get_body_type_from_headers(headers: &[crate::request_editor::KeyValuePair]) -> String {
-    for header in headers {
-        if header.key.to_lowercase() == "content-type" && header.enabled {
-            let content_type = header.value.to_lowercase();
-            if content_type.contains("application/json") {
-                return "json".to_string();
-            } else if content_type.contains("text/xml") || content_type.contains("application/xml")
-            {
-                return "xml".to_string();
-            } else if content_type.contains("application/graphql") {
-                return "graphql".to_string();
-            } else if content_type.contains("application/x-www-form-urlencoded") {
-                return "form".to_string();
-            } else if content_type.contains("text/") {
-                return "text".to_string();
-            }
-        }
-    }
-    // Default to "json" if no content type is found
-    "json".to_string()
 }
 
 /// Create RequestBodyToml based on body type
@@ -456,9 +431,9 @@ fn create_body_toml(body: &str, body_type: &str) -> Option<RequestBodyToml> {
                 if let Some((key, value)) = pair.split_once('=')
                     && let (Ok(decoded_key), Ok(decoded_value)) =
                         (urlencoding::decode(key), urlencoding::decode(value))
-                    {
-                        form_map.insert(decoded_key.into_owned(), decoded_value.into_owned());
-                    }
+                {
+                    form_map.insert(decoded_key.into_owned(), decoded_value.into_owned());
+                }
             }
             Some(RequestBodyToml {
                 json: None,
