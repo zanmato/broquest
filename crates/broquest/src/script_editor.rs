@@ -38,10 +38,10 @@ impl ScriptEditor {
                   event: &InputEvent,
                   window,
                   cx| {
-                if let InputEvent::Change = event {
-                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
-                        cx.emit(ScriptEditorEvent::ScriptChanged);
-                    }
+                if let InputEvent::Change = event
+                    && input_state.read(cx).focus_handle(cx).is_focused(window)
+                {
+                    cx.emit(ScriptEditorEvent::ScriptChanged);
                 }
             }
         });
@@ -52,10 +52,10 @@ impl ScriptEditor {
                   event: &InputEvent,
                   window,
                   cx| {
-                if let InputEvent::Change = event {
-                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
-                        cx.emit(ScriptEditorEvent::ScriptChanged);
-                    }
+                if let InputEvent::Change = event
+                    && input_state.read(cx).focus_handle(cx).is_focused(window)
+                {
+                    cx.emit(ScriptEditorEvent::ScriptChanged);
                 }
             }
         });

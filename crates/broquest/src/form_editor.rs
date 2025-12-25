@@ -89,20 +89,20 @@ impl FormEditor {
         // Set up subscriptions for key and value input change events
         let key_subscription = cx.subscribe_in(&key_input, window, {
             move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
-                if let InputEvent::Change = event {
-                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
-                        cx.emit(FormEditorEvent::ParamChanged);
-                    }
+                if let InputEvent::Change = event
+                    && input_state.read(cx).focus_handle(cx).is_focused(window)
+                {
+                    cx.emit(FormEditorEvent::ParamChanged);
                 }
             }
         });
 
         let value_subscription = cx.subscribe_in(&value_input, window, {
             move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
-                if let InputEvent::Change = event {
-                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
-                        cx.emit(FormEditorEvent::ParamChanged);
-                    }
+                if let InputEvent::Change = event
+                    && input_state.read(cx).focus_handle(cx).is_focused(window)
+                {
+                    cx.emit(FormEditorEvent::ParamChanged);
                 }
             }
         });
@@ -185,7 +185,7 @@ impl FormEditor {
                                     });
                                     // Emit ParamChanged event when file is selected
                                     if let Some(form_editor) = form_editor.upgrade() {
-                                        let _ = form_editor.update(cx, |_this, cx| {
+                                        form_editor.update(cx, |_this, cx| {
                                             cx.emit(FormEditorEvent::ParamChanged);
                                         });
                                     }

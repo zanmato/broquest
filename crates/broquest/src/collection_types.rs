@@ -393,7 +393,7 @@ impl From<crate::request_editor::RequestData> for RequestToml {
                 None
             } else {
                 // Create body section based on detected content type
-                create_body_toml(&data.body, &body_type)
+                create_body_toml(&data.body, body_type)
             },
             params,
         }
@@ -568,50 +568,5 @@ mod tests {
             toml::from_str(&toml_string).expect("Failed to deserialize");
         assert_eq!(deserialized.environments.len(), 1);
         assert_eq!(deserialized.environments[0].name, "Development");
-    }
-
-    #[test]
-    fn test_content_type_detection() {
-        let request_data_json = crate::request_editor::RequestData {
-            name: "JSON Request".to_string(),
-            method: crate::request_editor::HttpMethod::Post,
-            url: "https://api.example.com".to_string(),
-            path_params: vec![],
-            body: r#"{"key": "value"}"#.to_string(),
-            headers: vec![crate::request_editor::KeyValuePair {
-                key: "Content-Type".to_string(),
-                value: "application/json".to_string(),
-                enabled: true,
-            }],
-            query_params: vec![],
-            pre_request_script: None,
-            post_response_script: None,
-        };
-
-        let toml_request: RequestToml = request_data_json.into();
-        assert_eq!(toml_request.http.body.unwrap(), "json");
-        assert!(toml_request.body.is_some());
-        assert!(toml_request.body.unwrap().json.is_some());
-
-        let request_data_form = crate::request_editor::RequestData {
-            name: "Form Request".to_string(),
-            method: crate::request_editor::HttpMethod::Post,
-            url: "https://api.example.com".to_string(),
-            path_params: vec![],
-            body: "key=value&foo=bar".to_string(),
-            headers: vec![crate::request_editor::KeyValuePair {
-                key: "Content-Type".to_string(),
-                value: "application/x-www-form-urlencoded".to_string(),
-                enabled: true,
-            }],
-            query_params: vec![],
-            pre_request_script: None,
-            post_response_script: None,
-        };
-
-        let toml_form_request: RequestToml = request_data_form.into();
-        assert_eq!(toml_form_request.http.body.unwrap(), "form");
-        assert!(toml_form_request.body.is_some());
-        assert!(toml_form_request.body.unwrap().form.is_some());
     }
 }

@@ -234,14 +234,14 @@ impl EditorPanel {
             move |editor_panel: &mut Self, _editor, event: &RequestEditorEvent, _window, cx| {
                 let RequestEditorEvent::DirtyStateChanged { is_dirty } = event;
                 for tab in editor_panel.tabs.iter_mut() {
-                    if let TabType::Request(request_tab) = tab {
-                        if request_tab.request_editor.clone() == request_editor_for_closure {
-                            if request_tab.is_dirty != *is_dirty {
-                                request_tab.is_dirty = *is_dirty;
-                                cx.notify();
-                            }
-                            break;
+                    if let TabType::Request(request_tab) = tab
+                        && request_tab.request_editor.clone() == request_editor_for_closure
+                    {
+                        if request_tab.is_dirty != *is_dirty {
+                            request_tab.is_dirty = *is_dirty;
+                            cx.notify();
                         }
+                        break;
                     }
                 }
             }
