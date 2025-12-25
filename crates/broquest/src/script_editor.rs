@@ -113,8 +113,9 @@ impl ScriptEditor {
                     ),
             )
             .child(
-                div().flex_1().py_2().child(
+                div().flex_1().child(
                     Input::new(input)
+                        .py_3()
                         .font_family(cx.theme().mono_font_family.clone())
                         .text_size(px(12.))
                         .h_full()
@@ -128,7 +129,7 @@ impl ScriptEditor {
 impl Render for ScriptEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .flex_1()
+            .size_full()
             .child(self.render_script_section("Pre-request Script", &self.pre_request_input, cx))
             .child(div().h_px().bg(cx.theme().border))
             .child(self.render_script_section(
