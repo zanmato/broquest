@@ -31,6 +31,8 @@ sqlx = { version = "0.8", features = [
 
 # Core dependencies
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+lsp-types = "0.97"
+ropey = { version = "=2.0.0-beta.1", features = ["simd"] }
 env_logger = "0.11"
 chrono = "0.4"
 tracing = "0.1.40"

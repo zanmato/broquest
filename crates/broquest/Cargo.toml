@@ -7,6 +7,8 @@ edition = "2024"
 # Workspace dependencies
 gpui = { workspace = true }
 gpui-component = { workspace = true }
+lsp-types = { workspace = true }
+ropey = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

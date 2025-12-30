@@ -21,6 +21,7 @@ mod icon;
 mod path_parameter_editor;
 mod query_parameter_editor;
 mod request_editor;
+mod script_completion;
 mod script_editor;
 mod script_engine;
 mod themes_manager;
