@@ -301,7 +301,7 @@ dependencies = [
  "url",
  "wayland-backend",
  "wayland-client",
- "wayland-protocols 0.32.9",
+ "wayland-protocols",
  "zbus",
 ]
 
@@ -793,8 +793,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4deb8f595ce7f00dee3543ebf6fd9a20ea86fc421ab79600dac30876250bdae"
+source = "git+https://github.com/kvark/blade?rev=e3cf011ca18a6dfd907d1dedd93e85e21f005fe3#e3cf011ca18a6dfd907d1dedd93e85e21f005fe3"
 dependencies = [
  "ash",
  "ash-window",
@@ -828,8 +827,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27142319e2f4c264581067eaccb9f80acccdde60d8b4bf57cc50cd3152f109ca"
+source = "git+https://github.com/kvark/blade?rev=e3cf011ca18a6dfd907d1dedd93e85e21f005fe3#e3cf011ca18a6dfd907d1dedd93e85e21f005fe3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -839,8 +837,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a6be3a82c001ba7a17b6f8e413ede5d1004e6047213f8efaf0ffc15b5c4904c"
+source = "git+https://github.com/kvark/blade?rev=e3cf011ca18a6dfd907d1dedd93e85e21f005fe3#e3cf011ca18a6dfd907d1dedd93e85e21f005fe3"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -1349,7 +1346,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "indexmap",
  "rustc-hash 2.1.1",
@@ -1909,7 +1906,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2885,7 +2882,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -2957,6 +2954,7 @@ dependencies = [
  "stacksafe",
  "strum 0.27.2",
  "sum_tree",
+ "swash",
  "taffy",
  "thiserror 2.0.17",
  "usvg",
@@ -2967,7 +2965,7 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-cursor",
- "wayland-protocols 0.31.2",
+ "wayland-protocols",
  "wayland-protocols-plasma",
  "wayland-protocols-wlr",
  "windows 0.61.3",
@@ -2985,7 +2983,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.0"
-source = "git+https://github.com/longbridge/gpui-component/#88fda3635111d9e9928d3838fea71852e137bda5"
+source = "git+https://github.com/longbridge/gpui-component/#21516dfaa61630ece9eccf528d19fdbb5d81cace"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -3051,7 +3049,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.5.0"
-source = "git+https://github.com/longbridge/gpui-component/#88fda3635111d9e9928d3838fea71852e137bda5"
+source = "git+https://github.com/longbridge/gpui-component/#21516dfaa61630ece9eccf528d19fdbb5d81cace"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3073,7 +3071,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3317,7 +3315,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -4798,7 +4796,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -5613,7 +5611,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "collections",
  "serde",
@@ -6325,7 +6323,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "derive_refineable",
 ]
@@ -7703,7 +7701,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "arrayvec",
  "log",
@@ -8953,7 +8951,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "util"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "anyhow",
  "async-fs",
@@ -8989,7 +8987,7 @@ dependencies = [
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "perf",
  "quote",
@@ -9268,18 +9266,6 @@ dependencies = [
 
 [[package]]
 name = "wayland-protocols"
-version = "0.31.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f81f365b8b4a97f422ac0e8737c438024b5951734506b0e1d775c73030561f4"
-dependencies = [
- "bitflags 2.10.0",
- "wayland-backend",
- "wayland-client",
- "wayland-scanner",
-]
-
-[[package]]
-name = "wayland-protocols"
 version = "0.32.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "efa790ed75fbfd71283bd2521a1cfdc022aabcc28bdcff00851f9e4ae88d9901"
@@ -9292,14 +9278,14 @@ dependencies = [
 
 [[package]]
 name = "wayland-protocols-plasma"
-version = "0.2.0"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23803551115ff9ea9bce586860c5c5a971e360825a0309264102a9495a5ff479"
+checksum = "a07a14257c077ab3279987c4f8bb987851bf57081b93710381daea94f2c2c032"
 dependencies = [
  "bitflags 2.10.0",
  "wayland-backend",
  "wayland-client",
- "wayland-protocols 0.31.2",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 
@@ -9312,7 +9298,7 @@ dependencies = [
  "bitflags 2.10.0",
  "wayland-backend",
  "wayland-client",
- "wayland-protocols 0.32.9",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 
@@ -10377,7 +10363,7 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "anyhow",
  "chrono",
@@ -10416,7 +10402,7 @@ dependencies = [
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -10427,7 +10413,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#f9462da2f7cdd0bfdb0feb95ae983fe695bb0a86"
+source = "git+https://github.com/zed-industries/zed#11cfdb1e62321fbd17c6d7bebd1953ab54bc9c75"
 
 [[package]]
 name = "zune-core"
