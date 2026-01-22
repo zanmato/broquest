@@ -446,10 +446,12 @@ impl Render for BroquestApp {
 }
 
 fn init_menus(cx: &mut App) {
-    // Register keyboard shortcut for settings
-    //cx.bind_keys([
-    //    gpui::KeyBinding::new("super-,", OpenSettings, None),
-    //]);
+    cx.bind_keys([
+        #[cfg(target_os = "macos")]
+        gpui::KeyBinding::new("cmd-q", Quit, None),
+        #[cfg(not(target_os = "macos"))]
+        gpui::KeyBinding::new("alt-f4", Quit, None),
+    ]);
 
     cx.set_menus(vec![
         Menu {
@@ -457,7 +459,6 @@ fn init_menus(cx: &mut App) {
             items: vec![
                 MenuItem::action("New Collection", OpenNewCollectionTab),
                 MenuItem::action("Open Collection", OpenCollection),
-                //MenuItem::action("Preferences...", OpenSettings),
                 MenuItem::Separator,
                 theme_menu(cx),
                 MenuItem::Separator,

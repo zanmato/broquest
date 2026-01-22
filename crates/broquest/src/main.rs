@@ -115,7 +115,6 @@ fn main() {
         // Initialize HTTP client
         let http_client = http_client::HttpClientService::new();
         cx.set_global(http_client);
-        cx.activate(true);
 
         let window_bounds = gpui::Bounds::centered(None, size(px(1280.), px(900.)), cx);
 
@@ -143,13 +142,23 @@ fn main() {
             app_id: Some("broquest".into()),
         };
 
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
+
         cx.spawn(async move |cx| {
             cx.open_window(window_options, |window, cx| {
                 let broquest_app = cx.new(|cx| app::BroquestApp::new(window, cx));
                 cx.new(|cx| gpui_component::Root::new(broquest_app, window, cx))
             })?;
+
             Ok::<_, anyhow::Error>(())
         })
         .detach();
+
+        cx.activate(true);
     });
 }
