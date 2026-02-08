@@ -187,10 +187,6 @@
       "required": false,
       "types": [
         {
-          "type": "path_segment",
-          "named": true
-        },
-        {
           "type": "variable",
           "named": true
         }

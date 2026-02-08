@@ -153,7 +153,7 @@
         },
         {
           "type": "PATTERN",
-          "value": "[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*"
+          "value": "[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+"
         }
       ]
     },
@@ -205,7 +205,7 @@
     },
     "path_segment": {
       "type": "PATTERN",
-      "value": "[^\\/\\?{:\\s][^\\/\\?{:\\s]*"
+      "value": "[^\\/\\?{:=}&\\s][^\\/\\?{:=}&\\s]*"
     },
     "path_param": {
       "type": "SEQ",
@@ -329,10 +329,6 @@
           "name": "variable"
         },
         {
-          "type": "SYMBOL",
-          "name": "path_segment"
-        },
-        {
           "type": "PATTERN",
           "value": "[^&]+"
         }
@@ -356,6 +352,5 @@
   "precedences": [],
   "externals": [],
   "inline": [],
-  "supertypes": [],
-  "reserved": {}
+  "supertypes": []
 }

@@ -41,7 +41,7 @@ module.exports = grammar({
 
     domain: $ => choice(
       $.hostname,
-      /[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*/
+      /[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+/
     ),
 
     hostname: $ => choice(
@@ -60,7 +60,7 @@ module.exports = grammar({
       ))
     ),
 
-    path_segment: $ => /[^\/\?{:\s][^\/\?{:\s]*/,
+    path_segment: $ => /[^\/\?{:=}&\s][^\/\?{:=}&\s]*/,
 
     path_param: $ => seq(
       ":",
@@ -100,7 +100,6 @@ module.exports = grammar({
 
     value: $ => choice(
       $.variable,
-      $.path_segment,
       /[^&]+/
     )
   }
