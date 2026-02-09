@@ -39,3 +39,6 @@ llrt_modules = { workspace = true }
 # URL parsing and highlighting
 tree-sitter-url = { path = "../tree-sitter-url" }
 tree-sitter-xml = { workspace = true }
+
+# OpenAPI spec parsing
+oas3 = { version = "0.20", features = ["yaml-spec"] }

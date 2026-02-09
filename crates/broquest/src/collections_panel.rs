@@ -388,7 +388,7 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                 // Small delay to ensure the drop completes first
                 Timer::after(std::time::Duration::from_millis(50)).await;
                 if let Some(parent) = parent_weak.upgrade() {
-                    let _ = parent.update(cx, |panel, cx| {
+                    parent.update(cx, |panel, cx| {
                         panel.load_collections(cx);
                     });
                 }

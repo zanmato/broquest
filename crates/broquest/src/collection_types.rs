@@ -1,5 +1,7 @@
-use crate::http::HttpMethod;
+use std::collections::HashMap;
+
 use crate::request_editor::KeyValuePair;
+use crate::{http::HttpMethod, request_editor::RequestData};
 use serde::{Deserialize, Serialize};
 
 /// TOML structure for collection.toml files
@@ -38,13 +40,13 @@ pub struct RequestToml {
 pub struct RequestBodyToml {
     pub json: Option<String>,
     pub text: Option<String>,
-    pub form: Option<std::collections::HashMap<String, String>>,
+    pub form: Option<HashMap<String, String>>,
     pub graphql: Option<GraphQLBody>,
     pub xml: Option<String>,
 }
 
 /// TOML structure for GraphQL body
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GraphQLBody {
     pub query: Option<String>,
     pub variables: Option<serde_json::Value>,
@@ -53,7 +55,7 @@ pub struct GraphQLBody {
 /// TOML structure for request parameters
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RequestParams {
-    pub path: Option<std::collections::HashMap<String, String>>,
+    pub path: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -96,7 +98,7 @@ pub struct QueryToml {
 pub struct EnvironmentToml {
     pub name: String,
     #[serde(default)]
-    pub variables: std::collections::HashMap<String, EnvironmentVariable>,
+    pub variables: HashMap<String, EnvironmentVariable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -185,7 +187,7 @@ pub fn is_true(value: &bool) -> bool {
 }
 
 /// Convert TOML request to internal RequestData
-impl From<RequestToml> for crate::request_editor::RequestData {
+impl From<RequestToml> for RequestData {
     fn from(toml: RequestToml) -> Self {
         let method = match toml.http.method.to_uppercase().as_str() {
             "GET" => HttpMethod::Get,
@@ -254,18 +256,17 @@ impl From<RequestToml> for crate::request_editor::RequestData {
         let body_type = content_type.body_type();
 
         // Extract body content from [body] section based on inferred content type
-        let body = if body_type == "none" || toml.body.is_none() {
-            String::new()
-        } else {
-            let body_section = toml.body.unwrap();
-            match body_type {
-                "json" => body_section.json.unwrap_or_default(),
-                "text" => body_section.text.unwrap_or_default(),
-                "xml" => body_section.xml.unwrap_or_default(),
+        let body = match &toml.body {
+            None => String::new(),
+            Some(body_section) => match body_type {
+                "json" => body_section.json.clone().unwrap_or_default(),
+                "text" => body_section.text.clone().unwrap_or_default(),
+                "xml" => body_section.xml.clone().unwrap_or_default(),
                 "form" => {
                     // Convert form data to URL-encoded string
                     body_section
                         .form
+                        .clone()
                         .map(|form_map| {
                             form_map
                                 .iter()
@@ -279,7 +280,9 @@ impl From<RequestToml> for crate::request_editor::RequestData {
                 }
                 "graphql" => {
                     // Convert GraphQL to JSON string
-                    body_section.graphql
+                    body_section
+                        .graphql
+                        .clone()
                         .map(|g| {
                             serde_json::json!({
                                 "query": g.query.unwrap_or_default(),
@@ -290,10 +293,10 @@ impl From<RequestToml> for crate::request_editor::RequestData {
                         .unwrap_or_default()
                 }
                 _ => String::new(),
-            }
+            },
         };
 
-        crate::request_editor::RequestData {
+        RequestData {
             name: toml.meta.name,
             method,
             url: toml.http.url,
@@ -308,8 +311,8 @@ impl From<RequestToml> for crate::request_editor::RequestData {
 }
 
 /// Convert internal RequestData to TOML request
-impl From<crate::request_editor::RequestData> for RequestToml {
-    fn from(data: crate::request_editor::RequestData) -> Self {
+impl From<RequestData> for RequestToml {
+    fn from(data: RequestData) -> Self {
         // Detect body type from headers before we consume headers
         let body_type = data
             .headers
@@ -352,7 +355,7 @@ impl From<crate::request_editor::RequestData> for RequestToml {
         let params = if data.path_params.is_empty() {
             None
         } else {
-            let path_params: std::collections::HashMap<String, String> = data
+            let path_params: HashMap<String, String> = data
                 .path_params
                 .into_iter()
                 .filter(|p| p.enabled && !p.key.is_empty())
@@ -426,7 +429,7 @@ fn create_body_toml(body: &str, body_type: &str) -> Option<RequestBodyToml> {
         }),
         "form" => {
             // Try to parse URL-encoded form data into a HashMap
-            let mut form_map = std::collections::HashMap::new();
+            let mut form_map = HashMap::new();
             for pair in body.split('&') {
                 if let Some((key, value)) = pair.split_once('=')
                     && let (Ok(decoded_key), Ok(decoded_value)) =
@@ -553,7 +556,7 @@ mod tests {
             },
             environments: vec![EnvironmentToml {
                 name: "Development".to_string(),
-                variables: std::collections::HashMap::new(),
+                variables: HashMap::new(),
             }],
         };
 

@@ -873,6 +873,25 @@ impl CollectionManager {
         Ok(())
     }
 
+    /// Add an environment to an existing collection
+    pub fn add_environment_to_collection(
+        &mut self,
+        collection_path: &str,
+        environment: EnvironmentToml,
+    ) -> Result<()> {
+        if let Some(collection_info) = self.collections.get_mut(collection_path) {
+            collection_info.toml.environments.push(environment);
+
+            // Save the updated collection
+            let collection_data = collection_info.toml.clone();
+            let _ = collection_info;
+            self.save_collection(&collection_data, collection_path)?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Collection not found: {}", collection_path))
+        }
+    }
+
     pub fn global(cx: &App) -> &Self {
         cx.global::<Self>()
     }

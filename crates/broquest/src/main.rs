@@ -18,6 +18,7 @@ mod highlighting;
 mod http;
 mod http_client;
 mod icon;
+mod openapi_import;
 mod path_parameter_editor;
 mod query_parameter_editor;
 mod request_editor;

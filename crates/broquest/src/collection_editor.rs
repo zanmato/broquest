@@ -1,11 +1,12 @@
 use gpui::{App, Context, Entity, KeyBinding, Window, actions, div, prelude::*, px};
 use gpui_component::{
-    ActiveTheme, StyledExt, WindowExt,
+    ActiveTheme, Sizable as _, StyledExt, WindowExt,
     button::Button,
     h_flex,
     input::{Input, InputState},
     kbd::Kbd,
     notification::NotificationType,
+    switch::Switch,
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -29,6 +30,10 @@ pub struct CollectionEditor {
     environment_editor: Entity<EnvironmentEditor>,
     name_input: Entity<InputState>,
     path_input: Entity<InputState>,
+    // OpenAPI import fields
+    import_openapi: bool,
+    openapi_spec_input: Entity<InputState>,
+    openapi_spec_path: Option<String>,
 }
 
 impl CollectionEditor {
@@ -55,6 +60,8 @@ impl CollectionEditor {
 
         let path_input = cx.new(|cx| InputState::new(window, cx).default_value(&collection_path));
 
+        let openapi_spec_input = cx.new(|cx| InputState::new(window, cx));
+
         let editor = Self {
             active_tab: 0, // Collection tab
             collection_data,
@@ -62,6 +69,9 @@ impl CollectionEditor {
             environment_editor,
             name_input,
             path_input,
+            import_openapi: false,
+            openapi_spec_input,
+            openapi_spec_path: None,
         };
 
         // Load initial environments data from CollectionManager
@@ -132,6 +142,31 @@ impl CollectionEditor {
     }
 
     fn render_collection_tab(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let import_section = if self.import_openapi {
+            Some(
+                v_flex().gap_2().children([
+                    div()
+                        .text_sm()
+                        .font_medium()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("OpenAPI Spec File"),
+                    h_flex()
+                        .gap_2()
+                        .child(Input::new(&self.openapi_spec_input))
+                        .child(
+                            Button::new("browse-spec")
+                                .outline()
+                                .icon(IconName::FolderOpen)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.handle_browse_spec_file(window, cx)
+                                })),
+                        ),
+                ]),
+            )
+        } else {
+            None
+        };
+
         v_flex()
             .gap_3()
             .p_3()
@@ -147,7 +182,31 @@ impl CollectionEditor {
                 ]),
             )
             .child(
-                // Directory path input (read-only for now)
+                // OpenAPI Import section
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex().gap_2().items_center().child(
+                            Switch::new("import-openapi")
+                                .small()
+                                .label("Import from OpenAPI")
+                                .checked(self.import_openapi)
+                                .on_click(cx.listener(|this, checked, window, cx| {
+                                    this.import_openapi = *checked;
+                                    if !*checked {
+                                        this.openapi_spec_path = None;
+                                        this.openapi_spec_input.update(cx, |input, cx| {
+                                            input.set_value("".to_string(), window, cx);
+                                        });
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                    )
+                    .when_some(import_section, |this, section| this.child(section)),
+            )
+            .child(
+                // Directory path input
                 v_flex().gap_2().children([
                     div()
                         .text_sm()
@@ -251,6 +310,14 @@ impl CollectionEditor {
                 tracing::info!("Collection saved successfully to: {}", current_path);
                 tracing::info!("Collection name: {}", collection_data.collection.name);
 
+                // Import from OpenAPI if enabled
+                if self.import_openapi {
+                    let spec_path = self.openapi_spec_path.clone();
+                    if let Some(spec_path_value) = spec_path {
+                        self.import_from_openapi(&spec_path_value, &current_path, window, cx);
+                    }
+                }
+
                 // Show success notification
                 window.push_notification(
                     (NotificationType::Success, "Collection saved successfully."),
@@ -296,6 +363,173 @@ impl CollectionEditor {
                     })
                     .ok();
             }
+            Some(())
+        })
+        .detach();
+    }
+
+    fn handle_browse_spec_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let spec_input = self.openapi_spec_input.clone();
+        let path = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Select OpenAPI spec file".into()),
+        });
+
+        cx.spawn_in(window, async move |entity, window| {
+            if let Some(path) = path.await.ok()?.ok()?
+                && let Some(file_path) = path.first()
+                && let Some(file_str) = file_path.to_str()
+            {
+                let file_str = file_str.to_string();
+                window
+                    .update(|window, cx| {
+                        spec_input.update(cx, |input, cx| {
+                            input.set_value(file_str.clone(), window, cx);
+                        });
+                        // Update the parent struct's stored path via entity update
+                        let _ = entity.update(cx, |this: &mut Self, cx| {
+                            this.openapi_spec_path = Some(file_str);
+                            cx.notify();
+                        });
+                    })
+                    .ok();
+            }
+            Some(())
+        })
+        .detach();
+    }
+
+    fn import_from_openapi(
+        &mut self,
+        spec_path: &str,
+        collection_path: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::openapi_import::OpenAPIImporter;
+
+        let spec_path = spec_path.to_string();
+        let collection_path = collection_path.to_string();
+
+        cx.spawn_in(window, async move |_entity, window| {
+            match OpenAPIImporter::from_path(&spec_path) {
+                Ok(importer) => {
+                    match importer.import() {
+                        Ok(result) => {
+                            // Import is successful, now update the collection manager
+                            match window.update_global(
+                                |collection_manager: &mut CollectionManager, _window, _cx| {
+                                    // First, create the Default environment with baseUrl variable
+                                    // We need to update the collection to include this environment
+                                    if let Err(e) = collection_manager
+                                        .add_environment_to_collection(
+                                            &collection_path,
+                                            result.environment,
+                                        )
+                                    {
+                                        tracing::error!(
+                                            "Failed to add environment to collection: {}",
+                                            e
+                                        );
+                                    }
+
+                                    // Create groups and requests
+                                    for (group_name, requests) in result.groups {
+                                        if let Err(e) = collection_manager
+                                            .create_group(&collection_path, &group_name)
+                                        {
+                                            tracing::error!(
+                                                "Failed to create group '{}': {}",
+                                                group_name,
+                                                e
+                                            );
+                                        }
+
+                                        for request in requests {
+                                            let request_name = request.name.clone();
+                                            if let Err(e) = collection_manager.save_request(
+                                                &collection_path,
+                                                &request,
+                                                &request_name,
+                                                Some(&group_name),
+                                            ) {
+                                                tracing::error!(
+                                                    "Failed to save request '{}': {}",
+                                                    request_name,
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    }
+
+                                    // Add root-level requests
+                                    for request in result.requests {
+                                        let request_name = request.name.clone();
+                                        if let Err(e) = collection_manager.save_request(
+                                            &collection_path,
+                                            &request,
+                                            &request_name,
+                                            None,
+                                        ) {
+                                            tracing::error!(
+                                                "Failed to save request '{}': {}",
+                                                request_name,
+                                                e
+                                            );
+                                        }
+                                    }
+                                    Ok::<(), anyhow::Error>(())
+                                },
+                            ) {
+                                Ok(Ok(())) => {
+                                    window
+                                        .update(|window, cx| {
+                                            window.push_notification(
+                                                (
+                                                    NotificationType::Success,
+                                                    "OpenAPI spec imported successfully.",
+                                                ),
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                                _ => {
+                                    tracing::error!("Failed to update global state during import");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to import OpenAPI spec: {}", e);
+                            window
+                                .update(|window, cx| {
+                                    window.push_notification(
+                                        (NotificationType::Error, "Failed to import OpenAPI spec."),
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse OpenAPI spec: {}", e);
+                    window
+                        .update(|window, cx| {
+                            window.push_notification(
+                                (
+                                    NotificationType::Error,
+                                    "Failed to parse OpenAPI spec file.",
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            }
+
             Some(())
         })
         .detach();
