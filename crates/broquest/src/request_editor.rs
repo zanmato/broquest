@@ -1743,7 +1743,6 @@ impl RequestEditor {
         }
 
         let jsonpath_query = self.jsonpath_input.read(cx).value().to_string();
-        let original_body = self.original_response_body.clone();
         let response_input = self.response_input.clone();
 
         if jsonpath_query.trim().is_empty() {
@@ -1757,16 +1756,17 @@ impl RequestEditor {
         }
 
         let query = jsonpath_query.clone();
-        self._jsonpath_filter_task = cx.spawn_in(window, async move |_this, window| {
+        self._jsonpath_filter_task = cx.spawn_in(window, async move |this, window| {
             window
                 .background_executor()
                 .timer(Duration::from_millis(100))
                 .await;
 
-            let original = match &original_body {
-                Some(body) => body.clone(),
-                None => return,
-            };
+            let original =
+                match this.read_with(window, |editor, _| editor.original_response_body.clone()) {
+                    Ok(Some(body)) => body.clone(),
+                    _ => return,
+                };
 
             let result = (|| -> Result<String, String> {
                 let json: serde_json::Value =
