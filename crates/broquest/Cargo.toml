@@ -42,3 +42,4 @@ tree-sitter-xml = { workspace = true }
 
 # OpenAPI spec parsing
 oas3 = { version = "0.20", features = ["yaml-spec"] }
+jsonpath-rust = "1.0.4"

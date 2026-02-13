@@ -5,7 +5,7 @@ use gpui::{
     actions, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, IndexPath, Sizable, StyledExt, WindowExt,
+    ActiveTheme, Icon, IndexPath, Sizable, StyledExt, WindowExt,
     button::Button,
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -15,6 +15,7 @@ use gpui_component::{
     tab::{Tab, TabBar},
     v_flex,
 };
+use jsonpath_rust::JsonPath;
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -238,6 +239,11 @@ pub struct RequestEditor {
     _updating_url_from_params: bool,
     _was_dirty: bool,
     _dirty_check_task: Task<()>,
+    // JSONPath filtering
+    jsonpath_input: Entity<InputState>,
+    original_response_body: Option<String>,
+    _jsonpath_filter_task: Task<()>,
+    response_format: ResponseFormat,
 }
 
 impl RequestEditor {
@@ -302,6 +308,12 @@ impl RequestEditor {
 
         let script_editor = cx.new(|cx| ScriptEditor::new(window, cx));
 
+        let jsonpath_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("$.store.book[*].author")
+                .multi_line(false)
+        });
+
         let mut subscriptions = Vec::new();
         // Subscribe to Content-Type selection changes
         subscriptions.push(cx.subscribe(
@@ -347,6 +359,10 @@ impl RequestEditor {
             _updating_url_from_params: false,
             _was_dirty: false,
             _dirty_check_task: Task::ready(()),
+            jsonpath_input,
+            original_response_body: None,
+            _jsonpath_filter_task: Task::ready(()),
+            response_format: ResponseFormat::Unknown,
         }
     }
 
@@ -870,13 +886,6 @@ impl RequestEditor {
 
                     // Successfully got response data
                     window.update(|window, cx| {
-                        // Update the RequestEditor's response_data for status bar and reset loading state
-                        editor_entity.update(cx, |request_editor, cx| {
-                            request_editor.response_data = response_data.clone();
-                            request_editor.is_loading = false;
-                            cx.notify();
-                        });
-
                         // Detect content type and get language for syntax highlighting
                         let format = ResponseFormat::detect_from_content(
                             &response_data.body,
@@ -888,6 +897,18 @@ impl RequestEditor {
 
                         // Format content (pretty print JSON if applicable)
                         let formatted_content = format.format_content(&response_data.body);
+
+                        // Update the RequestEditor's response_data for status bar and reset loading state
+                        editor_entity.update(cx, |request_editor, cx| {
+                            request_editor.response_data = response_data.clone();
+                            request_editor.is_loading = false;
+                            request_editor.response_format = format;
+                            request_editor.original_response_body = Some(formatted_content.clone());
+                            request_editor.jsonpath_input.update(cx, |input, cx| {
+                                input.set_value("", window, cx);
+                            });
+                            cx.notify();
+                        });
 
                         // Update the response input with the correct language and formatted content
                         response_input.update(cx, |input_state, cx| {
@@ -1261,19 +1282,51 @@ impl RequestEditor {
                     .child(
                         // Response content
                         div().flex_1().child(match self.active_response_tab {
-                            ResponseTab::Response => div()
-                                .h_full()
-                                .child(
-                                    Input::new(&self.response_input)
-                                        .font_family(cx.theme().mono_font_family.clone())
-                                        .text_size(px(12.))
-                                        .h_full()
-                                        .py_3()
-                                        .bordered(false)
-                                        .rounded_none()
-                                        .cleanable(true),
-                                )
-                                .into_any_element(),
+                            ResponseTab::Response => {
+                                let is_json = self.is_response_json();
+                                v_flex()
+                                    .h_full()
+                                    .child(
+                                        div().flex_1().child(
+                                            Input::new(&self.response_input)
+                                                .font_family(cx.theme().mono_font_family.clone())
+                                                .text_size(px(12.))
+                                                .h_full()
+                                                .py_3()
+                                                .bordered(false)
+                                                .rounded_none()
+                                                .cleanable(true),
+                                        ),
+                                    )
+                                    .when(is_json, |this| {
+                                        this.child(
+                                            h_flex()
+                                                .px_3()
+                                                .py_2()
+                                                .border_t_1()
+                                                .border_color(cx.theme().border)
+                                                .bg(cx.theme().background)
+                                                .gap_3()
+                                                .items_center()
+                                                .child(
+                                                    div()
+                                                        .text_color(cx.theme().blue)
+                                                        .child(Icon::new(IconName::Funnel)),
+                                                )
+                                                .child(
+                                                    div().flex_1().child(
+                                                        Input::new(&self.jsonpath_input)
+                                                            .font_family(
+                                                                cx.theme().mono_font_family.clone(),
+                                                            )
+                                                            .text_size(px(12.))
+                                                            .cleanable(true),
+                                                    ),
+                                                ),
+                                        )
+                                    })
+                                    .into_any_element()
+                            }
                             ResponseTab::Raw => div()
                                 .h_full()
                                 .child(
@@ -1476,6 +1529,17 @@ impl RequestEditor {
             },
         );
         self._subscriptions.push(content_type_subscription);
+
+        // Subscribe to JSONPath input changes for filtering response
+        let jsonpath_input = self.jsonpath_input.clone();
+        let jsonpath_subscription = cx.subscribe_in(&jsonpath_input, window, {
+            move |this: &mut Self, _input_state, event: &InputEvent, window, cx| {
+                if let InputEvent::Change = event {
+                    this.handle_jsonpath_input_change(window, cx);
+                }
+            }
+        });
+        self._subscriptions.push(jsonpath_subscription);
     }
 
     /// Parse query parameters from a URL string
@@ -1665,6 +1729,81 @@ impl RequestEditor {
         } else {
             count
         }
+    }
+
+    fn is_response_json(&self) -> bool {
+        self.response_format == ResponseFormat::Json && self.original_response_body.is_some()
+    }
+
+    fn handle_jsonpath_input_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self._jsonpath_filter_task = Task::ready(());
+
+        if self.response_format != ResponseFormat::Json {
+            return;
+        }
+
+        let jsonpath_query = self.jsonpath_input.read(cx).value().to_string();
+        let original_body = self.original_response_body.clone();
+        let response_input = self.response_input.clone();
+
+        if jsonpath_query.trim().is_empty() {
+            if let Some(original) = &self.original_response_body {
+                response_input.update(cx, |input_state, cx| {
+                    input_state.set_value(original, window, cx);
+                    cx.notify();
+                });
+            }
+            return;
+        }
+
+        let query = jsonpath_query.clone();
+        self._jsonpath_filter_task = cx.spawn_in(window, async move |_this, window| {
+            window
+                .background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+
+            let original = match &original_body {
+                Some(body) => body.clone(),
+                None => return,
+            };
+
+            let result = (|| -> Result<String, String> {
+                let json: serde_json::Value =
+                    serde_json::from_str(&original).map_err(|e| format!("Invalid JSON: {}", e))?;
+
+                let matches: Vec<&serde_json::Value> = json
+                    .query(&query)
+                    .map_err(|e| format!("Invalid JSONPath: {}", e))?;
+
+                if matches.is_empty() {
+                    Ok("[]".to_string())
+                } else if matches.len() == 1 {
+                    Ok(serde_json::to_string_pretty(matches[0])
+                        .unwrap_or_else(|_| matches[0].to_string()))
+                } else {
+                    Ok(serde_json::to_string_pretty(&matches).unwrap_or_else(|_| "[]".to_string()))
+                }
+            })();
+
+            let result = window.update(|window, cx| {
+                response_input.update(cx, |input_state, cx| {
+                    match result {
+                        Ok(filtered) => {
+                            input_state.set_value(&filtered, window, cx);
+                        }
+                        Err(error_msg) => {
+                            input_state.set_value(&format!("// Error: {}", error_msg), window, cx);
+                        }
+                    }
+                    cx.notify();
+                })
+            });
+
+            if let Err(e) = result {
+                tracing::error!("Failed to update response input: {}", e);
+            }
+        });
     }
 }
 
