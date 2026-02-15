@@ -27,6 +27,7 @@ mod script_editor;
 mod script_engine;
 mod themes_manager;
 mod ui;
+mod update_manager;
 mod variable_store;
 
 use assets::Assets;
@@ -116,6 +117,13 @@ fn main() {
         // Initialize HTTP client
         let http_client = http_client::HttpClientService::new();
         cx.set_global(http_client);
+
+        // Initialize UpdateManager
+        let update_manager = update_manager::UpdateManager::new(cx);
+        cx.set_global(update_manager);
+
+        // Start polling for updates
+        update_manager::UpdateManager::start_polling(cx);
 
         let window_bounds = gpui::Bounds::centered(None, size(px(1280.), px(900.)), cx);
 
