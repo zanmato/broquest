@@ -135,14 +135,32 @@ jobs:
     needs: [build]
 
     steps:
+    - uses: actions/checkout@v6
+
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
         path: artifacts/
 
+    - name: Extract changelog for current version
+      id: changelog
+      run: |
+        VERSION="${GITHUB_REF#refs/tags/v}"
+        # Extract content between ## [VERSION] and the next ## [
+        CHANGELOG=$(awk -v ver="$VERSION" '
+          /^## \[/ { in_section = 0 }
+          $0 ~ "^## \\[" ver "\\]" { in_section = 1; next }
+          in_section && /^## \[/ { exit }
+          in_section { print }
+        ' CHANGELOG.md)
+        echo "body<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
     - name: Upload release assets
       uses: softprops/action-gh-release@v2
       with:
+        body: ${{ steps.changelog.outputs.body }}
         files: |
           artifacts/broquest-*/broquest*
       env:

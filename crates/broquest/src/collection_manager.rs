@@ -183,12 +183,9 @@ impl CollectionManager {
     pub fn load_collection_structure(
         &self,
         collection_dir: &Path,
-    ) -> Result<(
-        std::collections::HashMap<String, RequestData>,
-        std::collections::HashMap<String, GroupInfo>,
-    )> {
-        let mut requests = std::collections::HashMap::new();
-        let mut groups = std::collections::HashMap::new();
+    ) -> Result<(HashMap<String, RequestData>, HashMap<String, GroupInfo>)> {
+        let mut requests = HashMap::new();
+        let mut groups = HashMap::new();
 
         for entry in fs::read_dir(collection_dir)? {
             let entry = entry?;
@@ -243,11 +240,8 @@ impl CollectionManager {
     }
 
     /// Load requests from a group directory
-    fn load_group_requests(
-        &self,
-        group_dir: &Path,
-    ) -> Result<std::collections::HashMap<String, RequestData>> {
-        let mut requests = std::collections::HashMap::new();
+    fn load_group_requests(&self, group_dir: &Path) -> Result<HashMap<String, RequestData>> {
+        let mut requests = HashMap::new();
 
         for entry in fs::read_dir(group_dir)? {
             let entry = entry?;
@@ -417,7 +411,7 @@ impl CollectionManager {
                     "Group '{}' not found in collection, creating new group",
                     group_name
                 );
-                let mut new_group_requests = std::collections::HashMap::new();
+                let mut new_group_requests = HashMap::new();
                 new_group_requests.insert(request_path_str.clone(), request_data.clone());
 
                 let new_group = GroupInfo {

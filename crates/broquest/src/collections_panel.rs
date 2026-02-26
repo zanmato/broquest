@@ -119,14 +119,8 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
             .on_click(window.listener_for(&self.parent, {
                 let item = entry.item().clone();
                 move |this: &mut CollectionsPanel, event: &ClickEvent, _window, cx| {
-                    tracing::info!(
-                        "Click event received for tree item: {} (click_count: {})",
-                        item.id,
-                        event.click_count()
-                    );
-
                     if event.click_count() == 2 {
-                        // Double-click - open in tab
+                        // Double-click, open in tab
                         if let Some(metadata) = this.get_tree_item_metadata(&item.id) {
                             let metadata = metadata.clone();
                             match metadata.kind {
@@ -163,7 +157,6 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                             }
                         }
                     }
-                    // Single-click is handled by the tree component for expansion
                 }
             }))
     }

@@ -4,8 +4,10 @@ use gpui::{
     SharedString, Styled, Subscription, Window, actions, div, prelude::FluentBuilder, px, svg,
 };
 use gpui_component::{
-    ActiveTheme, Root, TITLE_BAR_HEIGHT, Theme, ThemeRegistry, TitleBar, WindowExt,
-    menu::AppMenuBar, notification::NotificationType,
+    ActiveTheme, Root, Sizable as _, TITLE_BAR_HEIGHT, Theme, ThemeRegistry, TitleBar, WindowExt,
+    button::{Button, ButtonVariants as _},
+    menu::AppMenuBar,
+    notification::{Notification, NotificationType},
 };
 
 use crate::{
@@ -16,6 +18,7 @@ use crate::{
     editor_panel::EditorPanel,
     http::HttpMethod,
     request_editor::RequestData,
+    update_manager::UpdateManager,
 };
 
 actions!(broquest_app, [Quit, OpenNewCollectionTab, OpenCollection]);
@@ -199,6 +202,29 @@ impl BroquestApp {
 
         subscriptions.push(collection_subscription);
 
+        // Check for post-update notification
+        let update_manager = UpdateManager::global(cx);
+        if let Some(_prev_version) = update_manager.just_updated_from.read(cx).as_ref() {
+            let current = env!("CARGO_PKG_VERSION");
+
+            let app_entity = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                app_entity.upgrade().map(|app_entity| {
+                    window.push_notification(
+                        Notification::new()
+                            .message(format!("Updated to v{}, click to view changelog", current))
+                            .with_type(NotificationType::Success)
+                            .on_click(window.listener_for(&app_entity, move |_, _, _, cx| {
+                                let changelog_url =
+                                    UpdateManager::changelog_url(&format!("v{}", current));
+                                cx.open_url(&changelog_url);
+                            })),
+                        cx,
+                    );
+                });
+            });
+        }
+
         Self {
             focus_handle: cx.focus_handle(),
             sidebar_collapsed: false,
@@ -364,6 +390,26 @@ impl BroquestApp {
 
         window.refresh();
     }
+
+    fn render_update_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let update_manager = UpdateManager::global(cx);
+        let has_update = update_manager.pending_update.read(cx).is_some();
+
+        if has_update {
+            div().child(
+                Button::new("update-available")
+                    .ghost()
+                    .compact()
+                    .small()
+                    .label("Update available, click to restart")
+                    .on_click(|_, _window, _cx| {
+                        UpdateManager::apply_pending_update();
+                    }),
+            )
+        } else {
+            div()
+        }
+    }
 }
 
 impl EventEmitter<AppEvent> for BroquestApp {}
@@ -397,15 +443,24 @@ impl Render for BroquestApp {
                     div()
                         .flex()
                         .items_center()
-                        .gap_4()
+                        .justify_between()
+                        .w_full()
+                        .px_4()
                         .child(
-                            svg()
-                                .h(px(22.))
-                                .w(px(100.))
-                                .text_color(window.text_style().color)
-                                .path("img/broquest.svg"),
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_4()
+                                .child(
+                                    svg()
+                                        .h(px(22.))
+                                        .w(px(100.))
+                                        .text_color(window.text_style().color)
+                                        .path("img/broquest.svg"),
+                                )
+                                .child(self.app_menu_bar.clone()),
                         )
-                        .child(self.app_menu_bar.clone()),
+                        .child(self.render_update_button(cx)),
                 ),
             )
             // Main content area
