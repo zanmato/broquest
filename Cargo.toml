@@ -20,6 +20,12 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component/", featur
     "tree-sitter-languages",
 ] }
 gpui-component-macros = { git = "https://github.com/longbridge/gpui-component/" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
+    "font-kit",
+    "x11",
+    "wayland",
+    "runtime_shaders",
+] }
 
 # Database dependencies
 sqlx = { version = "0.8", features = [

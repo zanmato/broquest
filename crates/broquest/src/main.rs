@@ -30,26 +30,22 @@ mod ui;
 mod variable_store;
 
 use assets::Assets;
-use gpui::{AppContext, Application, SharedString, WindowBounds, WindowOptions, px, size};
+use gpui::{AppContext, SharedString, WindowBounds, WindowOptions, px, size};
 use gpui_component::{Theme, ThemeRegistry};
-use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
+use gpui_platform::application;
 
 use collection_manager::CollectionManager;
 use highlighting::register_highlighting;
 use themes_manager::ThemesManager;
 
 fn main() {
-    let app = Application::new().with_assets(Assets);
+    tracing_subscriber::fmt::init();
+
+    let app = application()
+        .with_quit_mode(gpui::QuitMode::LastWindowClosed)
+        .with_assets(Assets);
 
     app.run(move |cx| {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer())
-            .with(
-                tracing_subscriber::EnvFilter::from_default_env()
-                    .add_directive("gpui_component=trace".parse().unwrap()),
-            )
-            .init();
-
         gpui_component::init(cx);
         ui::draggable_tree::init(cx);
         request_editor::RequestEditor::init(cx);
@@ -142,13 +138,6 @@ fn main() {
             window_background: gpui::WindowBackgroundAppearance::Opaque,
             app_id: Some("broquest".into()),
         };
-
-        cx.on_window_closed(|cx| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, |window, cx| {
