@@ -1,7 +1,7 @@
 //! HTTP-related types and constants
 
 use gpui::{App, SharedString};
-use gpui_component::{select::SelectItem, ActiveTheme};
+use gpui_component::{ActiveTheme, select::SelectItem};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

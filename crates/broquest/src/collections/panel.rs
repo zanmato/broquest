@@ -18,8 +18,10 @@ use std::collections::HashMap;
 
 use crate::app_database::{AppDatabase, CollectionData};
 use crate::app_events::AppEvent;
-use crate::collection_manager::{CollectionInfo, CollectionManager};
-use crate::icon::IconName;
+use crate::domain::RequestData;
+use crate::ui::icon::IconName;
+
+use super::manager::{CollectionInfo, CollectionManager};
 use crate::ui::draggable_tree::{
     DragIcon, DraggableTree, DraggableTreeDelegate, DraggableTreeState, DraggedTreeItem, TreeEntry,
     TreeItem,
@@ -37,7 +39,7 @@ pub struct CollectionsPanel {
     collections: Vec<CollectionData>,
     tree_state: Entity<DraggableTreeState<CollectionsTreeDelegate>>,
     tree_item_metadata: HashMap<String, TreeItemMetadata>, // Map hierarchical key -> metadata
-    request_data_map: HashMap<String, crate::request_editor::RequestData>, // Map item_id -> RequestData
+    request_data_map: HashMap<String, RequestData>,        // Map item_id -> RequestData
 }
 
 struct CollectionsTreeDelegate {
@@ -73,11 +75,11 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
             && (metadata.kind == TreeItemKind::Collection || metadata.kind == TreeItemKind::Group)
             && entry.is_expanded()
         {
-            // This is an expanded collection/group, change icon to FolderOpen
+            // This is an expanded collection/group, change icon to FolderOpen but preserve the original color
             tree_item_icon = TreeItemIcon {
                 icon: Some(IconName::FolderOpen),
                 prefix: None,
-                color_fn: |cx: &App| cx.theme().foreground,
+                color_fn: metadata.icon.color_fn,
             };
         }
 

@@ -17,26 +17,21 @@ use gpui_component::{
 };
 use jsonpath_rust::JsonPath;
 
-use serde::{Deserialize, Serialize};
-use std::time::Duration;
-
-use crate::app_events::AppEvent;
-use crate::collection_manager::CollectionManager;
-use crate::collection_types::EnvironmentToml;
-use crate::form_editor::FormEditor;
-use crate::form_editor::FormEditorEvent;
-use crate::header_editor::HeaderEditor;
-use crate::header_editor::HeaderEditorEvent;
-use crate::http::{ContentType, HttpMethod};
-use crate::http_client::ResponseFormat;
-use crate::icon::IconName;
-use crate::path_parameter_editor::PathParamEditor;
-use crate::path_parameter_editor::PathParamEvent;
-use crate::query_parameter_editor::QueryParamEditor;
-use crate::query_parameter_editor::QueryParamEvent;
-use crate::script_editor::ScriptEditor;
-use crate::script_editor::ScriptEditorEvent;
+use super::form_editor::{FormEditor, FormEditorEvent};
+use super::header_editor::{HeaderEditor, HeaderEditorEvent};
+use super::path_editor::{PathParamEditor, PathParamEvent};
+use super::query_editor::{QueryParamEditor, QueryParamEvent};
+use crate::domain::{ContentType, HttpMethod, KeyValuePair, RequestData, ResponseData};
+use crate::http::ResponseFormat;
+use crate::scripting::{ScriptEditor, ScriptEditorEvent};
+use crate::ui::icon::IconName;
 use crate::ui::tab_badge::TabBadge;
+use crate::{app_events::AppEvent, environments::EnvironmentResolver};
+use crate::{
+    collections::{CollectionManager, EnvironmentToml},
+    http::HttpClientService,
+};
+use std::time::Duration;
 
 const CONTEXT: &str = "request_editor";
 
@@ -106,89 +101,6 @@ impl SelectItem for EnvironmentOption {
     fn value(&self) -> &Self::Value {
         self
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct KeyValuePair {
-    pub key: String,
-    pub value: String,
-    pub enabled: bool,
-}
-
-impl Default for KeyValuePair {
-    fn default() -> Self {
-        Self {
-            key: String::new(),
-            value: String::new(),
-            enabled: true,
-        }
-    }
-}
-
-impl KeyValuePair {
-    /// Check if two KeyValuePair vectors are equal (order-independent comparison).
-    /// Filters out entries with empty keys and compares the remaining entries.
-    pub fn vec_equals(left: &[KeyValuePair], right: &[KeyValuePair]) -> bool {
-        // Filter out entries with empty keys (they don't represent real data)
-        let left_filtered: Vec<_> = left.iter().filter(|p| !p.key.trim().is_empty()).collect();
-        let right_filtered: Vec<_> = right.iter().filter(|p| !p.key.trim().is_empty()).collect();
-
-        if left_filtered.len() != right_filtered.len() {
-            return false;
-        }
-
-        // For each item in left, find a matching item in right
-        for l in &left_filtered {
-            if !right_filtered
-                .iter()
-                .any(|r| l.key == r.key && l.value == r.value && l.enabled == r.enabled)
-            {
-                return false;
-            }
-        }
-
-        true
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RequestData {
-    pub name: String,
-    pub method: HttpMethod,
-    pub url: String,
-    pub path_params: Vec<KeyValuePair>,
-    pub query_params: Vec<KeyValuePair>,
-    pub headers: Vec<KeyValuePair>,
-    pub body: String,
-    pub pre_request_script: Option<String>,
-    pub post_response_script: Option<String>,
-}
-
-impl Default for RequestData {
-    fn default() -> Self {
-        Self {
-            name: "New Request".to_string(),
-            method: HttpMethod::Get,
-            url: String::new(),
-            path_params: Vec::new(),
-            query_params: Vec::new(),
-            headers: Vec::new(),
-            body: String::new(),
-            pre_request_script: None,
-            post_response_script: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ResponseData {
-    pub status_code: Option<u16>,
-    pub status_text: Option<String>,
-    pub latency: Option<Duration>,
-    pub size: Option<usize>,
-    pub headers: Vec<KeyValuePair>,
-    pub body: String,
-    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -800,7 +712,7 @@ impl RequestEditor {
 
         // Load environment variables and secrets in the main thread
         let (variables, secrets) = if let Some(selected_env) = self.get_selected_environment(cx) {
-            let env_resolver = crate::environment_resolver::EnvironmentResolver::new();
+            let env_resolver = EnvironmentResolver::new();
             let env_name = selected_env.name.clone();
             let selected_env_clone = selected_env.clone();
             let collection_manager = CollectionManager::global(cx);
@@ -836,7 +748,7 @@ impl RequestEditor {
         };
 
         // Get the HTTP client after updating UI to avoid borrow issues
-        let http_client = crate::http_client::HttpClientService::global(cx);
+        let http_client = HttpClientService::global(cx);
 
         // Clone necessary data before moving into async closure
         let collection_path = self.collection_path.clone();
@@ -1793,7 +1705,7 @@ impl RequestEditor {
                             input_state.set_value(&filtered, window, cx);
                         }
                         Err(error_msg) => {
-                            input_state.set_value(&format!("// Error: {}", error_msg), window, cx);
+                            input_state.set_value(format!("// Error: {}", error_msg), window, cx);
                         }
                     }
                     cx.notify();

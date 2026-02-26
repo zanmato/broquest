@@ -1,4 +1,4 @@
-use crate::icon::IconName;
+use crate::ui::icon::IconName;
 use gpui::{
     App, Context, Entity, EventEmitter, Focusable, Subscription, Window, div, prelude::*, px,
 };
@@ -10,7 +10,7 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::script_completion::{ScriptCompletionProvider, ScriptContext};
+use super::completion::{ScriptCompletionProvider, ScriptContext};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScriptEditorEvent {

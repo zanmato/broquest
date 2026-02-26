@@ -1,6 +1,6 @@
+use super::types::{CollectionToml, EnvironmentToml, EnvironmentVariable, RequestToml};
 use crate::app_database::{AppDatabase, CollectionData};
-use crate::collection_types::{CollectionToml, EnvironmentToml, EnvironmentVariable, RequestToml};
-use crate::request_editor::RequestData;
+use crate::domain::RequestData;
 use anyhow::{Context, Result};
 use gpui::{App, Global};
 use std::collections::HashMap;
@@ -160,7 +160,7 @@ impl CollectionManager {
 
         let collection_name = collection_toml.collection.name.clone();
         let collection_info = CollectionInfo {
-            data: crate::app_database::CollectionData {
+            data: CollectionData {
                 id: None,
                 name: collection_name,
                 path: collection_path.to_string_lossy().to_string(),
@@ -304,7 +304,7 @@ impl CollectionManager {
             };
 
         let collection_info = CollectionInfo {
-            data: crate::app_database::CollectionData {
+            data: CollectionData {
                 id: None, // We don't use IDs anymore
                 name: collection_name.clone(),
                 path: path.to_string(),

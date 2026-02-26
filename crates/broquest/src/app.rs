@@ -13,11 +13,9 @@ use gpui_component::{
 use crate::{
     app_database::{AppDatabase, CollectionData, UserSetting},
     app_events::AppEvent,
-    collection_manager::CollectionManager,
-    collections_panel::CollectionsPanel,
-    editor_panel::EditorPanel,
-    http::HttpMethod,
-    request_editor::RequestData,
+    collections::{CollectionManager, CollectionsPanel},
+    domain::{HttpMethod, RequestData},
+    requests::EditorPanel,
     update_manager::UpdateManager,
 };
 
@@ -209,7 +207,7 @@ impl BroquestApp {
 
             let app_entity = cx.entity().downgrade();
             window.defer(cx, move |window, cx| {
-                app_entity.upgrade().map(|app_entity| {
+                if let Some(app_entity) = app_entity.upgrade() {
                     window.push_notification(
                         Notification::new()
                             .message(format!("Updated to v{}, click to view changelog", current))
@@ -221,7 +219,7 @@ impl BroquestApp {
                             })),
                         cx,
                     );
-                });
+                }
             });
         }
 
@@ -246,7 +244,7 @@ impl BroquestApp {
         cx: &mut Context<Self>,
     ) {
         // Create an empty collection and open it in a new tab
-        let collection_data = crate::collection_types::create_empty_collection();
+        let collection_data = crate::collections::create_empty_collection();
         let collection_path = "".to_string();
 
         // Directly create the new collection tab

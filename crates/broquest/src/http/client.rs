@@ -2,11 +2,9 @@ use gpui::Global;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::environment_resolver::EnvironmentResolver;
-use crate::http::HttpMethod;
-use crate::request_editor::{KeyValuePair, RequestData, ResponseData};
-use crate::script_engine::ScriptExecutionService;
-use crate::variable_store::VariableStore;
+use crate::domain::{HttpMethod, KeyValuePair, RequestData, ResponseData};
+use crate::environments::EnvironmentResolver;
+use crate::scripting::{ScriptExecutionService, VariableStore};
 
 /// Well-defined error type for HTTP requests
 #[derive(Debug, Clone)]

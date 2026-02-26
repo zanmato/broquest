@@ -12,14 +12,11 @@ use gpui_component::{
     tab::{Tab, TabBar},
 };
 
+use super::editor::{RequestEditor, RequestEditorEvent};
 use crate::app_events::AppEvent;
-use crate::collection_editor::CollectionEditor;
-use crate::collection_manager::CollectionManager;
-use crate::collection_types::CollectionToml;
-use crate::group_editor::GroupEditor;
-use crate::http::HttpMethod;
-use crate::icon::IconName;
-use crate::request_editor::{RequestData, RequestEditor, RequestEditorEvent};
+use crate::collections::{CollectionEditor, CollectionManager, CollectionToml, GroupEditor};
+use crate::domain::{HttpMethod, RequestData};
+use crate::ui::icon::IconName;
 
 pub enum TabType {
     Request(RequestTab),

@@ -1,4 +1,5 @@
-use crate::collection_types::{EnvironmentToml, EnvironmentVariable};
+use crate::collections::{EnvironmentToml, EnvironmentVariable};
+use crate::domain::RequestData;
 use std::collections::HashMap;
 
 /// Environment variable resolver for HTTP requests
@@ -88,10 +89,10 @@ impl EnvironmentResolver {
     /// Resolve all variables in a request data
     pub fn resolve_request_data(
         &self,
-        mut request_data: crate::request_editor::RequestData,
+        mut request_data: RequestData,
         variables: &HashMap<String, String>,
         secrets: &HashMap<String, String>,
-    ) -> crate::request_editor::RequestData {
+    ) -> RequestData {
         // Resolve URL
         request_data.url = self.resolve_string(&request_data.url, variables, secrets);
 

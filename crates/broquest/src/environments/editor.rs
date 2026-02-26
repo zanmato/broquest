@@ -9,8 +9,8 @@ use gpui_component::{
 };
 use std::collections::HashMap;
 
-use crate::collection_types::EnvironmentVariable;
-use crate::icon::IconName;
+use crate::collections::{EnvironmentToml, EnvironmentVariable};
+use crate::ui::icon::IconName;
 
 #[derive(Debug, Clone)]
 pub struct VariableRow {
@@ -60,7 +60,7 @@ impl EnvironmentEditor {
     /// Load environments from CollectionToml data
     pub fn load_environments(
         &mut self,
-        environment_tomls: &[crate::collection_types::EnvironmentToml],
+        environment_tomls: &[EnvironmentToml],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -202,10 +202,7 @@ impl EnvironmentEditor {
     }
 
     /// Get environments for saving to TOML
-    pub fn get_environments_for_save(
-        &self,
-        cx: &App,
-    ) -> Vec<crate::collection_types::EnvironmentToml> {
+    pub fn get_environments_for_save(&self, cx: &App) -> Vec<EnvironmentToml> {
         let mut result = Vec::new();
 
         for env_data in &self.environments {
@@ -249,7 +246,7 @@ impl EnvironmentEditor {
             }
 
             let current_name = env_data.name_input.read(cx).value().to_string();
-            let env_toml = crate::collection_types::EnvironmentToml {
+            let env_toml = EnvironmentToml {
                 name: current_name,
                 variables,
             };

@@ -1,5 +1,5 @@
-use crate::request_editor::{KeyValuePair, RequestData, ResponseData};
-use crate::variable_store::VariableStore;
+use super::variable_store::VariableStore;
+use crate::domain::{KeyValuePair, RequestData, ResponseData};
 use anyhow::Result;
 use rquickjs::{Context, Ctx, Function, Object, Runtime};
 use tracing::{error, info};
@@ -215,7 +215,6 @@ impl ScriptExecutionService {
         Ok(())
     }
 
-    
     /// Setup Node.js compatibility functions
     fn setup_nodejs_compatibility<'js>(&self, ctx: Ctx<'js>) -> Result<()> {
         // Initialize LLRT modules following the pattern from llrt_modules README
@@ -242,13 +241,14 @@ impl ScriptExecutionService {
             let mut new_headers = Vec::new();
             for key_result in headers_obj.keys::<String>() {
                 if let Ok(key) = key_result
-                    && let Ok(value) = headers_obj.get::<_, String>(&key) {
-                        new_headers.push(KeyValuePair {
-                            key,
-                            value,
-                            enabled: true,
-                        });
-                    }
+                    && let Ok(value) = headers_obj.get::<_, String>(&key)
+                {
+                    new_headers.push(KeyValuePair {
+                        key,
+                        value,
+                        enabled: true,
+                    });
+                }
             }
             request.headers = new_headers;
         }

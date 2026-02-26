@@ -46,7 +46,7 @@ impl UpdateManager {
     pub fn start_polling(cx: &mut App) {
         cx.spawn(async move |cx| {
             loop {
-                let _ = cx.update(|cx| {
+                cx.update(|cx| {
                     Self::poll_for_updates(cx);
                 });
                 cx.background_executor().timer(CHECK_INTERVAL).await;
@@ -65,7 +65,7 @@ impl UpdateManager {
             if staged_exists {
                 // Already have staged update, just update UI
                 if let Ok(Some(info)) = Self::fetch_latest_release().await {
-                    let _ = cx.update(|cx| {
+                    cx.update(|cx| {
                         pending_update.update(cx, |state, cx| {
                             *state = Some(info);
                             cx.notify();
@@ -80,12 +80,12 @@ impl UpdateManager {
                 tracing::info!("Update found: {}, downloading...", release.version);
 
                 // Download in blocking context
-                let result = smol::unblock(|| Self::download_update_to_staging()).await;
+                let result = smol::unblock(Self::download_update_to_staging).await;
 
                 match result {
                     Ok(()) => {
                         tracing::info!("Update staged successfully");
-                        let _ = cx.update(|cx| {
+                        cx.update(|cx| {
                             pending_update.update(cx, |state, cx| {
                                 *state = Some(release);
                                 cx.notify();

@@ -11,12 +11,14 @@ use gpui_component::{
     v_flex,
 };
 
+use super::manager::CollectionManager;
+use super::openapi::OpenAPIImporter;
+use super::types::{CollectionMeta, CollectionToml};
+
 use crate::{
     app_database::{AppDatabase, CollectionData},
-    collection_manager::CollectionManager,
-    collection_types::{CollectionMeta, CollectionToml},
-    environment_editor::EnvironmentEditor,
-    icon::IconName,
+    environments::EnvironmentEditor,
+    ui::icon::IconName,
 };
 
 const CONTEXT: &str = "collection_editor";
@@ -408,8 +410,6 @@ impl CollectionEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use crate::openapi_import::OpenAPIImporter;
-
         let spec_path = spec_path.to_string();
         let collection_path = collection_path.to_string();
 

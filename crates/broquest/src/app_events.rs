@@ -1,8 +1,8 @@
 // Application Events
 
 use crate::{
-    collection_types::CollectionToml,
-    request_editor::{RequestData, ResponseData},
+    collections::CollectionToml,
+    domain::{RequestData, ResponseData},
 };
 use gpui::SharedString;
 

@@ -7,31 +7,29 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::icon::IconName;
-use crate::request_editor::KeyValuePair;
+use crate::domain::KeyValuePair;
+use crate::ui::icon::IconName;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum FormEditorEvent {
-    ParamChanged,
+#[derive(Debug, Clone)]
+pub enum QueryParamEvent {
+    ParameterChanged,
 }
 
 #[derive(Debug, Clone)]
-pub struct FormRow {
+pub struct QueryParameterRow {
     pub id: usize,
     pub key_input: Entity<InputState>,
     pub value_input: Entity<InputState>,
     pub enabled: bool,
 }
 
-pub struct FormEditor {
-    rows: Vec<FormRow>,
+pub struct QueryParamEditor {
+    rows: Vec<QueryParameterRow>,
     next_id: usize,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
-impl EventEmitter<FormEditorEvent> for FormEditor {}
-
-impl FormEditor {
+impl QueryParamEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut editor = Self {
             rows: Vec::new(),
@@ -39,11 +37,46 @@ impl FormEditor {
             _subscriptions: Vec::new(),
         };
         // Always start with one empty row
-        editor.add_form_row(String::new(), String::new(), true, window, cx);
+        editor.add_parameter_row(String::new(), String::new(), true, window, cx);
         editor
     }
 
-    pub fn get_form_data(&self, cx: &App) -> Vec<KeyValuePair> {
+    pub fn set_parameters(
+        &mut self,
+        parameters: &[KeyValuePair],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Clear existing rows
+        self.rows.clear();
+
+        // Create new rows for each parameter
+        for param in parameters {
+            self.add_parameter_row(
+                param.key.clone(),
+                param.value.clone(),
+                param.enabled,
+                window,
+                cx,
+            );
+        }
+
+        // Always ensure there's at least one empty row at the end
+        if self.rows.is_empty()
+            || !self
+                .rows
+                .last()
+                .unwrap()
+                .key_input
+                .read(cx)
+                .value()
+                .is_empty()
+        {
+            self.add_parameter_row(String::new(), String::new(), true, window, cx);
+        }
+    }
+
+    pub fn get_query_parameters(&self, cx: &App) -> Vec<KeyValuePair> {
         self.rows
             .iter()
             .filter_map(|row| {
@@ -63,7 +96,7 @@ impl FormEditor {
             .collect()
     }
 
-    fn add_form_row(
+    fn add_parameter_row(
         &mut self,
         key: String,
         value: String,
@@ -76,38 +109,41 @@ impl FormEditor {
 
         let key_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Field name")
+                .placeholder("Parameter name")
                 .default_value(&key)
         });
 
         let value_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Field value or @/path/to/file")
+                .placeholder("Parameter value")
                 .default_value(&value)
         });
 
         // Set up subscriptions for key and value input change events
+        // Only emit events when the input is focused to avoid feedback loop
         let key_subscription = cx.subscribe_in(&key_input, window, {
             move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
-                if let InputEvent::Change = event
-                    && input_state.read(cx).focus_handle(cx).is_focused(window)
-                {
-                    cx.emit(FormEditorEvent::ParamChanged);
+                if let InputEvent::Change = event {
+                    // Check if the key input is focused before emitting events
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(QueryParamEvent::ParameterChanged);
+                    }
                 }
             }
         });
 
         let value_subscription = cx.subscribe_in(&value_input, window, {
             move |_this: &mut Self, input_state, event: &InputEvent, window, cx| {
-                if let InputEvent::Change = event
-                    && input_state.read(cx).focus_handle(cx).is_focused(window)
-                {
-                    cx.emit(FormEditorEvent::ParamChanged);
+                if let InputEvent::Change = event {
+                    // Check if the value input is focused before emitting events
+                    if input_state.read(cx).focus_handle(cx).is_focused(window) {
+                        cx.emit(QueryParamEvent::ParameterChanged);
+                    }
                 }
             }
         });
 
-        self.rows.push(FormRow {
+        self.rows.push(QueryParameterRow {
             id,
             key_input,
             value_input,
@@ -120,96 +156,42 @@ impl FormEditor {
         cx.notify();
     }
 
-    fn add_new_form_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn add_new_parameter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Check if the last row is empty; if not, add a new empty row
         if self
             .rows
             .last()
             .is_none_or(|row| !row.key_input.read(cx).value().is_empty())
         {
-            self.add_form_row(String::new(), String::new(), true, window, cx);
+            self.add_parameter_row(String::new(), String::new(), true, window, cx);
         }
-        cx.emit(FormEditorEvent::ParamChanged);
     }
 
-    fn remove_form_field(&mut self, id: usize, cx: &mut Context<Self>) {
+    fn remove_parameter(&mut self, id: usize, cx: &mut Context<Self>) {
         self.rows.retain(|row| row.id != id);
-        cx.emit(FormEditorEvent::ParamChanged);
+        cx.emit(QueryParamEvent::ParameterChanged);
         cx.notify();
     }
 
-    fn toggle_form_field(&mut self, id: usize, cx: &mut Context<Self>) {
+    fn toggle_parameter(&mut self, id: usize, cx: &mut Context<Self>) {
         if let Some(row) = self.rows.iter_mut().find(|row| row.id == id) {
             row.enabled = !row.enabled;
-            cx.emit(FormEditorEvent::ParamChanged);
+            cx.emit(QueryParamEvent::ParameterChanged);
             cx.notify();
         }
     }
 
-    fn clear_all_form_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn clear_all_parameters(&mut self, cx: &mut Context<Self>) {
         self.rows.clear();
-        self.add_form_row(String::new(), String::new(), true, window, cx);
-        cx.emit(FormEditorEvent::ParamChanged);
+        cx.emit(QueryParamEvent::ParameterChanged);
         cx.notify();
     }
 
-    fn select_file_for_row(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
-        // Find the row and clone the value input entity
-        if let Some(row) = self.rows.iter().find(|row| row.id == id) {
-            let value_input = row.value_input.clone();
-            let form_editor = cx.entity().downgrade();
-
-            // Use GPUI's prompt_for_paths to select a file
-            let path_future = cx.prompt_for_paths(gpui::PathPromptOptions {
-                files: true,
-                directories: false,
-                multiple: false,
-                prompt: Some("Select file for form field".into()),
-            });
-
-            // Spawn a task to handle the file selection
-            cx.spawn_in(window, async move |_, window| {
-                match path_future.await {
-                    Ok(result) => match result {
-                        Ok(Some(paths)) => {
-                            if let Some(path) = paths.first()
-                                && let Some(path_str) = path.to_str()
-                            {
-                                let file_path = format!("@{}", path_str);
-
-                                // Update the value input with the selected file path
-                                let _ = window.update(|window, cx| {
-                                    value_input.update(cx, |state, cx| {
-                                        state.set_value(file_path, window, cx);
-                                        cx.notify();
-                                    });
-                                    // Emit ParamChanged event when file is selected
-                                    if let Some(form_editor) = form_editor.upgrade() {
-                                        form_editor.update(cx, |_this, cx| {
-                                            cx.emit(FormEditorEvent::ParamChanged);
-                                        });
-                                    }
-                                });
-                            }
-                        }
-                        Ok(None) => {
-                            // User cancelled file selection
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to select file: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!("Failed to open file dialog: {}", e);
-                    }
-                }
-                Some(())
-            })
-            .detach();
-        }
-    }
-
-    fn render_form_row(&self, row: &FormRow, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_parameter_row(
+        &self,
+        row: &QueryParameterRow,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         h_flex()
             .gap_2()
             .pl_2()
@@ -251,20 +233,6 @@ impl FormEditor {
                     ),
             )
             .child(
-                // File selection button
-                Button::new(("file", row.id))
-                    .small()
-                    .ghost()
-                    .icon(IconName::File)
-                    .w(px(24.))
-                    .on_click(cx.listener({
-                        let id = row.id;
-                        move |this, _, window, cx| {
-                            this.select_file_for_row(id, window, cx);
-                        }
-                    })),
-            )
-            .child(
                 // Simple enabled toggle using button
                 Button::new(("enabled", row.id))
                     .small()
@@ -279,7 +247,7 @@ impl FormEditor {
                     .on_click(cx.listener({
                         let id = row.id;
                         move |this, _, _, cx| {
-                            this.toggle_form_field(id, cx);
+                            this.toggle_parameter(id, cx);
                         }
                     })),
             )
@@ -291,14 +259,14 @@ impl FormEditor {
                     .on_click(cx.listener({
                         let id = row.id;
                         move |this, _, _, cx| {
-                            this.remove_form_field(id, cx);
+                            this.remove_parameter(id, cx);
                         }
                     })),
             )
     }
 }
 
-impl Render for FormEditor {
+impl Render for QueryParamEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .child(
@@ -311,23 +279,23 @@ impl Render for FormEditor {
                     .border_color(cx.theme().border)
                     .child(div().flex_1())
                     .child(
-                        Button::new("add-form-field")
+                        Button::new("add-parameter")
                             .small()
                             .outline()
                             .icon(IconName::Plus)
                             .label("Add")
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.add_new_form_field(window, cx);
+                                this.add_new_parameter(window, cx);
                             })),
                     )
                     .child(
-                        Button::new("clear-all-form-fields")
+                        Button::new("clear-all-parameters")
                             .small()
                             .outline()
                             .icon(IconName::Trash)
                             .label("Clear All")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.clear_all_form_fields(window, cx);
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.clear_all_parameters(cx);
                             })),
                     ),
             )
@@ -336,9 +304,11 @@ impl Render for FormEditor {
                     v_flex().children(
                         self.rows
                             .iter()
-                            .map(|row| div().child(self.render_form_row(row, cx))),
+                            .map(|row| div().child(self.render_parameter_row(row, cx))),
                     ),
                 ),
             )
     }
 }
+
+impl EventEmitter<QueryParamEvent> for QueryParamEditor {}

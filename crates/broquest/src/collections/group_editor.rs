@@ -12,7 +12,8 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::{app_events::AppEvent, collection_manager::CollectionManager, icon::IconName};
+use super::manager::CollectionManager;
+use crate::{app_events::AppEvent, ui::icon::IconName};
 
 const CONTEXT: &str = "group_editor";
 

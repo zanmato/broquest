@@ -1,7 +1,5 @@
-use crate::collection_types::{EnvironmentToml, EnvironmentVariable};
-use crate::http::HttpMethod;
-use crate::request_editor::KeyValuePair;
-use crate::request_editor::RequestData;
+use super::types::{EnvironmentToml, EnvironmentVariable};
+use crate::domain::{HttpMethod, KeyValuePair, RequestData};
 use oas3::spec::{ObjectOrReference, Operation, ParameterIn, SchemaType};
 use serde_json::json;
 use std::collections::BTreeMap;

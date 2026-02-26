@@ -7,8 +7,8 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::icon::IconName;
-use crate::request_editor::KeyValuePair;
+use crate::domain::KeyValuePair;
+use crate::ui::icon::IconName;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PathParamEvent {

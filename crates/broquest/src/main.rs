@@ -4,38 +4,23 @@ mod app;
 mod app_database;
 mod app_events;
 mod assets;
-mod collection_editor;
-mod collection_manager;
-mod collection_types;
-mod collections_panel;
-mod editor_panel;
-mod environment_editor;
-mod environment_resolver;
-mod form_editor;
-mod group_editor;
-mod header_editor;
+mod collections;
+mod domain;
+mod environments;
 mod highlighting;
 mod http;
-mod http_client;
-mod icon;
-mod openapi_import;
-mod path_parameter_editor;
-mod query_parameter_editor;
-mod request_editor;
-mod script_completion;
-mod script_editor;
-mod script_engine;
+mod requests;
+mod scripting;
 mod themes_manager;
 mod ui;
 mod update_manager;
-mod variable_store;
 
 use assets::Assets;
+use collections::CollectionManager;
 use gpui::{AppContext, SharedString, WindowBounds, WindowOptions, px, size};
 use gpui_component::{Theme, ThemeRegistry};
 use gpui_platform::application;
 
-use collection_manager::CollectionManager;
 use highlighting::register_highlighting;
 use themes_manager::ThemesManager;
 
@@ -49,9 +34,9 @@ fn main() {
     app.run(move |cx| {
         gpui_component::init(cx);
         ui::draggable_tree::init(cx);
-        request_editor::RequestEditor::init(cx);
-        group_editor::GroupEditor::init(cx);
-        collection_editor::CollectionEditor::init(cx);
+        requests::RequestEditor::init(cx);
+        collections::GroupEditor::init(cx);
+        collections::CollectionEditor::init(cx);
 
         // Register syntax highlighting
         register_highlighting(cx);
@@ -111,7 +96,7 @@ fn main() {
         cx.set_global(collection_manager);
 
         // Initialize HTTP client
-        let http_client = http_client::HttpClientService::new();
+        let http_client = http::HttpClientService::new();
         cx.set_global(http_client);
 
         // Initialize UpdateManager

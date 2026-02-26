@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use crate::request_editor::KeyValuePair;
-use crate::{http::HttpMethod, request_editor::RequestData};
+use crate::domain::{ContentType, HttpMethod, KeyValuePair, RequestData};
 use serde::{Deserialize, Serialize};
 
 /// TOML structure for collection.toml files
@@ -105,7 +104,7 @@ pub struct EnvironmentToml {
 pub struct EnvironmentVariable {
     pub value: String,
     pub secret: bool,
-    #[serde(default, skip_serializing_if = "crate::collection_types::is_true")]
+    #[serde(default, skip_serializing_if = "is_true")]
     pub temporary: bool,
 }
 
@@ -251,8 +250,8 @@ impl From<RequestToml> for RequestData {
         let content_type = headers
             .iter()
             .find(|h| h.key.to_lowercase() == "content-type" && h.enabled)
-            .map(|h| crate::http::ContentType::from_header(&h.value))
-            .unwrap_or(crate::http::ContentType::Json);
+            .map(|h| ContentType::from_header(&h.value))
+            .unwrap_or(ContentType::Json);
         let body_type = content_type.body_type();
 
         // Extract body content from [body] section based on inferred content type
@@ -318,7 +317,7 @@ impl From<RequestData> for RequestToml {
             .headers
             .iter()
             .find(|h| h.key.to_lowercase() == "content-type" && h.enabled)
-            .map(|h| crate::http::ContentType::from_header(&h.value).body_type())
+            .map(|h| ContentType::from_header(&h.value).body_type())
             .unwrap_or("json");
 
         // Convert headers to TOML format
