@@ -299,7 +299,6 @@ impl CollectionEditor {
         })
         .detach();
 
-        // Use CollectionManager to save the collection with proper database ID
         let save_result = cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
             collection_manager.save_collection(&collection_data, &current_path)
         });

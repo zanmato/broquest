@@ -108,7 +108,14 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                                 .child(prefix),
                         )
                     })
-                    .child(Label::new(item.label.clone()).text_sm())
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .text_sm()
+                            .text_ellipsis()
+                            .child(item.label.clone()),
+                    )
                     //.context_menu(self.build_context_menu(item, cx))
                     .when(entry.is_folder(), |this| {
                         this.child(if entry.is_expanded() {
@@ -513,7 +520,7 @@ impl CollectionsPanel {
 
             let mut child_items = Vec::new();
 
-            // Add direct collection requests (root level) - sort alphabetically by name
+            // Add direct collection requests (root level)
             let mut sorted_requests: Vec<_> = collection_info.requests.iter().collect();
             sorted_requests.sort_by(|a, b| a.1.name.cmp(&b.1.name));
 
@@ -541,7 +548,7 @@ impl CollectionsPanel {
                 child_items.push(request_tree_item);
             }
 
-            // Add group folders and their requests - sort groups alphabetically
+            // Add group folders and their requests
             let mut sorted_groups: Vec<_> = collection_info.groups.iter().collect();
             sorted_groups.sort_by(|a, b| a.0.cmp(b.0));
 
@@ -549,7 +556,7 @@ impl CollectionsPanel {
                 let group_id =
                     format!("group_{}_{}", collection_path.replace('/', "_"), group_name);
 
-                // Build child items for group requests - sort alphabetically by name
+                // Build child items for group requests
                 let mut sorted_group_requests: Vec<_> = group_info.requests.iter().collect();
                 sorted_group_requests.sort_by(|a, b| a.1.name.cmp(&b.1.name));
 

@@ -24,7 +24,7 @@ pub struct VariableRow {
 pub struct SecretRow {
     pub id: usize,
     pub key_input: Entity<InputState>,
-    pub value_input: Entity<InputState>, // For display only - not persisted
+    pub value_input: Entity<InputState>, // For display only
     pub enabled: bool,
 }
 

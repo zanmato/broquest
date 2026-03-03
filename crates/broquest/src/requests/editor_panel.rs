@@ -484,143 +484,119 @@ impl Render for EditorPanel {
                                 cx.emit(AppEvent::ToggleSidebar);
                             })),
                     )
-                    .children(self.tabs.iter().enumerate().map(|(ix, tab)| {
-                        match tab {
-                            TabType::Request(request_tab) => {
-                                let tab_index = ix;
+                    .children(self.tabs.iter().enumerate().map(|(ix, tab)| match tab {
+                        TabType::Request(request_tab) => {
+                            let tab_index = ix;
 
-                                Tab::new()
-                                    .label(request_tab.title.clone())
-                                    .prefix(
-                                        h_flex()
-                                            .gap_3()
-                                            .pl_3()
-                                            .pt(px(3.))
-                                            .font_family(cx.theme().mono_font_family.clone())
-                                            .font_bold()
-                                            .when(request_tab.is_dirty, |this| {
-                                                this.child(
-                                                    div()
-                                                        .w(px(6.))
-                                                        .h(px(6.))
-                                                        .rounded_full()
-                                                        .bg(cx.theme().blue)
-                                                        .ml_1(),
-                                                )
-                                            })
-                                            .text_color(request_tab.method.get_color(cx))
-                                            .child(request_tab.method.as_str()),
-                                    )
-                                    .suffix(
-                                        h_flex()
-                                            .gap_1()
-                                            .items_center()
-                                            .child(
+                            Tab::new()
+                                .label(request_tab.title.clone())
+                                .prefix(
+                                    h_flex()
+                                        .gap_3()
+                                        .pl_3()
+                                        .pt(px(3.))
+                                        .font_family(cx.theme().mono_font_family.clone())
+                                        .font_bold()
+                                        .when(request_tab.is_dirty, |this| {
+                                            this.child(
                                                 div()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .pr_1()
-                                                    .child(request_tab.collection_name.clone()),
+                                                    .w(px(6.))
+                                                    .h(px(6.))
+                                                    .rounded_full()
+                                                    .bg(cx.theme().blue)
+                                                    .ml_1(),
                                             )
-                                            .child(
-                                                Button::new(("close-tab", ix))
-                                                    .ghost()
-                                                    .xsmall()
-                                                    .icon(IconName::Close)
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.close_tab(tab_index, cx);
-                                                        },
-                                                    )),
-                                            )
-                                            .into_any_element(),
-                                    )
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(
-                                            move |_this,
-                                                  _event: &gpui::MouseDownEvent,
-                                                  _window,
-                                                  cx| {
-                                                cx.emit(AppEvent::TabChanged { tab_id: tab_index });
-                                            },
-                                        ),
-                                    )
-                            }
-                            TabType::Collection(collection_tab) => {
-                                let tab_index = ix;
+                                        })
+                                        .text_color(request_tab.method.get_color(cx))
+                                        .child(request_tab.method.as_str()),
+                                )
+                                .suffix(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .pr_1()
+                                                .child(request_tab.collection_name.clone()),
+                                        )
+                                        .child(
+                                            Button::new(("close-tab", ix))
+                                                .ghost()
+                                                .xsmall()
+                                                .icon(IconName::Close)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.close_tab(tab_index, cx);
+                                                })),
+                                        )
+                                        .into_any_element(),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(
+                                        move |_this, _event: &gpui::MouseDownEvent, _window, cx| {
+                                            cx.emit(AppEvent::TabChanged { tab_id: tab_index });
+                                        },
+                                    ),
+                                )
+                        }
+                        TabType::Collection(collection_tab) => {
+                            let tab_index = ix;
 
-                                // Clone the tab title to avoid lifetime issues
-                                let tab_title = collection_tab.title.clone();
-                                Tab::new()
-                                    .label(&tab_title)
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(
-                                            move |_this,
-                                                  _event: &gpui::MouseDownEvent,
-                                                  _window,
-                                                  cx| {
-                                                // Single click - activate the tab by setting active tab index
-                                                cx.emit(AppEvent::TabChanged { tab_id: tab_index });
-                                            },
-                                        ),
-                                    )
-                                    .suffix(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            .child(
-                                                Button::new(("close-tab", ix))
-                                                    .ghost()
-                                                    .xsmall()
-                                                    .icon(IconName::Close)
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.close_tab(tab_index, cx);
-                                                        },
-                                                    )),
-                                            )
-                                            .into_any_element(),
-                                    )
-                            }
-                            TabType::Group(group_tab) => {
-                                let tab_index = ix;
-
-                                // Clone the tab title to avoid lifetime issues
-                                let tab_title = group_tab.title.clone();
-                                Tab::new()
-                                    .label(&tab_title)
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(
-                                            move |_this,
-                                                  _event: &gpui::MouseDownEvent,
-                                                  _window,
-                                                  cx| {
-                                                // Single click - activate the tab by setting active tab index
-                                                cx.emit(AppEvent::TabChanged { tab_id: tab_index });
-                                            },
-                                        ),
-                                    )
-                                    .suffix(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            .child(
-                                                Button::new(("close-tab", ix))
-                                                    .ghost()
-                                                    .xsmall()
-                                                    .icon(IconName::Close)
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.close_tab(tab_index, cx);
-                                                        },
-                                                    )),
-                                            )
-                                            .into_any_element(),
-                                    )
-                            }
+                            Tab::new()
+                                .label(&collection_tab.title)
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(
+                                        move |_this, _event: &gpui::MouseDownEvent, _window, cx| {
+                                            cx.emit(AppEvent::TabChanged { tab_id: tab_index });
+                                        },
+                                    ),
+                                )
+                                .suffix(
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .child(
+                                            Button::new(("close-tab", ix))
+                                                .ghost()
+                                                .xsmall()
+                                                .icon(IconName::Close)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.close_tab(tab_index, cx);
+                                                })),
+                                        )
+                                        .into_any_element(),
+                                )
+                        }
+                        TabType::Group(group_tab) => {
+                            let tab_index = ix;
+                            Tab::new()
+                                .label(&group_tab.title)
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(
+                                        move |_this, _event: &gpui::MouseDownEvent, _window, cx| {
+                                            cx.emit(AppEvent::TabChanged { tab_id: tab_index });
+                                        },
+                                    ),
+                                )
+                                .suffix(
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .child(
+                                            Button::new(("close-tab", ix))
+                                                .ghost()
+                                                .xsmall()
+                                                .icon(IconName::Close)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.close_tab(tab_index, cx);
+                                                })),
+                                        )
+                                        .into_any_element(),
+                                )
                         }
                     })),
             )

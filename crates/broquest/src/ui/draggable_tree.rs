@@ -213,7 +213,7 @@ enum InsertPosition {
     Before,
     /// Insert after the entry (show border below)
     After,
-    /// Insert into the entry (for folders - highlight the whole entry)
+    /// Insert into the entry (for folders highlight the whole entry)
     Inside,
 }
 
@@ -580,13 +580,13 @@ impl<D: DraggableTreeDelegate> Render for DraggableTreeState<D> {
                     .flex_col()
                     .size_full()
                     .overflow_y_scrollbar()
-                    // Background drop zone for root-level drops - receives drag events when hovering empty space
+                    // Background drop zone for root-level drops
                     .on_drag_move::<DraggedTreeItem>(cx.listener(
                         |this, _event: &DragMoveEvent<DraggedTreeItem>, _, cx| {
                             // Check if we're hovering in empty space (not over any entry)
                             let is_over_entry = this.entries.iter().any(|_entry| {
-                                // This is a simplified check - in practice, we'd need to check actual bounds
-                                // For now, we use the drag_target_entry state to determine if we're over an entry
+                                // TODO: check actual bounds
+                                // This is a simplified check, we use the drag_target_entry state to determine if we're over an entry
                                 matches!(this.drag_target_entry, Some(DragTarget::Entry { .. }))
                             });
 
@@ -654,7 +654,7 @@ impl<D: DraggableTreeDelegate> Render for DraggableTreeState<D> {
                             })
                             // === DRAG AND DROP HANDLERS ===
                             .when_some(drag_data, |this, data| {
-                                // Start drag - creates drag visual
+                                // Start drag
                                 this.on_drag(
                                     data,
                                     |dragged_data: &DraggedTreeItem, click_offset, _window, cx| {
@@ -708,10 +708,10 @@ impl<D: DraggableTreeDelegate> Render for DraggableTreeState<D> {
                                             // For folders, always insert inside
                                             InsertPosition::Inside
                                         } else if relative_y < height / 2.0 {
-                                            // Top half of non-folder entry - insert before
+                                            // Top half of non-folder entry
                                             InsertPosition::Before
                                         } else {
-                                            // Bottom half of non-folder entry - insert after
+                                            // Bottom half of non-folder entry
                                             InsertPosition::After
                                         };
 

@@ -837,7 +837,6 @@ impl RequestEditor {
                     })?;
                 }
                 Err(error) => {
-                    // HTTP request failed - error is already HttpError
                     let http_error = error;
 
                     let error_summary = SharedString::from(http_error.summary.clone());
@@ -1473,7 +1472,7 @@ impl RequestEditor {
             return Vec::new();
         }
 
-        // Parse query parameters - only accept well-formed key=value pairs
+        // Parse query parameters, nly accept well-formed key=value pairs
         query_string
             .split('&')
             .filter_map(|pair| {

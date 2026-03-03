@@ -61,7 +61,6 @@ impl EnvironmentResolver {
                 }
 
                 if env_var.secret {
-                    // This is a secret - load from secure storage
                     if let Some(secret_value) = EnvironmentVariable::read_credential(
                         collection_name,
                         environment_name,
@@ -71,7 +70,6 @@ impl EnvironmentResolver {
                         secrets.insert(key.clone(), secret_value);
                     }
                 } else {
-                    // This is a regular variable
                     variables.insert(key.clone(), env_var.value.clone());
                 }
             }

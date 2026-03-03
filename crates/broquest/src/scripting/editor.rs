@@ -1,16 +1,20 @@
+use std::time::Duration;
+
 use crate::ui::icon::IconName;
 use gpui::{
-    App, Context, Entity, EventEmitter, Focusable, Subscription, Window, div, prelude::*, px,
+    App, Context, Entity, EventEmitter, Focusable, Subscription, Task, Window, div, prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::Button,
     h_flex,
-    input::{Input, InputEvent, InputState},
+    highlighter::{Diagnostic, DiagnosticSeverity},
+    input::{Input, InputEvent, InputState, Position},
     v_flex,
 };
 
 use super::completion::{ScriptCompletionProvider, ScriptContext};
+use super::engine::ScriptExecutionService;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScriptEditorEvent {
@@ -22,6 +26,7 @@ pub struct ScriptEditor {
     pre_request_input: Entity<InputState>,
     post_response_input: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
+    _lint_task: Task<()>,
 }
 
 impl EventEmitter<ScriptEditorEvent> for ScriptEditor {}
@@ -44,7 +49,7 @@ impl ScriptEditor {
 
         // Set up subscriptions for script input change events
         let pre_subscription = cx.subscribe_in(&pre_request_input, window, {
-            move |_this: &mut Self,
+            move |this: &mut Self,
                   input_state: &Entity<InputState>,
                   event: &InputEvent,
                   window,
@@ -52,13 +57,14 @@ impl ScriptEditor {
                 if let InputEvent::Change = event
                     && input_state.read(cx).focus_handle(cx).is_focused(window)
                 {
+                    this.lint_script(input_state.clone(), ScriptContext::PreRequest, cx);
                     cx.emit(ScriptEditorEvent::ScriptChanged);
                 }
             }
         });
 
         let post_subscription = cx.subscribe_in(&post_response_input, window, {
-            move |_this: &mut Self,
+            move |this: &mut Self,
                   input_state: &Entity<InputState>,
                   event: &InputEvent,
                   window,
@@ -66,6 +72,7 @@ impl ScriptEditor {
                 if let InputEvent::Change = event
                     && input_state.read(cx).focus_handle(cx).is_focused(window)
                 {
+                    this.lint_script(input_state.clone(), ScriptContext::PostResponse, cx);
                     cx.emit(ScriptEditorEvent::ScriptChanged);
                 }
             }
@@ -75,7 +82,55 @@ impl ScriptEditor {
             pre_request_input,
             post_response_input,
             _subscriptions: vec![pre_subscription, post_subscription],
+            _lint_task: Task::ready(()),
         }
+    }
+
+    fn lint_script(
+        &mut self,
+        input: Entity<InputState>,
+        context: ScriptContext,
+        cx: &mut Context<Self>,
+    ) {
+        // Debounce: wait 500ms then run the parse
+        self._lint_task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(500))
+                .await;
+
+            let script = cx.read_entity(&input, |input, _cx| input.value().to_string());
+
+            let result = cx
+                .background_spawn(
+                    async move { ScriptExecutionService::check_syntax(&script, context) },
+                )
+                .await;
+
+            // Update diagnostics on main thread
+            let _ = this.update(cx, |_this, cx| {
+                input.update(cx, |input, _cx| {
+                    if let Some(diagnostics) = input.diagnostics_mut() {
+                        diagnostics.clear();
+                        if let Err(err) = result {
+                            let severity = if err.is_warning {
+                                DiagnosticSeverity::Warning
+                            } else {
+                                DiagnosticSeverity::Error
+                            };
+                            diagnostics.push(
+                                Diagnostic::new(
+                                    Position::new(err.line, err.column)
+                                        ..Position::new(err.line, err.column + 1),
+                                    err.message,
+                                )
+                                .with_severity(severity),
+                            );
+                        }
+                    }
+                });
+                cx.notify();
+            });
+        });
     }
 
     pub fn set_scripts(
