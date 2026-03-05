@@ -195,6 +195,7 @@ impl RequestEditor {
             InputState::new(window, cx)
                 .placeholder("Enter request URL")
                 .code_editor("url")
+                .folding(false)
                 .multi_line(false)
         });
 
@@ -204,11 +205,23 @@ impl RequestEditor {
                 .default_value("New Request")
         });
 
-        let body_input = cx.new(|cx| InputState::new(window, cx).code_editor("json"));
+        let body_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("json")
+                .folding(false)
+        });
 
-        let response_input = cx.new(|cx| InputState::new(window, cx).code_editor("text"));
+        let response_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("text")
+                .folding(false)
+        });
 
-        let raw_response_input = cx.new(|cx| InputState::new(window, cx).code_editor("text"));
+        let raw_response_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("text")
+                .folding(false)
+        });
 
         let path_param_editor = cx.new(|cx| PathParamEditor::new(window, cx));
 

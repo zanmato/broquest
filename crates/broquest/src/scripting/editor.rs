@@ -34,14 +34,18 @@ impl EventEmitter<ScriptEditorEvent> for ScriptEditor {}
 impl ScriptEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let pre_request_input = cx.new(|cx| {
-            let mut editor = InputState::new(window, cx).code_editor("javascript");
+            let mut editor = InputState::new(window, cx)
+                .code_editor("javascript")
+                .folding(false);
             editor.lsp.completion_provider =
                 Some(ScriptCompletionProvider::new(ScriptContext::PreRequest));
             editor
         });
 
         let post_response_input = cx.new(|cx| {
-            let mut editor = InputState::new(window, cx).code_editor("javascript");
+            let mut editor = InputState::new(window, cx)
+                .code_editor("javascript")
+                .folding(false);
             editor.lsp.completion_provider =
                 Some(ScriptCompletionProvider::new(ScriptContext::PostResponse));
             editor
