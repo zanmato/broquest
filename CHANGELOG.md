@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.11] - 2026-03-26
+
+### Features
+
+- Add auth editor with support for Basic, Digest, JWT and OAuth2 CC
+- Switched to jemalloc on Linux
+- Allow cancelling requests by clicking the send button while it is loading
+
+### Fixes
+
+- Fixed scrolling in the various query, path, auth editors
+- Increased request timeout
+
 ## [0.1.10] - 2026-03-05
 
 ### Features
