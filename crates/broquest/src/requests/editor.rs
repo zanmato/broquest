@@ -721,15 +721,31 @@ impl RequestEditor {
         cx.notify();
     }
 
+    fn cancel_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(task) = self.current_request_task.take() {
+            drop(task); // Cancel the task by dropping it
+        }
+
+        window.push_notification((NotificationType::Info, "Request cancelled"), cx);
+
+        // Hacky workaround to prevent the button from sending another request when cancelling
+        cx.spawn_in(window, async move |weak_editor, window| {
+            window
+                .background_executor()
+                .timer(Duration::from_millis(200))
+                .await;
+
+            let _ = weak_editor
+                .update_in(window, |this, _, _| {
+                    this.is_loading = false;
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // If already loading, cancel the current request
         if self.is_loading {
-            if let Some(task) = self.current_request_task.take() {
-                drop(task); // Cancel the task by dropping it
-            }
-            self.is_loading = false;
-            cx.notify();
-            window.push_notification((NotificationType::Info, "Request cancelled"), cx);
             return;
         }
 
@@ -1054,18 +1070,25 @@ impl RequestEditor {
                     ),
             )
             .child(
-                Button::new("send-request")
-                    .outline()
-                    .icon(if self.is_loading {
-                        IconName::CircleX
-                    } else {
-                        IconName::Send
-                    })
-                    .loading(self.is_loading)
-                    .loading_icon(IconName::LoaderCircle)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.send_request(window, cx);
-                    })),
+                div()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            if this.is_loading {
+                                this.cancel_request(window, cx);
+                            }
+                        }),
+                    )
+                    .child(
+                        Button::new("send-request")
+                            .outline()
+                            .icon(IconName::Send)
+                            .loading(self.is_loading)
+                            .loading_icon(IconName::LoaderCircle)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.send_request(window, cx);
+                            })),
+                    ),
             )
     }
 
