@@ -52,6 +52,9 @@ self_update = { version = "0.42", features = [
 ] }
 semver = "1.0.27"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+tikv-jemallocator = "0.6"
+
 [dev-dependencies]
 wiremock = "0.6"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

@@ -5,7 +5,7 @@
 </picture>
 <hr><br>
 
-A modern, native desktop API client built with [GPUI](https://www.gpui.rs) and [gpui-component](https://github.com/longbridge/gpui-component), offering fast performance and a clean interface for API development and testing.
+A modern, desktop API client built with [GPUI](https://www.gpui.rs) and [gpui-component](https://github.com/longbridge/gpui-component), offering fast performance and a clean interface for API development and testing.
 
 ![broquest](docs/images/screenshot.webp)
 
