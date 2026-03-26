@@ -10,6 +10,7 @@ mod environments;
 mod highlighting;
 mod http;
 mod requests;
+mod result_ext;
 mod scripting;
 mod themes_manager;
 mod ui;
@@ -49,7 +50,7 @@ fn main() {
         }
 
         // Initialize app database
-        let db = smol::block_on(async {
+        let db = match smol::block_on(async {
             match app_database::AppDatabase::new().await {
                 Ok(db) => {
                     tracing::info!("App database initialized");
@@ -60,11 +61,22 @@ fn main() {
                     Err(anyhow::anyhow!("App database init failed: {}", e))
                 }
             }
-        })
-        .unwrap();
+        }) {
+            Ok(db) => db,
+            Err(e) => {
+                tracing::error!("Fatal error: {}. Application will exit.", e);
+                std::process::exit(1);
+            }
+        };
 
         // Get user settings from database
-        let user_settings = smol::block_on(async { db.get_user_settings().await }).unwrap();
+        let user_settings = match smol::block_on(async { db.get_user_settings().await }) {
+            Ok(settings) => settings,
+            Err(e) => {
+                tracing::warn!("Failed to load user settings: {}, using defaults", e);
+                None
+            }
+        };
 
         // Load and watch themes from ./themes directory
         let theme_name = match user_settings {

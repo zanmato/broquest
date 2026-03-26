@@ -873,17 +873,15 @@ impl CollectionManager {
         collection_path: &str,
         environment: EnvironmentToml,
     ) -> Result<()> {
-        if let Some(collection_info) = self.collections.get_mut(collection_path) {
+        let collection_data = {
+            let Some(collection_info) = self.collections.get_mut(collection_path) else {
+                return Err(anyhow::anyhow!("Collection not found: {}", collection_path));
+            };
             collection_info.toml.environments.push(environment);
-
-            // Save the updated collection
-            let collection_data = collection_info.toml.clone();
-            let _ = collection_info;
-            self.save_collection(&collection_data, collection_path)?;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Collection not found: {}", collection_path))
-        }
+            collection_info.toml.clone()
+        };
+        self.save_collection(&collection_data, collection_path)?;
+        Ok(())
     }
 
     pub fn global(cx: &App) -> &Self {
@@ -892,3 +890,183 @@ impl CollectionManager {
 }
 
 impl Global for CollectionManager {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    use crate::collections::types::CollectionMeta;
+
+    fn make_collection_with_environments() -> CollectionToml {
+        let mut variables = HashMap::new();
+        variables.insert(
+            "BASE_URL".to_string(),
+            EnvironmentVariable {
+                value: "https://api.example.com".to_string(),
+                secret: false,
+                temporary: false,
+            },
+        );
+        variables.insert(
+            "API_KEY".to_string(),
+            EnvironmentVariable {
+                value: "".to_string(),
+                secret: true,
+                temporary: false,
+            },
+        );
+
+        CollectionToml {
+            collection: CollectionMeta {
+                name: "Test Collection".to_string(),
+                version: "1.0.0".to_string(),
+                collection_type: "collection".to_string(),
+                description: "A test collection".to_string(),
+                ignore: Vec::new(),
+                auth: None,
+            },
+            environments: vec![
+                EnvironmentToml {
+                    name: "Development".to_string(),
+                    variables: variables.clone(),
+                },
+                EnvironmentToml {
+                    name: "Production".to_string(),
+                    variables,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_save_and_reload_collection_with_environments() {
+        let temp_dir = std::env::temp_dir().join("broquest_test_save_reload");
+        let _ = fs::remove_dir_all(&temp_dir);
+        let collection_path = temp_dir.to_string_lossy().to_string();
+
+        let collection_data = make_collection_with_environments();
+
+        let mut manager = CollectionManager::new();
+        manager
+            .save_collection(&collection_data, &collection_path)
+            .expect("save_collection should succeed");
+
+        // Verify the file was written
+        let toml_path = temp_dir.join("collection.toml");
+        assert!(toml_path.exists(), "collection.toml should exist on disk");
+
+        // Read back from disk
+        let loaded = manager
+            .read_collection_toml(&temp_dir)
+            .expect("read_collection_toml should succeed");
+
+        assert_eq!(loaded.environments.len(), 2);
+        assert_eq!(
+            loaded.environments[0].name,
+            collection_data.environments[0].name
+        );
+        assert_eq!(
+            loaded.environments[1].name,
+            collection_data.environments[1].name
+        );
+
+        // Verify variables survived the roundtrip
+        for (idx, env) in loaded.environments.iter().enumerate() {
+            let original = &collection_data.environments[idx];
+            assert_eq!(
+                env.variables.len(),
+                original.variables.len(),
+                "Environment '{}' should have the same number of variables",
+                env.name
+            );
+            for (key, var) in &env.variables {
+                let original_var = original
+                    .variables
+                    .get(key)
+                    .unwrap_or_else(|| panic!("Variable '{}' should exist in original", key));
+                assert_eq!(
+                    var.value, original_var.value,
+                    "Value mismatch for '{}'",
+                    key
+                );
+                assert_eq!(
+                    var.secret, original_var.secret,
+                    "Secret flag mismatch for '{}'",
+                    key
+                );
+            }
+        }
+
+        // Verify the in-memory cache was also updated
+        let cached = manager
+            .get_collection_environments(&collection_path)
+            .expect("cached environments should exist");
+        assert_eq!(cached.len(), 2);
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_save_collection_twice_preserves_environments() {
+        let temp_dir = std::env::temp_dir().join("broquest_test_save_twice");
+        let _ = fs::remove_dir_all(&temp_dir);
+        let collection_path = temp_dir.to_string_lossy().to_string();
+
+        let mut manager = CollectionManager::new();
+
+        // First save: empty environments (simulates creating a new collection)
+        let empty_collection = CollectionToml {
+            collection: CollectionMeta {
+                name: "My Collection".to_string(),
+                version: "1.0.0".to_string(),
+                collection_type: "collection".to_string(),
+                description: "".to_string(),
+                ignore: Vec::new(),
+                auth: None,
+            },
+            environments: vec![],
+        };
+        manager
+            .save_collection(&empty_collection, &collection_path)
+            .expect("first save should succeed");
+
+        let loaded = manager
+            .read_collection_toml(&temp_dir)
+            .expect("should read after first save");
+        assert_eq!(
+            loaded.environments.len(),
+            0,
+            "should have no environments after first save"
+        );
+
+        // Second save: with environments (simulates user adding environments then saving)
+        let collection_with_envs = make_collection_with_environments();
+        manager
+            .save_collection(&collection_with_envs, &collection_path)
+            .expect("second save should succeed");
+
+        let loaded = manager
+            .read_collection_toml(&temp_dir)
+            .expect("should read after second save");
+        assert_eq!(
+            loaded.environments.len(),
+            2,
+            "should have 2 environments after second save"
+        );
+
+        // Verify secrets are present in the TOML
+        let has_secret = loaded
+            .environments
+            .iter()
+            .any(|env| env.variables.values().any(|var| var.secret));
+        assert!(
+            has_secret,
+            "at least one secret variable should be persisted in the TOML"
+        );
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+}

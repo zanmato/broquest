@@ -844,7 +844,9 @@ version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-compat",
+ "base64",
  "chrono",
+ "digest_auth",
  "dirs 5.0.1",
  "env_logger",
  "gpui",
@@ -865,12 +867,14 @@ dependencies = [
  "smol",
  "sqlx",
  "thiserror 1.0.69",
+ "tokio",
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
  "tree-sitter-url",
  "tree-sitter-xml",
  "urlencoding",
+ "wiremock",
 ]
 
 [[package]]
@@ -1921,6 +1925,19 @@ dependencies = [
  "const-oid 0.10.1",
  "crypto-common 0.2.0-rc.5",
  "subtle",
+]
+
+[[package]]
+name = "digest_auth"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3054f4e81d395e50822796c5e99ca522e6ba7be98947d6d4b0e5e61640bdb894"
+dependencies = [
+ "digest 0.10.7",
+ "hex",
+ "md-5 0.10.6",
+ "rand 0.8.5",
+ "sha2 0.10.9",
 ]
 
 [[package]]

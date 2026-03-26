@@ -17,7 +17,10 @@ use super::types::{CollectionMeta, CollectionToml};
 
 use crate::{
     app_database::{AppDatabase, CollectionData},
+    domain::AuthType,
     environments::EnvironmentEditor,
+    requests::AuthEditor,
+    result_ext::ResultExt,
     ui::icon::IconName,
 };
 
@@ -30,6 +33,7 @@ pub struct CollectionEditor {
     collection_data: CollectionToml,
     collection_path: String,
     environment_editor: Entity<EnvironmentEditor>,
+    auth_editor: Entity<AuthEditor>,
     name_input: Entity<InputState>,
     path_input: Entity<InputState>,
     // OpenAPI import fields
@@ -57,6 +61,15 @@ impl CollectionEditor {
         let environment_editor =
             cx.new(|cx| EnvironmentEditor::new(window, cx, &collection_data.collection.name));
 
+        let collection_auth = collection_data.collection.auth.clone();
+        let auth_editor = cx.new(|cx| {
+            let mut editor = AuthEditor::new_without_inherit(window, cx);
+            if let Some(auth) = &collection_auth {
+                editor.set_auth(auth, window, cx);
+            }
+            editor
+        });
+
         let name_input = cx
             .new(|cx| InputState::new(window, cx).default_value(&collection_data.collection.name));
 
@@ -69,6 +82,7 @@ impl CollectionEditor {
             collection_data,
             collection_path,
             environment_editor,
+            auth_editor,
             name_input,
             path_input,
             import_openapi: false,
@@ -116,6 +130,11 @@ impl CollectionEditor {
         let description = self.collection_data.collection.description.clone();
         let ignore = self.collection_data.collection.ignore.clone();
 
+        let auth = match self.auth_editor.read(cx).get_auth(cx) {
+            AuthType::None => None,
+            auth => Some(auth),
+        };
+
         // Get environments from the environment editor
         let environments = self
             .environment_editor
@@ -129,13 +148,17 @@ impl CollectionEditor {
                 collection_type,
                 description,
                 ignore,
+                auth,
             },
             environments,
         }
     }
 
     pub fn save_secrets(&self, cx: &App) -> Result<(), Box<dyn std::error::Error>> {
-        self.environment_editor.read(cx).save_secrets(cx)
+        let collection_name = self.name_input.read(cx).value().to_string();
+        self.environment_editor
+            .read(cx)
+            .save_secrets(&collection_name, cx)
     }
 
     fn set_active_tab(&mut self, tab_index: usize, cx: &mut Context<Self>) {
@@ -241,6 +264,7 @@ impl CollectionEditor {
             .children(vec![
                 Tab::new().label("Collection"),
                 Tab::new().label("Environments"),
+                Tab::new().label("Auth"),
             ])
     }
 
@@ -254,6 +278,7 @@ impl CollectionEditor {
                 let content = self.render_environments_tab(cx);
                 div().child(content)
             }
+            2 => div().size_full().child(self.auth_editor.clone()),
             _ => {
                 let content = self.render_collection_tab(cx);
                 div().child(content)
@@ -305,8 +330,9 @@ impl CollectionEditor {
 
         match save_result {
             Ok(()) => {
-                // Update the stored path
+                // Update stored state so subsequent saves use fresh data
                 self.collection_path = current_path.clone();
+                self.collection_data = collection_data.clone();
 
                 tracing::info!("Collection saved successfully to: {}", current_path);
                 tracing::info!("Collection name: {}", collection_data.collection.name);
@@ -390,10 +416,12 @@ impl CollectionEditor {
                             input.set_value(file_str.clone(), window, cx);
                         });
                         // Update the parent struct's stored path via entity update
-                        let _ = entity.update(cx, |this: &mut Self, cx| {
-                            this.openapi_spec_path = Some(file_str);
-                            cx.notify();
-                        });
+                        let _ = entity
+                            .update(cx, |this: &mut Self, cx| {
+                                this.openapi_spec_path = Some(file_str);
+                                cx.notify();
+                            })
+                            .log_err();
                     })
                     .ok();
             }

@@ -14,8 +14,9 @@ use crate::{
     app_database::{AppDatabase, CollectionData, UserSetting},
     app_events::AppEvent,
     collections::{CollectionManager, CollectionsPanel},
-    domain::{HttpMethod, RequestData},
+    domain::{AuthType, HttpMethod, RequestData},
     requests::EditorPanel,
+    result_ext::ResultExt,
     update_manager::UpdateManager,
 };
 
@@ -97,6 +98,7 @@ impl BroquestApp {
                         query_params: Vec::new(),
                         headers: Vec::new(),
                         body: "".to_string(),
+                        auth: AuthType::None,
                         pre_request_script: None,
                         post_response_script: None,
                     };
@@ -347,6 +349,7 @@ impl BroquestApp {
                                 .detach();
                             }
                         })
+                        .log_err()
                         .ok();
                 } else {
                     let _ = window
@@ -356,6 +359,7 @@ impl BroquestApp {
                                 cx,
                             );
                         })
+                        .log_err()
                         .ok();
                 }
             }
@@ -443,7 +447,6 @@ impl Render for BroquestApp {
                         .items_center()
                         .justify_between()
                         .w_full()
-                        .px_4()
                         .child(
                             div()
                                 .flex()
@@ -451,8 +454,8 @@ impl Render for BroquestApp {
                                 .gap_4()
                                 .child(
                                     svg()
-                                        .h(px(22.))
-                                        .w(px(100.))
+                                        .h(px(32.))
+                                        .w(px(145.))
                                         .text_color(window.text_style().color)
                                         .path("img/broquest.svg"),
                                 )

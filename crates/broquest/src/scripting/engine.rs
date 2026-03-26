@@ -293,9 +293,15 @@ impl ScriptExecutionService {
 
         ctx.with(|ctx| {
             // Initialize LLRT modules for buffer, crypto, url support
-            let _ = buffer::init(&ctx);
-            let _ = crypto::init(&ctx);
-            let _ = url::init(&ctx);
+            if let Err(e) = buffer::init(&ctx) {
+                error!("Failed to initialize buffer module: {}", e);
+            }
+            if let Err(e) = crypto::init(&ctx) {
+                error!("Failed to initialize crypto module: {}", e);
+            }
+            if let Err(e) = url::init(&ctx) {
+                error!("Failed to initialize url module: {}", e);
+            }
 
             // Set up stub global objects to avoid ReferenceError for req, bro
             // (res is only available in post-response scripts)
@@ -501,11 +507,11 @@ impl ScriptExecutionService {
                                         // Try to parse the second-to-last part as line number
                                         if let Some(line_str) = parts.get(parts.len() - 2) {
                                             let line_str = line_str.trim();
-                                            if let Ok(parsed_line) = line_str.parse::<u32>() {
-                                                if parsed_line > 0 {
-                                                    line = parsed_line.saturating_sub(1);
-                                                    found = true;
-                                                }
+                                            if let Ok(parsed_line) = line_str.parse::<u32>()
+                                                && parsed_line > 0
+                                            {
+                                                line = parsed_line.saturating_sub(1);
+                                                found = true;
                                             }
                                         }
                                         // Try to parse the last part as column number
@@ -514,10 +520,10 @@ impl ScriptExecutionService {
                                             let col_str = col_str
                                                 .trim()
                                                 .trim_end_matches(|c: char| !c.is_ascii_digit());
-                                            if let Ok(parsed_col) = col_str.parse::<u32>() {
-                                                if parsed_col > 0 {
-                                                    col = parsed_col.saturating_sub(1);
-                                                }
+                                            if let Ok(parsed_col) = col_str.parse::<u32>()
+                                                && parsed_col > 0
+                                            {
+                                                col = parsed_col.saturating_sub(1);
                                             }
                                         }
                                         if found {

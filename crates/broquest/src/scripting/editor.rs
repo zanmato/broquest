@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::result_ext::ResultExt;
 use crate::ui::icon::IconName;
 use gpui::{
     App, Context, Entity, EventEmitter, Focusable, Subscription, Task, Window, div, prelude::*, px,
@@ -111,29 +112,31 @@ impl ScriptEditor {
                 .await;
 
             // Update diagnostics on main thread
-            let _ = this.update(cx, |_this, cx| {
-                input.update(cx, |input, _cx| {
-                    if let Some(diagnostics) = input.diagnostics_mut() {
-                        diagnostics.clear();
-                        if let Err(err) = result {
-                            let severity = if err.is_warning {
-                                DiagnosticSeverity::Warning
-                            } else {
-                                DiagnosticSeverity::Error
-                            };
-                            diagnostics.push(
-                                Diagnostic::new(
-                                    Position::new(err.line, err.column)
-                                        ..Position::new(err.line, err.column + 1),
-                                    err.message,
-                                )
-                                .with_severity(severity),
-                            );
+            let _ = this
+                .update(cx, |_this, cx| {
+                    input.update(cx, |input, _cx| {
+                        if let Some(diagnostics) = input.diagnostics_mut() {
+                            diagnostics.clear();
+                            if let Err(err) = result {
+                                let severity = if err.is_warning {
+                                    DiagnosticSeverity::Warning
+                                } else {
+                                    DiagnosticSeverity::Error
+                                };
+                                diagnostics.push(
+                                    Diagnostic::new(
+                                        Position::new(err.line, err.column)
+                                            ..Position::new(err.line, err.column + 1),
+                                        err.message,
+                                    )
+                                    .with_severity(severity),
+                                );
+                            }
                         }
-                    }
-                });
-                cx.notify();
-            });
+                    });
+                    cx.notify();
+                })
+                .log_err();
         });
     }
 

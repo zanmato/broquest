@@ -4,10 +4,12 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
+    scroll::ScrollableElement,
     v_flex,
 };
 
 use crate::domain::KeyValuePair;
+use crate::result_ext::ResultExt;
 use crate::ui::icon::IconName;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -178,18 +180,21 @@ impl FormEditor {
                                 let file_path = format!("@{}", path_str);
 
                                 // Update the value input with the selected file path
-                                let _ = window.update(|window, cx| {
-                                    value_input.update(cx, |state, cx| {
-                                        state.set_value(file_path, window, cx);
-                                        cx.notify();
-                                    });
-                                    // Emit ParamChanged event when file is selected
-                                    if let Some(form_editor) = form_editor.upgrade() {
-                                        form_editor.update(cx, |_this, cx| {
-                                            cx.emit(FormEditorEvent::ParamChanged);
+                                let _ = window
+                                    .update(|window, cx| {
+                                        value_input.update(cx, |state, cx| {
+                                            state.set_value(file_path, window, cx);
+                                            cx.notify();
                                         });
-                                    }
-                                });
+                                        // Emit ParamChanged event when file is selected
+                                        if let Some(form_editor) = form_editor.upgrade() {
+                                            form_editor.update(cx, |_this, cx| {
+                                                cx.emit(FormEditorEvent::ParamChanged);
+                                            });
+                                        }
+                                    })
+                                    .log_err()
+                                    .ok();
                             }
                         }
                         Ok(None) => {
@@ -301,6 +306,7 @@ impl FormEditor {
 impl Render for FormEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .h_full()
             .child(
                 // Action buttons header
                 h_flex()
@@ -332,8 +338,8 @@ impl Render for FormEditor {
                     ),
             )
             .child(
-                div().flex_1().child(
-                    v_flex().children(
+                div().size_full().flex_1().min_h_0().child(
+                    v_flex().overflow_y_scrollbar().children(
                         self.rows
                             .iter()
                             .map(|row| div().child(self.render_form_row(row, cx))),

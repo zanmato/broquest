@@ -4,6 +4,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
+    scroll::ScrollableElement,
     v_flex,
 };
 
@@ -64,15 +65,10 @@ impl PathParamEditor {
         }
 
         // Always ensure there's at least one empty row at the end
-        if self.rows.is_empty()
-            || !self
-                .rows
-                .last()
-                .unwrap()
-                .key_input
-                .read(cx)
-                .value()
-                .is_empty()
+        if self
+            .rows
+            .last()
+            .is_none_or(|row| !row.key_input.read(cx).value().is_empty())
         {
             self.add_parameter_row(String::new(), String::new(), true, window, cx);
         }
@@ -291,6 +287,7 @@ impl PathParamEditor {
 impl Render for PathParamEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .h_full()
             .child(
                 // Action buttons header
                 h_flex()
@@ -322,8 +319,8 @@ impl Render for PathParamEditor {
                     ),
             )
             .child(
-                div().flex_1().child(
-                    v_flex().children(
+                div().size_full().flex_1().min_h_0().child(
+                    v_flex().overflow_y_scrollbar().children(
                         self.rows
                             .iter()
                             .map(|row| div().child(self.render_parameter_row(row, cx))),

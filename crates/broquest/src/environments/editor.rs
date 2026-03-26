@@ -257,8 +257,14 @@ impl EnvironmentEditor {
         result
     }
 
-    /// Save secrets to secure storage
-    pub fn save_secrets(&self, cx: &App) -> Result<(), Box<dyn std::error::Error>> {
+    /// Save secrets to secure storage.
+    /// `collection_name` is passed explicitly to avoid using stale state
+    /// (e.g. for new collections where the name was empty at construction time).
+    pub fn save_secrets(
+        &self,
+        collection_name: &str,
+        cx: &App,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         for env_data in &self.environments {
             let env_name = env_data.name_input.read(cx).value().to_string();
             for secret in &env_data.secrets {
@@ -268,7 +274,7 @@ impl EnvironmentEditor {
 
                     if !key.is_empty() && !value.is_empty() {
                         EnvironmentVariable::write_credential(
-                            &self.collection_name,
+                            collection_name,
                             &env_name,
                             &key,
                             &value,

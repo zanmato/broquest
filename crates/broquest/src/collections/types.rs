@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::domain::{ContentType, HttpMethod, KeyValuePair, RequestData};
+use crate::domain::{AuthType, ContentType, HttpMethod, KeyValuePair, RequestData};
 use serde::{Deserialize, Serialize};
 
 /// TOML structure for collection.toml files
@@ -20,6 +20,8 @@ pub struct CollectionMeta {
     pub description: String,
     #[serde(default)]
     pub ignore: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthType>,
 }
 
 /// TOML structure for request .toml files
@@ -27,6 +29,8 @@ pub struct CollectionMeta {
 pub struct RequestToml {
     pub meta: RequestMeta,
     pub http: RequestHttp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthType>,
     pub script: Option<RequestScript>,
     pub headers: Option<Vec<HeaderToml>>,
     pub query: Option<Vec<QueryToml>>,
@@ -303,6 +307,7 @@ impl From<RequestToml> for RequestData {
             body,
             headers,
             query_params,
+            auth: toml.auth.unwrap_or_default(),
             pre_request_script,
             post_response_script,
         }
@@ -370,6 +375,11 @@ impl From<RequestData> for RequestToml {
             }
         };
 
+        let auth = match &data.auth {
+            AuthType::None => None,
+            auth => Some(auth.clone()),
+        };
+
         RequestToml {
             meta: RequestMeta {
                 name: data.name,
@@ -379,8 +389,9 @@ impl From<RequestData> for RequestToml {
             http: RequestHttp {
                 method: data.method.as_str().to_string(),
                 url: data.url,
-                auth: "none".to_string(),
+                auth: data.auth.type_name().to_string(),
             },
+            auth,
             script: if data.pre_request_script.is_some() || data.post_response_script.is_some() {
                 Some(RequestScript {
                     pre_request: data.pre_request_script,
@@ -502,6 +513,7 @@ pub fn create_empty_collection() -> CollectionToml {
             collection_type: "collection".to_string(),
             description: "".to_string(),
             ignore: Vec::new(),
+            auth: None,
         },
         environments: vec![],
     }
@@ -521,6 +533,7 @@ mod tests {
                 collection_type: "collection".to_string(),
                 description: "Test Description".to_string(),
                 ignore: Vec::new(),
+                auth: None,
             },
             environments: vec![],
         };
@@ -552,6 +565,7 @@ mod tests {
                 collection_type: "collection".to_string(),
                 description: "Test Description".to_string(),
                 ignore: Vec::new(),
+                auth: None,
             },
             environments: vec![EnvironmentToml {
                 name: "Development".to_string(),
@@ -570,5 +584,110 @@ mod tests {
             toml::from_str(&toml_string).expect("Failed to deserialize");
         assert_eq!(deserialized.environments.len(), 1);
         assert_eq!(deserialized.environments[0].name, "Development");
+    }
+
+    #[test]
+    fn test_request_toml_roundtrip_basic_auth() {
+        let request = RequestData {
+            name: "Test Request".to_string(),
+            method: HttpMethod::Get,
+            url: "https://example.com".to_string(),
+            auth: AuthType::Basic(crate::domain::BasicAuth {
+                username: "user".to_string(),
+                password: "pass".to_string(),
+            }),
+            ..Default::default()
+        };
+
+        let request_toml: RequestToml = request.into();
+        let toml_string = toml::to_string(&request_toml).expect("Failed to serialize");
+        assert!(
+            toml_string.contains("[auth]"),
+            "TOML should contain [auth] section"
+        );
+        assert!(toml_string.contains("username = \"user\""));
+
+        let deserialized: RequestToml =
+            toml::from_str(&toml_string).expect("Failed to deserialize");
+        let request_data: RequestData = deserialized.into();
+        assert!(
+            matches!(request_data.auth, AuthType::Basic(ref b) if b.username == "user" && b.password == "pass")
+        );
+    }
+
+    #[test]
+    fn test_request_toml_roundtrip_inherit_auth() {
+        let request = RequestData {
+            name: "Inherited Auth Request".to_string(),
+            method: HttpMethod::Post,
+            url: "https://example.com/api".to_string(),
+            auth: AuthType::Inherit,
+            ..Default::default()
+        };
+
+        let request_toml: RequestToml = request.into();
+        let toml_string = toml::to_string(&request_toml).expect("Failed to serialize");
+        assert!(
+            toml_string.contains("[auth]"),
+            "TOML should contain [auth] section for inherit"
+        );
+        assert!(toml_string.contains("type = \"inherit\""));
+
+        let deserialized: RequestToml =
+            toml::from_str(&toml_string).expect("Failed to deserialize");
+        let request_data: RequestData = deserialized.into();
+        assert!(matches!(request_data.auth, AuthType::Inherit));
+    }
+
+    #[test]
+    fn test_request_toml_no_auth_defaults_to_none() {
+        let toml_string = r#"
+[meta]
+name = "Old Request"
+type = "http"
+seq = "1"
+
+[http]
+method = "GET"
+url = "https://example.com"
+auth = "none"
+"#;
+
+        let deserialized: RequestToml = toml::from_str(toml_string).expect("Failed to deserialize");
+        let request_data: RequestData = deserialized.into();
+        assert!(matches!(request_data.auth, AuthType::None));
+    }
+
+    #[test]
+    fn test_request_toml_roundtrip_oauth2_auth() {
+        let request = RequestData {
+            name: "OAuth Request".to_string(),
+            method: HttpMethod::Post,
+            url: "https://api.example.com".to_string(),
+            auth: AuthType::OAuth2(crate::domain::OAuth2Auth {
+                client_id: "my_client".to_string(),
+                client_secret: "my_secret".to_string(),
+                token_url: "https://auth.example.com/token".to_string(),
+                scope: Some("read write".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let request_toml: RequestToml = request.into();
+        let toml_string = toml::to_string(&request_toml).expect("Failed to serialize");
+
+        let deserialized: RequestToml =
+            toml::from_str(&toml_string).expect("Failed to deserialize");
+        let request_data: RequestData = deserialized.into();
+        match request_data.auth {
+            AuthType::OAuth2(oauth) => {
+                assert_eq!(oauth.client_id, "my_client");
+                assert_eq!(oauth.client_secret, "my_secret");
+                assert_eq!(oauth.token_url, "https://auth.example.com/token");
+                assert_eq!(oauth.scope, Some("read write".to_string()));
+            }
+            _ => panic!("Expected OAuth2 auth"),
+        }
     }
 }

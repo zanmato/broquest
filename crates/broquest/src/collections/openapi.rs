@@ -1,5 +1,5 @@
 use super::types::{EnvironmentToml, EnvironmentVariable};
-use crate::domain::{HttpMethod, KeyValuePair, RequestData};
+use crate::domain::{AuthType, HttpMethod, KeyValuePair, RequestData};
 use oas3::spec::{ObjectOrReference, Operation, ParameterIn, SchemaType};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -176,6 +176,7 @@ impl OpenAPIImporter {
             query_params,
             headers,
             body,
+            auth: AuthType::None,
             pre_request_script: None,
             post_response_script: None,
         }

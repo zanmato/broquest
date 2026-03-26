@@ -26,7 +26,9 @@ env_logger = { workspace = true }
 
 # HTTP client for AI chat
 reqwest = { workspace = true }
+base64 = { workspace = true }
 async-compat = { workspace = true }
+digest_auth = { workspace = true }
 urlencoding = "2.1"
 toml = { workspace = true }
 thiserror = { workspace = true }
@@ -49,3 +51,7 @@ self_update = { version = "0.42", features = [
   "compression-flate2",
 ] }
 semver = "1.0.27"
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

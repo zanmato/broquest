@@ -11,18 +11,21 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     kbd::Kbd,
     notification::NotificationType,
+    resizable::{ResizableState, resizable_panel, v_resizable},
     select::{Select, SelectEvent, SelectItem, SelectState},
     tab::{Tab, TabBar},
     v_flex,
 };
 use jsonpath_rust::JsonPath;
 
+use super::auth_editor::{AuthEditor, AuthEditorEvent};
 use super::form_editor::{FormEditor, FormEditorEvent};
 use super::header_editor::{HeaderEditor, HeaderEditorEvent};
 use super::path_editor::{PathParamEditor, PathParamEvent};
 use super::query_editor::{QueryParamEditor, QueryParamEvent};
-use crate::domain::{ContentType, HttpMethod, KeyValuePair, RequestData, ResponseData};
+use crate::domain::{AuthType, ContentType, HttpMethod, KeyValuePair, RequestData, ResponseData};
 use crate::http::ResponseFormat;
+use crate::result_ext::ResultExt;
 use crate::scripting::{ScriptEditor, ScriptEditorEvent};
 use crate::ui::icon::IconName;
 use crate::ui::tab_badge::TabBadge;
@@ -109,6 +112,7 @@ pub enum RequestTab {
     Query,
     Body,
     Headers,
+    Auth,
     Scripts,
 }
 
@@ -131,6 +135,7 @@ pub struct RequestEditor {
     active_tab: RequestTab,
     active_response_tab: ResponseTab,
     is_loading: bool,
+    current_request_task: Option<Task<Result<(), anyhow::Error>>>,
     collection_path: Option<String>,
     group_path: Option<String>,
     method_select: Entity<SelectState<Vec<HttpMethod>>>,
@@ -145,6 +150,7 @@ pub struct RequestEditor {
     query_param_editor: Entity<QueryParamEditor>,
     header_editor: Entity<HeaderEditor>,
     form_editor: Entity<FormEditor>,
+    auth_editor: Entity<AuthEditor>,
     script_editor: Entity<ScriptEditor>,
     send_keystroke: KeybindingKeystroke,
     _subscriptions: Vec<Subscription>,
@@ -156,6 +162,8 @@ pub struct RequestEditor {
     original_response_body: Option<String>,
     _jsonpath_filter_task: Task<()>,
     response_format: ResponseFormat,
+    // Resizable panels
+    request_response_state: Entity<ResizableState>,
 }
 
 impl RequestEditor {
@@ -233,11 +241,15 @@ impl RequestEditor {
 
         let script_editor = cx.new(|cx| ScriptEditor::new(window, cx));
 
+        let auth_editor = cx.new(|cx| AuthEditor::new(window, cx));
+
         let jsonpath_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("$.store.book[*].author")
                 .multi_line(false)
         });
+
+        let request_response_state = cx.new(|_cx| ResizableState::default());
 
         let mut subscriptions = Vec::new();
         // Subscribe to Content-Type selection changes
@@ -264,6 +276,7 @@ impl RequestEditor {
             active_tab: RequestTab::Query,
             active_response_tab: ResponseTab::Response,
             is_loading: false,
+            current_request_task: None,
             collection_path: None,
             group_path: None,
             method_select,
@@ -278,6 +291,7 @@ impl RequestEditor {
             query_param_editor,
             header_editor,
             form_editor,
+            auth_editor,
             script_editor,
             send_keystroke: KeybindingKeystroke::from_keystroke(Keystroke::parse("enter").unwrap()),
             _subscriptions: subscriptions,
@@ -288,6 +302,7 @@ impl RequestEditor {
             original_response_body: None,
             _jsonpath_filter_task: Task::ready(()),
             response_format: ResponseFormat::Unknown,
+            request_response_state,
         }
     }
 
@@ -379,6 +394,11 @@ impl RequestEditor {
                 window,
                 cx,
             );
+        });
+
+        // Update auth
+        self.auth_editor.update(cx, |editor, cx| {
+            editor.set_auth(&data.auth, window, cx);
         });
 
         cx.notify();
@@ -540,6 +560,30 @@ impl RequestEditor {
 
         // Update body from input
         data.body = self.body_input.read(cx).value().to_string();
+
+        // If Form content type is selected, convert form editor data to body string
+        // This ensures form data is properly saved and variables can be resolved
+        if let Some(selected_content_type) = self.content_type_select.read(cx).selected_value()
+            && selected_content_type == &ContentType::Form
+        {
+            let form_data = self.form_editor.read(cx).get_form_data(cx);
+            let form_body = form_data
+                .iter()
+                .filter(|field| field.enabled && !field.key.is_empty())
+                .map(|field| {
+                    if field.value.starts_with('@') {
+                        // File reference - keep as-is
+                        format!("{}={}", field.key, field.value)
+                    } else {
+                        // Regular form field - URL encode
+                        format!("{}={}", url_encode(&field.key), url_encode(&field.value))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("&");
+            data.body = form_body;
+        }
+
         data.path_params = path_params;
         data.query_params = query_params;
         data.headers = headers;
@@ -565,6 +609,9 @@ impl RequestEditor {
                 });
             }
         }
+
+        // Update auth from auth editor
+        data.auth = self.auth_editor.read(cx).get_auth(cx);
 
         data
     }
@@ -614,6 +661,11 @@ impl RequestEditor {
             return true;
         }
 
+        // Compare auth
+        if original.auth != current.auth {
+            return true;
+        }
+
         false
     }
 
@@ -621,15 +673,17 @@ impl RequestEditor {
         self._dirty_check_task = cx.spawn(
             async move |weak_entity: WeakEntity<RequestEditor>, async_cx| {
                 smol::Timer::after(std::time::Duration::from_millis(1)).await;
-                let _ = weak_entity.update(async_cx, |this: &mut RequestEditor, cx| {
-                    let is_now_dirty = this.is_dirty(cx);
-                    if is_now_dirty != this._was_dirty {
-                        this._was_dirty = is_now_dirty;
-                        cx.emit(RequestEditorEvent::DirtyStateChanged {
-                            is_dirty: is_now_dirty,
-                        });
-                    }
-                });
+                let _ = weak_entity
+                    .update(async_cx, |this: &mut RequestEditor, cx| {
+                        let is_now_dirty = this.is_dirty(cx);
+                        if is_now_dirty != this._was_dirty {
+                            this._was_dirty = is_now_dirty;
+                            cx.emit(RequestEditorEvent::DirtyStateChanged {
+                                is_dirty: is_now_dirty,
+                            });
+                        }
+                    })
+                    .log_err();
             },
         );
     }
@@ -668,11 +722,14 @@ impl RequestEditor {
     }
 
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // If already loading, cancel the current request
         if self.is_loading {
-            window.push_notification(
-                (NotificationType::Warning, "Request is already in progress"),
-                cx,
-            );
+            if let Some(task) = self.current_request_task.take() {
+                drop(task); // Cancel the task by dropping it
+            }
+            self.is_loading = false;
+            cx.notify();
+            window.push_notification((NotificationType::Info, "Request cancelled"), cx);
             return;
         }
 
@@ -760,6 +817,16 @@ impl RequestEditor {
             (None, None)
         };
 
+        // Resolve inherited auth from collection
+        if matches!(final_request_data.auth, crate::domain::AuthType::Inherit) {
+            final_request_data.auth = self
+                .collection_path
+                .as_ref()
+                .and_then(|path| CollectionManager::global(cx).get_collection_by_path(path))
+                .and_then(|collection| collection.toml.collection.auth.clone())
+                .unwrap_or_default();
+        }
+
         // Get the HTTP client after updating UI to avoid borrow issues
         let http_client = HttpClientService::global(cx);
 
@@ -774,7 +841,7 @@ impl RequestEditor {
         let request_data_clone1 = final_request_data.clone();
         let http_client_clone = http_client.clone();
 
-        cx.spawn_in(window, async move |_this, window| {
+        let task = cx.spawn_in(window, async move |_this, window| {
             match async_compat::Compat::new(
                 http_client_clone
                     .send_request(request_data_clone1, variables, secrets)
@@ -862,6 +929,7 @@ impl RequestEditor {
                             latency: None,
                             size: Some(http_error.details.len()),
                             headers: vec![],
+                            request_headers: vec![],
                             body: http_error.details.clone(),
                             url: None, // No URL available for error responses
                         };
@@ -886,8 +954,10 @@ impl RequestEditor {
                 }
             }
             Ok::<(), anyhow::Error>(())
-        })
-        .detach();
+        });
+
+        // Store the task so it can be cancelled
+        self.current_request_task = Some(task);
     }
 
     fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -986,7 +1056,11 @@ impl RequestEditor {
             .child(
                 Button::new("send-request")
                     .outline()
-                    .icon(IconName::Send)
+                    .icon(if self.is_loading {
+                        IconName::CircleX
+                    } else {
+                        IconName::Send
+                    })
                     .loading(self.is_loading)
                     .loading_icon(IconName::LoaderCircle)
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -1002,6 +1076,7 @@ impl RequestEditor {
         let headers_count = self.get_headers_badge_count(cx);
         let path_count = self.get_path_badge_count(cx);
         let scripts_count = self.get_scripts_badge_count(cx);
+        let has_auth = self.has_auth_configured(cx);
 
         TabBar::new("request-tabs")
             .left(px(-1.)) // Avoid double border with container
@@ -1009,17 +1084,19 @@ impl RequestEditor {
                 RequestTab::Query => 0,
                 RequestTab::Body => 1,
                 RequestTab::Headers => 2,
-                RequestTab::Path => 3,
-                RequestTab::Scripts => 4,
+                RequestTab::Auth => 3,
+                RequestTab::Path => 4,
+                RequestTab::Scripts => 5,
             })
             .on_click(cx.listener(|this, &index, _, cx| {
                 this.active_tab = match index {
                     0 => RequestTab::Query,
                     1 => RequestTab::Body,
                     2 => RequestTab::Headers,
-                    3 => RequestTab::Path,
-                    4 => RequestTab::Scripts,
-                    _ => RequestTab::Path,
+                    3 => RequestTab::Auth,
+                    4 => RequestTab::Path,
+                    5 => RequestTab::Scripts,
+                    _ => RequestTab::Query,
                 };
                 cx.notify();
             }))
@@ -1034,6 +1111,11 @@ impl RequestEditor {
             .child(Tab::new().label("Headers").when(headers_count > 0, |tab| {
                 tab.pr_2().suffix(TabBadge::new().count(headers_count))
             }))
+            .child(
+                Tab::new()
+                    .label("Auth")
+                    .when(has_auth, |tab| tab.pr_2().suffix(TabBadge::new().count(1))),
+            )
             .child(Tab::new().label("Path").when(path_count > 0, |tab| {
                 tab.pr_2().suffix(TabBadge::new().count(path_count))
             }))
@@ -1044,13 +1126,13 @@ impl RequestEditor {
 
     fn render_tab_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         match self.active_tab {
-            RequestTab::Path => div().flex_1().child(self.path_param_editor.clone()),
-            RequestTab::Query => div().flex_1().child(self.query_param_editor.clone()),
+            RequestTab::Path => div().size_full().child(self.path_param_editor.clone()),
+            RequestTab::Query => div().size_full().child(self.query_param_editor.clone()),
             RequestTab::Body => {
                 let selected_content_type =
                     self.content_type_select.read(cx).selected_value().copied();
 
-                div().flex_1().child(
+                div().size_full().child(
                     v_flex()
                         .h_full()
                         .child(
@@ -1074,7 +1156,7 @@ impl RequestEditor {
                         )
                         .child(match selected_content_type {
                             Some(ContentType::Form) => div()
-                                .flex_1()
+                                .size_full()
                                 .child(self.form_editor.clone())
                                 .into_any_element(),
                             _ => Input::new(&self.body_input)
@@ -1088,8 +1170,9 @@ impl RequestEditor {
                         }),
                 )
             }
-            RequestTab::Headers => div().flex_1().child(self.header_editor.clone()),
-            RequestTab::Scripts => div().flex_1().child(self.script_editor.clone()),
+            RequestTab::Headers => div().size_full().child(self.header_editor.clone()),
+            RequestTab::Auth => div().size_full().child(self.auth_editor.clone()),
+            RequestTab::Scripts => div().size_full().child(self.script_editor.clone()),
         }
     }
 
@@ -1424,6 +1507,16 @@ impl RequestEditor {
         );
         self._subscriptions.push(script_subscription);
 
+        // Subscribe to auth editor changes
+        let auth_subscription = cx.subscribe(
+            &self.auth_editor,
+            |this, _editor, _: &AuthEditorEvent, cx| {
+                this.schedule_dirty_check(cx);
+                cx.notify();
+            },
+        );
+        self._subscriptions.push(auth_subscription);
+
         // Subscribe to form editor changes
         let form_subscription = cx.subscribe(
             &self.form_editor,
@@ -1642,17 +1735,22 @@ impl RequestEditor {
         let pre_request = script_editor.get_pre_request_script(cx);
         let post_response = script_editor.get_post_response_script(cx);
 
-        let count = if pre_request.is_some() && !pre_request.unwrap().trim().is_empty() {
+        let count = if pre_request.is_some_and(|s| !s.trim().is_empty()) {
             1
         } else {
             0
         };
 
-        if post_response.is_some() && !post_response.unwrap().trim().is_empty() {
+        if post_response.is_some_and(|s| !s.trim().is_empty()) {
             count + 1
         } else {
             count
         }
+    }
+
+    fn has_auth_configured(&self, cx: &App) -> bool {
+        let auth = self.auth_editor.read(cx).get_auth(cx);
+        !matches!(auth, AuthType::None)
     }
 
     fn is_response_json(&self) -> bool {
@@ -1754,12 +1852,18 @@ impl Render for RequestEditor {
                 self.render_request_tabs(cx),
             )
             .child(
-                // Tab content area
-                self.render_tab_content(cx),
-            )
-            .child(
-                // Response area
-                self.render_response_area(window, cx),
+                // Resizable request/response panels
+                div().flex_1().min_h_0().child(
+                    v_resizable("request-response")
+                        .with_state(&self.request_response_state)
+                        .child(
+                            resizable_panel()
+                                .size(px(200.))
+                                .size_range(px(100.)..gpui::Pixels::MAX)
+                                .child(self.render_tab_content(cx)),
+                        )
+                        .child(resizable_panel().child(self.render_response_area(window, cx))),
+                ),
             )
             .child(
                 // Status bar
@@ -1769,29 +1873,42 @@ impl Render for RequestEditor {
 }
 
 impl ResponseData {
-    pub fn format_raw_response(self) -> String {
+    pub fn format_raw_response(&self) -> String {
         let mut raw_output = String::new();
 
         // Add request URL at the top
-        if let Some(url) = self.url {
+        if let Some(url) = &self.url {
             raw_output.push_str(&format!("{}\n", url));
+        }
+
+        // Add request headers section
+        if !self.request_headers.is_empty() {
+            raw_output.push_str("\n--- Request Headers ---\n");
+            for header in &self.request_headers {
+                if header.enabled {
+                    raw_output.push_str(&format!("{}: {}\n", header.key, header.value));
+                }
+            }
         }
 
         // Add status line
         if let Some(status_code) = self.status_code {
             let status_text = self.status_text.as_deref().unwrap_or("Unknown");
-            raw_output.push_str(&format!("{} {}\n", status_code, status_text));
+            raw_output.push_str(&format!("\n{} {}\n", status_code, status_text));
         }
 
-        // Add headers
-        for header in &self.headers {
-            if header.enabled {
-                raw_output.push_str(&format!("{}: {}\n", header.key, header.value));
+        // Add response headers section
+        if !self.headers.is_empty() {
+            raw_output.push_str("\n--- Response Headers ---\n");
+            for header in &self.headers {
+                if header.enabled {
+                    raw_output.push_str(&format!("{}: {}\n", header.key, header.value));
+                }
             }
         }
 
         // Add empty line between headers and body
-        if !self.headers.is_empty() && !self.body.is_empty() {
+        if !self.body.is_empty() {
             raw_output.push('\n');
         }
 

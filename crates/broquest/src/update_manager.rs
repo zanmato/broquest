@@ -27,7 +27,9 @@ impl UpdateManager {
         let marker_path = Self::updates_dir().join(".updated_from");
         let just_updated_from = if marker_path.exists() {
             let version = std::fs::read_to_string(&marker_path).ok();
-            let _ = std::fs::remove_file(&marker_path);
+            if let Err(e) = std::fs::remove_file(&marker_path) {
+                tracing::warn!("Failed to remove update marker file: {}", e);
+            }
             cx.new(|_cx| version)
         } else {
             cx.new(|_cx| None)
@@ -205,7 +207,9 @@ impl UpdateManager {
 
         self_update::Extract::from_source(&tmp_archive_path).extract_file(&updates, bin_name)?;
 
-        let _ = std::fs::remove_file(&tmp_archive_path);
+        if let Err(e) = std::fs::remove_file(&tmp_archive_path) {
+            tracing::warn!("Failed to remove temporary archive: {}", e);
+        }
 
         Ok(())
     }
@@ -232,14 +236,18 @@ impl UpdateManager {
 
         // Store current version before replacing (for post-update notification)
         let current = env!("CARGO_PKG_VERSION").to_string();
-        let _ = std::fs::write(Self::updates_dir().join(".updated_from"), &current);
+        if let Err(e) = std::fs::write(Self::updates_dir().join(".updated_from"), &current) {
+            tracing::warn!("Failed to write update marker file: {}", e);
+        }
 
         if let Err(e) = self_update::self_replace::self_replace(&staged) {
             tracing::error!("Failed to apply update: {}", e);
             return;
         }
 
-        let _ = std::fs::remove_file(&staged);
+        if let Err(e) = std::fs::remove_file(&staged) {
+            tracing::warn!("Failed to remove staged update binary: {}", e);
+        }
         tracing::info!("Update applied, restarting...");
         Self::restart_app();
     }
@@ -256,13 +264,17 @@ impl UpdateManager {
                 .and_then(|p| p.parent())
             {
                 if app_bundle.extension().map_or(false, |ext| ext == "app") {
-                    let _ = std::process::Command::new("open").arg(app_bundle).spawn();
+                    if let Err(e) = std::process::Command::new("open").arg(app_bundle).spawn() {
+                        tracing::error!("Failed to restart app bundle: {}", e);
+                    }
                     std::process::exit(0);
                 }
             }
         }
 
-        let _ = std::process::Command::new(exe).spawn();
+        if let Err(e) = std::process::Command::new(exe).spawn() {
+            tracing::error!("Failed to restart application: {}", e);
+        }
         std::process::exit(0);
     }
 

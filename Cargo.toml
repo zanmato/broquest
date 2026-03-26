@@ -54,7 +54,9 @@ reqwest = { version = "0.12", features = [
     "stream",
     "gzip",
 ] }
+base64 = "0.22"
 async-compat = "0.2"
+digest_auth = "0.3"
 smol = "2.0"
 dirs = "5"
 toml = "0.8"

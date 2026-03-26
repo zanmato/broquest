@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use super::HttpMethod;
+use super::{AuthType, HttpMethod};
 
 /// A key-value pair with an enabled flag, used for headers, query params, etc.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -60,6 +60,8 @@ pub struct RequestData {
     pub body: String,
     pub pre_request_script: Option<String>,
     pub post_response_script: Option<String>,
+    #[serde(default)]
+    pub auth: AuthType,
 }
 
 impl Default for RequestData {
@@ -74,6 +76,7 @@ impl Default for RequestData {
             body: String::new(),
             pre_request_script: None,
             post_response_script: None,
+            auth: AuthType::None,
         }
     }
 }
@@ -86,6 +89,7 @@ pub struct ResponseData {
     pub latency: Option<Duration>,
     pub size: Option<usize>,
     pub headers: Vec<KeyValuePair>,
+    pub request_headers: Vec<KeyValuePair>,
     pub body: String,
     pub url: Option<String>,
 }

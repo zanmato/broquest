@@ -1,5 +1,5 @@
 use crate::collections::{EnvironmentToml, EnvironmentVariable};
-use crate::domain::RequestData;
+use crate::domain::{BasicAuth, DigestAuth, JwtAuth, KeyAuth, OAuth2Auth, RequestData};
 use std::collections::HashMap;
 
 /// Environment variable resolver for HTTP requests
@@ -121,7 +121,79 @@ impl EnvironmentResolver {
         // Resolve body
         request_data.body = self.resolve_string(&request_data.body, variables, secrets);
 
+        // Resolve auth
+        request_data.auth = self.resolve_auth(&request_data.auth, variables, secrets);
+
         request_data
+    }
+
+    /// Resolve variables in auth configuration
+    pub fn resolve_auth(
+        &self,
+        auth: &crate::domain::AuthType,
+        variables: &HashMap<String, String>,
+        secrets: &HashMap<String, String>,
+    ) -> crate::domain::AuthType {
+        use crate::domain::AuthType;
+
+        match auth {
+            AuthType::None | AuthType::Inherit => auth.clone(),
+            AuthType::Basic(basic) => AuthType::Basic(BasicAuth {
+                username: self.resolve_string(&basic.username, variables, secrets),
+                password: self.resolve_string(&basic.password, variables, secrets),
+            }),
+            AuthType::Digest(digest) => AuthType::Digest(DigestAuth {
+                username: self.resolve_string(&digest.username, variables, secrets),
+                password: self.resolve_string(&digest.password, variables, secrets),
+            }),
+            AuthType::Key(key) => AuthType::Key(KeyAuth {
+                header: self.resolve_string(&key.header, variables, secrets),
+                value: self.resolve_string(&key.value, variables, secrets),
+            }),
+            AuthType::OAuth2(oauth) => AuthType::OAuth2(OAuth2Auth {
+                grant_type: oauth.grant_type.clone(),
+                client_id: self.resolve_string(&oauth.client_id, variables, secrets),
+                client_secret: self.resolve_string(&oauth.client_secret, variables, secrets),
+                token_url: self.resolve_string(&oauth.token_url, variables, secrets),
+                scope: oauth
+                    .scope
+                    .as_ref()
+                    .map(|s| self.resolve_string(s, variables, secrets)),
+                authorize_url: oauth
+                    .authorize_url
+                    .as_ref()
+                    .map(|s| self.resolve_string(s, variables, secrets)),
+                redirect_url: oauth
+                    .redirect_url
+                    .as_ref()
+                    .map(|s| self.resolve_string(s, variables, secrets)),
+                access_token: oauth
+                    .access_token
+                    .as_ref()
+                    .map(|s| self.resolve_string(s, variables, secrets)),
+                refresh_token: oauth
+                    .refresh_token
+                    .as_ref()
+                    .map(|s| self.resolve_string(s, variables, secrets)),
+                expires_at: oauth.expires_at,
+            }),
+            AuthType::Jwt(jwt) => AuthType::Jwt(JwtAuth {
+                login_url: self.resolve_string(&jwt.login_url, variables, secrets),
+                username_field: jwt.username_field.clone(),
+                username: self.resolve_string(&jwt.username, variables, secrets),
+                password_field: jwt.password_field.clone(),
+                password: self.resolve_string(&jwt.password, variables, secrets),
+                token_field: jwt.token_field.clone(),
+                token_type_field: jwt.token_type_field.clone(),
+                expiry_field: jwt.expiry_field.clone(),
+                access_token: jwt
+                    .access_token
+                    .as_ref()
+                    .map(|s| self.resolve_string(s, variables, secrets)),
+                token_type: jwt.token_type.clone(),
+                expires_at: jwt.expires_at,
+            }),
+        }
     }
 }
 
