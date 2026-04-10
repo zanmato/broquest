@@ -590,21 +590,18 @@ impl RequestEditor {
         data.pre_request_script = pre_request_script;
         data.post_response_script = post_response_script;
 
-        // Update Content-Type header based on selected content type
+        // Set Content-Type header from the dropdown only if the user hasn't set one
+        // in the headers editor.
         if let Some(selected_content_type) = self.content_type_select.read(cx).selected_value() {
-            let content_type_value = selected_content_type.as_str();
-
-            // Find existing Content-Type header and update it, or add it if it doesn't exist
-            if let Some(header) = data
+            let has_content_type = data
                 .headers
-                .iter_mut()
-                .find(|h| h.key.to_lowercase() == "content-type")
-            {
-                header.value = content_type_value.to_string();
-            } else {
+                .iter()
+                .any(|h| h.key.to_lowercase() == "content-type" && h.enabled);
+
+            if !has_content_type {
                 data.headers.push(KeyValuePair {
                     key: "Content-Type".to_string(),
-                    value: content_type_value.to_string(),
+                    value: selected_content_type.as_str().to_string(),
                     enabled: true,
                 });
             }
