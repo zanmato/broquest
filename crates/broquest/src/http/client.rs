@@ -777,9 +777,31 @@ impl ResponseFormat {
                     }
                 }
             }
+            ResponseFormat::Xml => format_xml(content).unwrap_or_else(|| content.to_string()),
             _ => content.to_string(),
         }
     }
+}
+
+fn format_xml(content: &str) -> Option<String> {
+    use quick_xml::events::Event;
+    use quick_xml::reader::Reader;
+    use quick_xml::writer::Writer;
+    use std::io::Cursor;
+
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text(true);
+
+    let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
+
+    loop {
+        match reader.read_event().ok()? {
+            Event::Eof => break,
+            e => writer.write_event(e).ok()?,
+        }
+    }
+
+    String::from_utf8(writer.into_inner().into_inner()).ok()
 }
 
 #[cfg(test)]
@@ -851,6 +873,9 @@ mod tests {
 
         let format = ResponseFormat::Xml;
         let xml_content = "<root><item>value</item></root>";
-        assert_eq!(format.format_content(xml_content), xml_content);
+        assert_eq!(
+            format.format_content(xml_content),
+            "<root>\n  <item>value</item>\n</root>"
+        );
     }
 }

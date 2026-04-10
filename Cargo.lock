@@ -856,6 +856,7 @@ dependencies = [
  "llrt_modules",
  "lsp-types",
  "oas3",
+ "quick-xml 0.37.5",
  "reqwest",
  "ropey",
  "rquickjs",
