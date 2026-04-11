@@ -73,12 +73,26 @@ impl AppDatabase {
         .execute(&self.pool)
         .await?;
 
-        // Settings table
+        // User settings table (legacy)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS user_settings (
                 id INTEGER PRIMARY KEY,
                 theme TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Key-value settings table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             )
             "#,
@@ -189,5 +203,40 @@ impl AppDatabase {
         } else {
             Ok(None)
         }
+    }
+
+    // Key-value settings operations
+    pub async fn save_setting(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO settings (key, value, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(key)
+        .bind(value)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn load_all_settings(&self) -> Result<Vec<(String, String)>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT key, value FROM settings
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|r| (r.get(0), r.get(1))).collect())
     }
 }

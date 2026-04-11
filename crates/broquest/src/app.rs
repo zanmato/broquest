@@ -4,7 +4,7 @@ use gpui::{
     SharedString, Styled, Subscription, Window, actions, div, prelude::FluentBuilder, px, svg,
 };
 use gpui_component::{
-    ActiveTheme, Root, Sizable as _, TITLE_BAR_HEIGHT, Theme, ThemeRegistry, TitleBar, WindowExt,
+    ActiveTheme, Root, Sizable as _, Theme, ThemeRegistry, TitleBar, WindowExt,
     button::{Button, ButtonVariants as _},
     menu::AppMenuBar,
     notification::{Notification, NotificationType},
@@ -20,7 +20,10 @@ use crate::{
     update_manager::UpdateManager,
 };
 
-actions!(broquest_app, [Quit, OpenNewCollectionTab, OpenCollection]);
+actions!(
+    broquest_app,
+    [Quit, OpenNewCollectionTab, OpenCollection, OpenSettings]
+);
 
 #[derive(Action, Clone, PartialEq)]
 #[action(namespace = broquest_app, no_json)]
@@ -225,6 +228,12 @@ impl BroquestApp {
             });
         }
 
+        // Defer font application so it runs after the theme has been loaded from disk.
+        window.defer(cx, |window, cx| {
+            crate::settings::apply_font_settings(cx);
+            window.refresh();
+        });
+
         Self {
             focus_handle: cx.focus_handle(),
             sidebar_collapsed: false,
@@ -377,6 +386,7 @@ impl BroquestApp {
         let theme_name = switch.0.clone();
         if let Some(theme_config) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
             Theme::global_mut(cx).apply_config(&theme_config);
+            crate::settings::apply_font_settings(cx);
         }
 
         let app_database = AppDatabase::global(cx).clone();
@@ -391,6 +401,12 @@ impl BroquestApp {
         .detach();
 
         window.refresh();
+    }
+
+    fn on_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor_panel.update(cx, |editor_panel, cx| {
+            editor_panel.add_settings_tab(window, cx);
+        });
     }
 
     fn render_update_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -427,7 +443,6 @@ impl Render for BroquestApp {
         let sheet_layer = Root::render_sheet_layer(window, cx);
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
-        let window_bounds = window.bounds();
 
         div()
             .flex()
@@ -436,6 +451,7 @@ impl Render for BroquestApp {
             .on_action(cx.listener(Self::on_open_new_collection_tab))
             .on_action(cx.listener(Self::on_open_collection_dialog))
             .on_action(cx.listener(Self::on_switch_theme))
+            .on_action(cx.listener(Self::on_settings))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
@@ -473,10 +489,9 @@ impl Render for BroquestApp {
                     .items_start()
                     // Left side: Connections panel sidebar
                     .when(!self.sidebar_collapsed, |this| {
-                        let window_height = window_bounds.size.height;
                         this.child(
                             div()
-                                .h(window_height - TITLE_BAR_HEIGHT - px(25.))
+                                .h_full()
                                 .w(px(256.))
                                 .overflow_hidden()
                                 .border_r_1()
@@ -485,15 +500,14 @@ impl Render for BroquestApp {
                         )
                     })
                     // Main panel
-                    .child({
-                        let window_height = window_bounds.size.height;
+                    .child(
                         div()
                             .flex()
                             .flex_1()
-                            .h(window_height - TITLE_BAR_HEIGHT - px(25.))
+                            .h_full()
                             .overflow_hidden()
-                            .child(self.editor_panel.clone())
-                    }),
+                            .child(self.editor_panel.clone()),
+                    ),
             )
             .children(sheet_layer)
             .children(dialog_layer)
@@ -507,6 +521,10 @@ fn init_menus(cx: &mut App) {
         gpui::KeyBinding::new("cmd-q", Quit, None),
         #[cfg(not(target_os = "macos"))]
         gpui::KeyBinding::new("alt-f4", Quit, None),
+        #[cfg(target_os = "macos")]
+        gpui::KeyBinding::new("cmd-,", OpenSettings, None),
+        #[cfg(not(target_os = "macos"))]
+        gpui::KeyBinding::new("ctrl-,", OpenSettings, None),
     ]);
 
     cx.set_menus(vec![
@@ -516,7 +534,7 @@ fn init_menus(cx: &mut App) {
                 MenuItem::action("New Collection", OpenNewCollectionTab),
                 MenuItem::action("Open Collection", OpenCollection),
                 MenuItem::Separator,
-                theme_menu(cx),
+                MenuItem::action("Settings", OpenSettings),
                 MenuItem::Separator,
                 MenuItem::action("Quit", Quit),
             ],
@@ -535,15 +553,4 @@ fn init_menus(cx: &mut App) {
             ],
         },
     ]);
-}
-
-fn theme_menu(cx: &App) -> MenuItem {
-    let themes = ThemeRegistry::global(cx).sorted_themes();
-    MenuItem::Submenu(Menu {
-        name: "Theme".into(),
-        items: themes
-            .iter()
-            .map(|theme| MenuItem::action(theme.name.clone(), SwitchTheme(theme.name.clone())))
-            .collect(),
-    })
 }

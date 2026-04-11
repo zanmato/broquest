@@ -7,6 +7,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 mod app;
 mod app_database;
 mod app_events;
+mod app_settings;
 mod assets;
 mod collections;
 mod domain;
@@ -16,6 +17,7 @@ mod http;
 mod requests;
 mod result_ext;
 mod scripting;
+mod settings;
 mod themes_manager;
 mod ui;
 mod update_manager;
@@ -26,7 +28,9 @@ use gpui::{AppContext, SharedString, WindowBounds, WindowOptions, px, size};
 use gpui_component::{Theme, ThemeRegistry};
 use gpui_platform::application;
 
+use app_settings::AppSettings;
 use highlighting::register_highlighting;
+use settings::Settings;
 use themes_manager::ThemesManager;
 
 fn main() {
@@ -82,16 +86,37 @@ fn main() {
             }
         };
 
-        // Load and watch themes from ./themes directory
-        let theme_name = match user_settings {
-            Some(settings) => SharedString::from(settings.theme),
-            None => SharedString::from("Catppuccin Macchiato"),
+        // Load key-value settings from database
+        let kv_settings = match smol::block_on(async { db.load_all_settings().await }) {
+            Ok(settings) => settings,
+            Err(e) => {
+                tracing::warn!("Failed to load settings: {}, using defaults", e);
+                vec![]
+            }
         };
 
+        let mut app_settings = Settings::from_key_values(&kv_settings);
+
+        // Migrate old user_settings.theme if new settings table has no appearance.theme
+        if app_settings.appearance.theme == Settings::default().appearance.theme
+            && let Some(ref old_settings) = user_settings
+            && !kv_settings.iter().any(|(k, _)| k == "appearance.theme")
+        {
+            app_settings.appearance.theme = old_settings.theme.clone();
+        }
+
+        let theme_name = SharedString::from(app_settings.appearance.theme.clone());
+
+        // Set AppSettings as global
+        let app_settings_global = AppSettings::new(cx, app_settings);
+        cx.set_global(app_settings_global);
+
+        // Load and watch themes from ./themes directory
         if let Err(err) =
             ThemeRegistry::watch_dir(ThemesManager::themes_directory(), cx, move |cx| {
                 if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
                     Theme::global_mut(cx).apply_config(&theme);
+                    settings::apply_font_settings(cx);
                     tracing::info!("Applying theme {}", theme_name);
                 }
             })

@@ -23,6 +23,7 @@ use super::form_editor::{FormEditor, FormEditorEvent};
 use super::header_editor::{HeaderEditor, HeaderEditorEvent};
 use super::path_editor::{PathParamEditor, PathParamEvent};
 use super::query_editor::{QueryParamEditor, QueryParamEvent};
+use crate::app_settings::AppSettings;
 use crate::domain::{AuthType, ContentType, HttpMethod, KeyValuePair, RequestData, ResponseData};
 use crate::http::ResponseFormat;
 use crate::result_ext::ResultExt;
@@ -213,22 +214,30 @@ impl RequestEditor {
                 .default_value("New Request")
         });
 
+        let editor_settings = AppSettings::global(cx).settings.editor.clone();
+
         let body_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor("json")
-                .folding(false)
+                .folding(editor_settings.folding)
+                .show_whitespaces(editor_settings.show_whitespace)
+                .soft_wrap(editor_settings.soft_wrap)
         });
 
         let response_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor("text")
-                .folding(false)
+                .folding(editor_settings.folding)
+                .show_whitespaces(editor_settings.show_whitespace)
+                .soft_wrap(editor_settings.soft_wrap)
         });
 
         let raw_response_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor("text")
-                .folding(false)
+                .folding(editor_settings.folding)
+                .show_whitespaces(editor_settings.show_whitespace)
+                .soft_wrap(editor_settings.soft_wrap)
         });
 
         let path_param_editor = cx.new(|cx| PathParamEditor::new(window, cx));
@@ -312,6 +321,24 @@ impl RequestEditor {
 
     pub fn set_group_path(&mut self, group_path: Option<String>) {
         self.group_path = group_path;
+    }
+
+    pub fn apply_editor_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let settings = AppSettings::global(cx).settings.editor.clone();
+        for input in [
+            &self.body_input,
+            &self.response_input,
+            &self.raw_response_input,
+        ] {
+            input.update(cx, |state, cx| {
+                state.set_show_whitespaces(settings.show_whitespace, window, cx);
+                state.set_soft_wrap(settings.soft_wrap, window, cx);
+                state.set_folding(settings.folding, window, cx);
+            });
+        }
+        self.script_editor.update(cx, |editor, cx| {
+            editor.apply_editor_settings(window, cx);
+        });
     }
 
     pub fn set_request_data(

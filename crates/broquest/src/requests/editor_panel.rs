@@ -8,20 +8,24 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     h_flex,
     input::InputEvent,
+    scroll::ScrollableElement,
     select::SelectEvent,
     tab::{Tab, TabBar},
 };
 
 use super::editor::{RequestEditor, RequestEditorEvent};
 use crate::app_events::AppEvent;
+use crate::app_settings::AppSettings;
 use crate::collections::{CollectionEditor, CollectionManager, CollectionToml, GroupEditor};
 use crate::domain::{HttpMethod, RequestData};
+use crate::settings::SettingsView;
 use crate::ui::icon::IconName;
 
 pub enum TabType {
     Request(RequestTab),
     Collection(CollectionTab),
     Group(GroupTab),
+    Settings(SettingsTab),
 }
 
 pub struct RequestTab {
@@ -54,6 +58,10 @@ pub struct GroupTab {
     pub collection_path: String, // Link to the collection this belongs to
 }
 
+pub struct SettingsTab {
+    pub settings_view: Entity<SettingsView>,
+}
+
 impl EventEmitter<AppEvent> for Tab {}
 
 pub struct EditorPanel {
@@ -67,7 +75,22 @@ pub struct EditorPanel {
 }
 
 impl EditorPanel {
-    pub fn new(_: &mut Window, cx: &mut Context<Self>, sidebar_collapsed: bool) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>, sidebar_collapsed: bool) -> Self {
+        let this = cx.entity().downgrade();
+        let settings_subscription = window.observe_global::<AppSettings>(cx, move |window, cx| {
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| {
+                    for tab in &this.tabs {
+                        if let TabType::Request(request_tab) = tab {
+                            request_tab.request_editor.update(cx, |editor, cx| {
+                                editor.apply_editor_settings(window, cx);
+                            });
+                        }
+                    }
+                });
+            }
+        });
+
         Self {
             focus_handle: cx.focus_handle(),
             tabs: vec![],
@@ -75,7 +98,7 @@ impl EditorPanel {
             next_tab_id: 0,
             sidebar_collapsed,
             tabbar_scroll_handle: ScrollHandle::default(),
-            _subscriptions: Vec::new(),
+            _subscriptions: vec![settings_subscription],
         }
     }
 
@@ -431,6 +454,27 @@ impl EditorPanel {
         cx.notify();
     }
 
+    /// Add or focus the Settings tab (singleton)
+    pub fn add_settings_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Check if settings tab already exists
+        for (ix, tab) in self.tabs.iter().enumerate() {
+            if let TabType::Settings(_) = tab {
+                self.active_tab_ix = ix;
+                cx.notify();
+                return;
+            }
+        }
+
+        let settings_view = cx.new(SettingsView::new);
+
+        self.tabs
+            .push(TabType::Settings(SettingsTab { settings_view }));
+        self.active_tab_ix = self.tabs.len() - 1;
+        self.scroll_tabbar_to_the_end(window);
+
+        cx.notify();
+    }
+
     fn scroll_tabbar_to_the_end(&self, window: &mut Window) {
         let scroll_handle = self.tabbar_scroll_handle.clone();
         window.on_next_frame(move |window, _| {
@@ -598,6 +642,34 @@ impl Render for EditorPanel {
                                         .into_any_element(),
                                 )
                         }
+                        TabType::Settings(_) => {
+                            let tab_index = ix;
+                            Tab::new()
+                                .label("Settings")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(
+                                        move |_this, _event: &gpui::MouseDownEvent, _window, cx| {
+                                            cx.emit(AppEvent::TabChanged { tab_id: tab_index });
+                                        },
+                                    ),
+                                )
+                                .suffix(
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .child(
+                                            Button::new(("close-tab", ix))
+                                                .ghost()
+                                                .xsmall()
+                                                .icon(IconName::Close)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.close_tab(tab_index, cx);
+                                                })),
+                                        )
+                                        .into_any_element(),
+                                )
+                        }
                     })),
             )
             // Render the active tab's complete view
@@ -634,6 +706,13 @@ impl Render for EditorPanel {
                                         .child(group_tab.group_editor.clone()),
                                 )
                             }
+                            TabType::Settings(settings_tab) => this.child(
+                                div()
+                                    .flex_1()
+                                    .h_full()
+                                    .overflow_y_scrollbar()
+                                    .child(settings_tab.settings_view.clone()),
+                            ),
                         }
                     }),
             )

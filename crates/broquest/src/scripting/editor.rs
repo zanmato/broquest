@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::app_settings::AppSettings;
 use crate::result_ext::ResultExt;
 use crate::ui::icon::IconName;
 use gpui::{
@@ -34,10 +35,14 @@ impl EventEmitter<ScriptEditorEvent> for ScriptEditor {}
 
 impl ScriptEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let editor_settings = AppSettings::global(cx).settings.editor.clone();
+
         let pre_request_input = cx.new(|cx| {
             let mut editor = InputState::new(window, cx)
                 .code_editor("javascript")
-                .folding(false);
+                .folding(editor_settings.folding)
+                .show_whitespaces(editor_settings.show_whitespace)
+                .soft_wrap(editor_settings.soft_wrap);
             editor.lsp.completion_provider =
                 Some(ScriptCompletionProvider::new(ScriptContext::PreRequest));
             editor
@@ -46,7 +51,9 @@ impl ScriptEditor {
         let post_response_input = cx.new(|cx| {
             let mut editor = InputState::new(window, cx)
                 .code_editor("javascript")
-                .folding(false);
+                .folding(editor_settings.folding)
+                .show_whitespaces(editor_settings.show_whitespace)
+                .soft_wrap(editor_settings.soft_wrap);
             editor.lsp.completion_provider =
                 Some(ScriptCompletionProvider::new(ScriptContext::PostResponse));
             editor
@@ -138,6 +145,17 @@ impl ScriptEditor {
                 })
                 .log_err();
         });
+    }
+
+    pub fn apply_editor_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let settings = AppSettings::global(cx).settings.editor.clone();
+        for input in [&self.pre_request_input, &self.post_response_input] {
+            input.update(cx, |state, cx| {
+                state.set_show_whitespaces(settings.show_whitespace, window, cx);
+                state.set_soft_wrap(settings.soft_wrap, window, cx);
+                state.set_folding(settings.folding, window, cx);
+            });
+        }
     }
 
     pub fn set_scripts(
