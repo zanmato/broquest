@@ -504,6 +504,13 @@ fn create_body_toml(body: &str, body_type: &str) -> Option<RequestBodyToml> {
     }
 }
 
+/// Result of importing a spec (OpenAPI or WSDL) into a collection.
+pub struct ImportResult {
+    pub environment: EnvironmentToml,
+    pub groups: Vec<(String, Vec<RequestData>)>,
+    pub requests: Vec<RequestData>,
+}
+
 /// Create an empty collection with default values
 pub fn create_empty_collection() -> CollectionToml {
     CollectionToml {
@@ -522,7 +529,6 @@ pub fn create_empty_collection() -> CollectionToml {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use toml;
 
     #[test]
     fn test_serialize_empty_environments() {

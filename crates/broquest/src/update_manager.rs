@@ -262,13 +262,12 @@ impl UpdateManager {
                 .parent()
                 .and_then(|p| p.parent())
                 .and_then(|p| p.parent())
+                && app_bundle.extension().is_some_and(|ext| ext == "app")
             {
-                if app_bundle.extension().map_or(false, |ext| ext == "app") {
-                    if let Err(e) = std::process::Command::new("open").arg(app_bundle).spawn() {
-                        tracing::error!("Failed to restart app bundle: {}", e);
-                    }
-                    std::process::exit(0);
+                if let Err(e) = std::process::Command::new("open").arg(app_bundle).spawn() {
+                    tracing::error!("Failed to restart app bundle: {}", e);
                 }
+                std::process::exit(0);
             }
         }
 

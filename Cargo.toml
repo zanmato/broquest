@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/broquest", "crates/tree-sitter-url"]
+members = ["crates/broquest", "crates/tree-sitter-url", "crates/wsdl"]
 resolver = "2"
 
 [workspace.package]
@@ -63,6 +63,7 @@ toml = "0.8"
 anyhow = "1.0"
 tree-sitter-xml = { version = "0.7" }
 quick-xml = "0.37"
+xsd-parser = "1.5"
 
 # Script execution dependencies
 rquickjs = { git = "https://github.com/DelSkayn/rquickjs.git", version = "0.10.0", features = [

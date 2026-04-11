@@ -1,0 +1,12 @@
+[package]
+name = "wsdl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quick-xml = { workspace = true }
+thiserror = { workspace = true }
+url = "2"
+xsd-parser = "1.5.2"
+
+[dev-dependencies]

@@ -30,6 +30,7 @@ base64 = { workspace = true }
 async-compat = { workspace = true }
 digest_auth = { workspace = true }
 urlencoding = "2.1"
+url = "2"
 toml = { workspace = true }
 thiserror = { workspace = true }
 
@@ -46,6 +47,9 @@ quick-xml = { workspace = true }
 
 # OpenAPI spec parsing
 oas3 = { version = "0.20", features = ["yaml-spec"] }
+
+# WSDL/SOAP support
+wsdl = { path = "../wsdl" }
 jsonpath-rust = "1.0.4"
 self_update = { version = "0.42", features = [
   "archive-tar",

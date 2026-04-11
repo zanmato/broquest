@@ -40,6 +40,9 @@ pub struct CollectionEditor {
     import_openapi: bool,
     openapi_spec_input: Entity<InputState>,
     openapi_spec_path: Option<String>,
+    // WSDL import fields
+    import_wsdl: bool,
+    wsdl_spec_input: Entity<InputState>,
 }
 
 impl CollectionEditor {
@@ -76,6 +79,7 @@ impl CollectionEditor {
         let path_input = cx.new(|cx| InputState::new(window, cx).default_value(&collection_path));
 
         let openapi_spec_input = cx.new(|cx| InputState::new(window, cx));
+        let wsdl_spec_input = cx.new(|cx| InputState::new(window, cx));
 
         let editor = Self {
             active_tab: 0, // Collection tab
@@ -88,6 +92,8 @@ impl CollectionEditor {
             import_openapi: false,
             openapi_spec_input,
             openapi_spec_path: None,
+            import_wsdl: false,
+            wsdl_spec_input,
         };
 
         // Load initial environments data from CollectionManager
@@ -161,6 +167,21 @@ impl CollectionEditor {
             .save_secrets(&collection_name, cx)
     }
 
+    fn reload_environments(
+        &mut self,
+        collection_path: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let collection_manager = CollectionManager::global(cx);
+        if let Some(environments) = collection_manager.get_collection_environments(collection_path)
+        {
+            self.environment_editor.update(cx, |env_editor, cx| {
+                env_editor.load_environments(&environments, window, cx);
+            });
+        }
+    }
+
     fn set_active_tab(&mut self, tab_index: usize, cx: &mut Context<Self>) {
         self.active_tab = tab_index;
         cx.notify();
@@ -224,11 +245,60 @@ impl CollectionEditor {
                                             input.set_value("".to_string(), window, cx);
                                         });
                                     }
+                                    // Mutually exclusive with WSDL
+                                    if *checked {
+                                        this.import_wsdl = false;
+                                        this.wsdl_spec_input.update(cx, |input, cx| {
+                                            input.set_value("".to_string(), window, cx);
+                                        });
+                                    }
                                     cx.notify();
                                 })),
                         ),
                     )
                     .when_some(import_section, |this, section| this.child(section)),
+            )
+            .child(
+                // WSDL/SOAP Import section
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex().gap_2().items_center().child(
+                            Switch::new("import-wsdl")
+                                .small()
+                                .label("Import from WSDL/SOAP")
+                                .checked(self.import_wsdl)
+                                .on_click(cx.listener(|this, checked, window, cx| {
+                                    this.import_wsdl = *checked;
+                                    if !*checked {
+                                        this.wsdl_spec_input.update(cx, |input, cx| {
+                                            input.set_value("".to_string(), window, cx);
+                                        });
+                                    }
+                                    // Mutually exclusive with OpenAPI
+                                    if *checked {
+                                        this.import_openapi = false;
+                                        this.openapi_spec_path = None;
+                                        this.openapi_spec_input.update(cx, |input, cx| {
+                                            input.set_value("".to_string(), window, cx);
+                                        });
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                    )
+                    .when(self.import_wsdl, |this| {
+                        this.child(
+                            v_flex().gap_2().children([
+                                div()
+                                    .text_sm()
+                                    .font_medium()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("WSDL URL"),
+                                h_flex().child(Input::new(&self.wsdl_spec_input)),
+                            ]),
+                        )
+                    }),
             )
             .child(
                 // Directory path input
@@ -345,6 +415,14 @@ impl CollectionEditor {
                     }
                 }
 
+                // Import from WSDL if enabled
+                if self.import_wsdl {
+                    let wsdl_url = self.wsdl_spec_input.read(cx).value().to_string();
+                    if !wsdl_url.is_empty() {
+                        self.import_from_wsdl_url(&wsdl_url, &current_path, window, cx);
+                    }
+                }
+
                 // Show success notification
                 window.push_notification(
                     (NotificationType::Success, "Collection saved successfully."),
@@ -430,6 +508,111 @@ impl CollectionEditor {
         .detach();
     }
 
+    fn import_from_wsdl_url(
+        &mut self,
+        wsdl_url: &str,
+        collection_path: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let wsdl_url = wsdl_url.to_string();
+        let collection_path = collection_path.to_string();
+
+        cx.spawn_in(window, async move |entity, window| {
+            match super::wsdl::import_from_wsdl_url(&wsdl_url).await {
+                Ok(result) => {
+                    match window.update_global(
+                        |collection_manager: &mut CollectionManager, _window, _cx| {
+                            if let Err(e) = collection_manager
+                                .add_environment_to_collection(&collection_path, result.environment)
+                            {
+                                tracing::error!("Failed to add environment to collection: {}", e);
+                            }
+
+                            for (group_name, requests) in result.groups {
+                                if let Err(e) =
+                                    collection_manager.create_group(&collection_path, &group_name)
+                                {
+                                    tracing::error!(
+                                        "Failed to create group '{}': {}",
+                                        group_name,
+                                        e
+                                    );
+                                }
+
+                                for request in requests {
+                                    let request_name = request.name.clone();
+                                    if let Err(e) = collection_manager.save_request(
+                                        &collection_path,
+                                        &request,
+                                        &request_name,
+                                        Some(&group_name),
+                                    ) {
+                                        tracing::error!(
+                                            "Failed to save request '{}': {}",
+                                            request_name,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+
+                            for request in result.requests {
+                                let request_name = request.name.clone();
+                                if let Err(e) = collection_manager.save_request(
+                                    &collection_path,
+                                    &request,
+                                    &request_name,
+                                    None,
+                                ) {
+                                    tracing::error!(
+                                        "Failed to save request '{}': {}",
+                                        request_name,
+                                        e
+                                    );
+                                }
+                            }
+                            Ok::<(), anyhow::Error>(())
+                        },
+                    ) {
+                        Ok(Ok(())) => {
+                            window
+                                .update(|window, cx| {
+                                    window.push_notification(
+                                        (NotificationType::Success, "WSDL imported successfully."),
+                                        cx,
+                                    );
+                                    let _ = entity
+                                        .update(cx, |this, cx| {
+                                            this.reload_environments(&collection_path, window, cx);
+                                        })
+                                        .log_err();
+                                })
+                                .ok();
+                        }
+                        _ => {
+                            tracing::error!("Failed to update global state during WSDL import");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to import WSDL: {}", e);
+                    window
+                        .update(|window, cx| {
+                            window.push_notification(
+                                (NotificationType::Error, "Failed to import WSDL."),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            }
+
+            Some(())
+        })
+        .detach();
+    }
+
     fn import_from_openapi(
         &mut self,
         spec_path: &str,
@@ -440,7 +623,7 @@ impl CollectionEditor {
         let spec_path = spec_path.to_string();
         let collection_path = collection_path.to_string();
 
-        cx.spawn_in(window, async move |_entity, window| {
+        cx.spawn_in(window, async move |entity, window| {
             match OpenAPIImporter::from_path(&spec_path) {
                 Ok(importer) => {
                     match importer.import() {
@@ -520,6 +703,15 @@ impl CollectionEditor {
                                                 ),
                                                 cx,
                                             );
+                                            let _ = entity
+                                                .update(cx, |this, cx| {
+                                                    this.reload_environments(
+                                                        &collection_path,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .log_err();
                                         })
                                         .ok();
                                 }
