@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "Inflector"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe438c63458706e03479442743baae6c88256498e6431708f6dfc520a26515d3"
+dependencies = [
+ "lazy_static",
+ "regex",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -875,8 +885,10 @@ dependencies = [
  "tracing-subscriber",
  "tree-sitter-url",
  "tree-sitter-xml",
+ "url",
  "urlencoding",
  "wiremock",
+ "wsdl",
 ]
 
 [[package]]
@@ -6368,6 +6380,7 @@ version = "0.38.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
 dependencies = [
+ "encoding_rs",
  "memchr",
 ]
 
@@ -9330,6 +9343,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
+name = "unindent"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
+
+[[package]]
 name = "universal-hash"
 version = "0.6.0-rc.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10774,6 +10793,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
 [[package]]
+name = "wsdl"
+version = "0.1.0"
+dependencies = [
+ "quick-xml 0.37.5",
+ "thiserror 1.0.69",
+ "url",
+ "xsd-parser",
+]
+
+[[package]]
 name = "x11"
 version = "2.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10917,6 +10946,44 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "xsd-parser"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ef11cbaf49b451df4fcac1991609a53f5f3ac351ea39598e4f437e908153eea"
+dependencies = [
+ "Inflector",
+ "anyhow",
+ "base64",
+ "bit-set",
+ "bitflags 2.10.0",
+ "indexmap",
+ "parking_lot",
+ "proc-macro2",
+ "quick-xml 0.38.4",
+ "quote",
+ "regex",
+ "smallvec",
+ "thiserror 2.0.17",
+ "tracing",
+ "unindent",
+ "url",
+ "xsd-parser-types",
+]
+
+[[package]]
+name = "xsd-parser-types"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "982977ebb49137e23fa29c8754c66d191b74c1221ae71bc71059704fc6d62ff5"
+dependencies = [
+ "encoding_rs",
+ "indexmap",
+ "quick-xml 0.38.4",
+ "regex",
+ "thiserror 2.0.17",
+]
 
 [[package]]
 name = "y4m"

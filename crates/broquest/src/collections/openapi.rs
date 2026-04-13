@@ -1,4 +1,4 @@
-use super::types::{EnvironmentToml, EnvironmentVariable};
+use super::types::{EnvironmentToml, EnvironmentVariable, ImportResult};
 use crate::domain::{AuthType, HttpMethod, KeyValuePair, RequestData};
 use oas3::spec::{ObjectOrReference, Operation, ParameterIn, SchemaType};
 use serde_json::json;
@@ -370,12 +370,6 @@ struct OperationInfo {
     method: String,
     path: String,
     operation: Operation,
-}
-
-pub struct ImportResult {
-    pub environment: EnvironmentToml,
-    pub groups: Vec<(String, Vec<RequestData>)>,
-    pub requests: Vec<RequestData>,
 }
 
 fn sanitize_path_name(path: &str) -> String {

@@ -6,6 +6,7 @@ mod manager;
 mod openapi;
 mod panel;
 mod types;
+mod wsdl;
 
 pub use collection_editor::*;
 pub use group_editor::*;
