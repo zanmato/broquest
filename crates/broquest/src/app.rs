@@ -486,6 +486,7 @@ impl Render for BroquestApp {
                     .flex()
                     .flex_1()
                     .w_full()
+                    .overflow_hidden()
                     .items_start()
                     // Left side: Connections panel sidebar
                     .when(!self.sidebar_collapsed, |this| {
