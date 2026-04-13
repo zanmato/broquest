@@ -1,3 +1,4 @@
+use crate::app_settings::AppSettings;
 use gpui::{App, AppContext, Entity, Global};
 use semver::Version;
 use std::path::PathBuf;
@@ -49,7 +50,9 @@ impl UpdateManager {
         cx.spawn(async move |cx| {
             loop {
                 cx.update(|cx| {
-                    Self::poll_for_updates(cx);
+                    if AppSettings::global(cx).settings.general.check_for_updates {
+                        Self::poll_for_updates(cx);
+                    }
                 });
                 cx.background_executor().timer(CHECK_INTERVAL).await;
             }

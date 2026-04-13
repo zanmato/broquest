@@ -67,8 +67,8 @@ pub struct HttpClientService {
 impl Global for HttpClientService {}
 
 impl HttpClientService {
-    pub fn new() -> Self {
-        let timeout_duration = Duration::from_secs(300); // 5 minutes
+    pub fn new(timeout_seconds: u32) -> Self {
+        let timeout_duration = Duration::from_secs(timeout_seconds as u64);
         let client = reqwest::Client::builder()
             .timeout(timeout_duration)
             .user_agent(format!("broquest/{}", env!("CARGO_PKG_VERSION")))
@@ -86,9 +86,23 @@ impl HttpClientService {
         }
     }
 
+    pub fn set_timeout(&mut self, seconds: u32) {
+        let timeout_duration = Duration::from_secs(seconds as u64);
+        self.client = reqwest::Client::builder()
+            .timeout(timeout_duration)
+            .user_agent(format!("broquest/{}", env!("CARGO_PKG_VERSION")))
+            .build()
+            .expect("Failed to create HTTP client");
+        self.timeout = timeout_duration;
+    }
+
     /// Get the global HTTP client instance
     pub fn global(cx: &gpui::App) -> &Self {
         cx.global::<Self>()
+    }
+
+    pub fn global_mut(cx: &mut gpui::App) -> &mut Self {
+        cx.global_mut::<Self>()
     }
 
     /// Ensure OAuth2 has a valid access token, fetching if necessary

@@ -137,7 +137,11 @@ fn main() {
         cx.set_global(collection_manager);
 
         // Initialize HTTP client
-        let http_client = http::HttpClientService::new();
+        let timeout = AppSettings::global(cx)
+            .settings
+            .connection
+            .request_timeout_seconds;
+        let http_client = http::HttpClientService::new(timeout);
         cx.set_global(http_client);
 
         // Initialize UpdateManager
