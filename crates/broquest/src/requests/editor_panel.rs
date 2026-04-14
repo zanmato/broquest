@@ -68,7 +68,6 @@ pub struct EditorPanel {
     focus_handle: FocusHandle,
     tabs: Vec<TabType>,
     active_tab_ix: usize,
-    next_tab_id: usize,
     sidebar_collapsed: bool,
     tabbar_scroll_handle: ScrollHandle,
     _subscriptions: Vec<gpui::Subscription>,
@@ -95,7 +94,6 @@ impl EditorPanel {
             focus_handle: cx.focus_handle(),
             tabs: vec![],
             active_tab_ix: 0,
-            next_tab_id: 0,
             sidebar_collapsed,
             tabbar_scroll_handle: ScrollHandle::default(),
             _subscriptions: vec![settings_subscription],
@@ -108,19 +106,26 @@ impl EditorPanel {
     }
 
     fn close_tab(&mut self, tab_index: usize, cx: &mut Context<Self>) {
-        // Remove tab from UI
         self.tabs.remove(tab_index);
 
-        // Adjust active tab index
         if self.active_tab_ix >= self.tabs.len() || tab_index == self.active_tab_ix {
             self.active_tab_ix = self.tabs.len().saturating_sub(1);
         }
-        self.next_tab_id = match self.tabs.len() {
-            0 => 0,
-            _ => self.active_tab_ix + 1,
-        };
 
         cx.notify();
+    }
+
+    fn next_tab_id(&self) -> usize {
+        self.tabs
+            .iter()
+            .map(|tab| match tab {
+                TabType::Request(t) => t.id,
+                TabType::Collection(t) => t.id,
+                TabType::Group(t) => t.id,
+                TabType::Settings(_) => 0,
+            })
+            .max()
+            .map_or(0, |max| max + 1)
     }
 
     /// Create and add a new tab with full RequestData
@@ -132,8 +137,7 @@ impl EditorPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let tab_id = self.next_tab_id;
-        self.next_tab_id += 1;
+        let tab_id = self.next_tab_id();
 
         tracing::info!(
             "Getting collection name for collection_path: {}",
@@ -269,7 +273,7 @@ impl EditorPanel {
         self._subscriptions.push(dirty_subscription);
 
         self.tabs.push(TabType::Request(request_tab));
-        self.active_tab_ix = tab_id;
+        self.active_tab_ix = self.tabs.len() - 1;
         self.scroll_tabbar_to_the_end(window);
 
         cx.notify();
@@ -313,8 +317,7 @@ impl EditorPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let tab_id = self.next_tab_id;
-        self.next_tab_id += 1;
+        let tab_id = self.next_tab_id();
 
         let collection_tab_title = if collection_data.collection.name.is_empty() {
             "New Collection".to_string()
@@ -377,7 +380,7 @@ impl EditorPanel {
         self._subscriptions.push(subscription);
 
         self.tabs.push(TabType::Collection(collection_tab));
-        self.active_tab_ix = tab_id;
+        self.active_tab_ix = self.tabs.len() - 1;
         self.scroll_tabbar_to_the_end(window);
 
         cx.notify();
@@ -391,8 +394,7 @@ impl EditorPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let tab_id = self.next_tab_id;
-        self.next_tab_id += 1;
+        let tab_id = self.next_tab_id();
 
         let group_tab_title = group_name
             .clone()
@@ -448,7 +450,7 @@ impl EditorPanel {
         self._subscriptions.push(subscription);
 
         self.tabs.push(TabType::Group(group_tab));
-        self.active_tab_ix = tab_id;
+        self.active_tab_ix = self.tabs.len() - 1;
         self.scroll_tabbar_to_the_end(window);
 
         cx.notify();
