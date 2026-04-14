@@ -1,8 +1,9 @@
 use gpui::{
     App, AppContext, BorrowAppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     ImageSource, InteractiveElement as _, IntoElement, KeyBinding, KeybindingKeystroke, Keystroke,
-    ObjectFit, ParentElement as _, Render, SharedString, Styled as _, StyledImage as _,
-    Subscription, Task, WeakEntity, Window, actions, div, img, prelude::FluentBuilder, px,
+    ObjectFit, ParentElement as _, Render, SharedString, StyleRefinement, Styled as _,
+    StyledImage as _, Subscription, Task, WeakEntity, Window, actions, div, img,
+    prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt, WindowExt,
@@ -169,6 +170,7 @@ pub struct RequestEditor {
     // Resizable panels
     request_response_state: Entity<ResizableState>,
     layout: EditorLayout,
+    url_bar_style_refinement: StyleRefinement,
 }
 
 impl RequestEditor {
@@ -318,6 +320,11 @@ impl RequestEditor {
             response_image: None,
             request_response_state,
             layout: AppSettings::global(cx).settings.editor.layout,
+            url_bar_style_refinement: StyleRefinement {
+                flex_grow: Some(4.0),
+                flex_shrink: Some(1.0),
+                ..Default::default()
+            },
         }
     }
 
@@ -1083,53 +1090,67 @@ impl RequestEditor {
         h_flex()
             .gap_3()
             .w_full()
+            .flex_wrap()
             .child(
-                div()
-                    .w(px(120.))
-                    .font_bold()
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .w(px(120.))
-                    .child(Select::new(&self.method_select).text_color(method_color)),
-            )
-            .child(
-                div()
-                    .w(px(160.))
-                    .child(Select::new(&self.environment_select)),
-            )
-            .child(
-                div()
+                h_flex()
                     .flex_1()
-                    .on_key_down(cx.listener(|this, evt: &gpui::KeyDownEvent, window, cx| {
-                        if evt.keystroke.should_match(&this.send_keystroke) {
-                            this.send_request(window, cx);
-                        }
-                    }))
+                    .gap_3()
                     .child(
-                        Input::new(&self.url_input)
-                            .cleanable(true)
+                        div()
+                            .w(px(120.))
+                            .font_bold()
                             .font_family(cx.theme().mono_font_family.clone())
-                            .text_sm(),
+                            .child(Select::new(&self.method_select).text_color(method_color)),
+                    )
+                    .child(
+                        div()
+                            .flex_auto()
+                            .min_w(px(160.))
+                            .child(Select::new(&self.environment_select)),
                     ),
             )
             .child(
-                div()
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            if this.is_loading {
-                                this.cancel_request(window, cx);
-                            }
-                        }),
+                h_flex()
+                    .gap_3()
+                    .refine_style(&self.url_bar_style_refinement)
+                    .min_w(px(300.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .on_key_down(cx.listener(
+                                |this, evt: &gpui::KeyDownEvent, window, cx| {
+                                    if evt.keystroke.should_match(&this.send_keystroke) {
+                                        this.send_request(window, cx);
+                                    }
+                                },
+                            ))
+                            .child(
+                                Input::new(&self.url_input)
+                                    .cleanable(true)
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .text_sm(),
+                            ),
                     )
                     .child(
-                        Button::new("send-request")
-                            .outline()
-                            .icon(IconName::Send)
-                            .loading(self.is_loading)
-                            .loading_icon(IconName::LoaderCircle)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.send_request(window, cx);
-                            })),
+                        div()
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    if this.is_loading {
+                                        this.cancel_request(window, cx);
+                                    }
+                                }),
+                            )
+                            .child(
+                                Button::new("send-request")
+                                    .outline()
+                                    .icon(IconName::Send)
+                                    .loading(self.is_loading)
+                                    .loading_icon(IconName::LoaderCircle)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.send_request(window, cx);
+                                    })),
+                            ),
                     ),
             )
     }
@@ -1275,23 +1296,27 @@ impl RequestEditor {
             .border_t_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().background)
-            .text_sm()
-            .text_color(cx.theme().muted_foreground)
-            .when_some(status_text, |this, (status, text)| {
-                let text_color = match status {
-                    100..=199 => cx.theme().blue,   // Informational responses
-                    200..=299 => cx.theme().green,  // Successful responses
-                    300..=399 => cx.theme().blue,   // Redirection messages
-                    400..=499 => cx.theme().yellow, // Client error responses
-                    500..=599 => cx.theme().red,    // Server error responses
-                    _ => cx.theme().foreground,     // Default for unknown ranges
-                };
-                this.child(div().text_color(text_color).child(text))
-            })
-            .when(!latency_text.is_empty(), |this| {
-                this.child(div().child(format!(" • {}", latency_text)))
-            })
-            .child(size_text)
+            .child(
+                h_flex()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .when_some(status_text, |this, (status, text)| {
+                        let text_color = match status {
+                            100..=199 => cx.theme().blue,   // Informational responses
+                            200..=299 => cx.theme().green,  // Successful responses
+                            300..=399 => cx.theme().blue,   // Redirection messages
+                            400..=499 => cx.theme().yellow, // Client error responses
+                            500..=599 => cx.theme().red,    // Server error responses
+                            _ => cx.theme().foreground,     // Default for unknown ranges
+                        };
+                        this.child(div().text_color(text_color).child(text))
+                    })
+                    .when(!latency_text.is_empty(), |this| {
+                        this.child(div().child(format!(" • {}", latency_text)))
+                    })
+                    .child(size_text),
+            )
             .child(div().flex_1())
             .child(
                 h_flex()
