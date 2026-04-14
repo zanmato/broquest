@@ -22,16 +22,22 @@ impl TabBadge {
 
 impl RenderOnce for TabBadge {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (badge_bg, badge_color) = if cx.theme().is_dark() {
+            (gpui::rgb(0xd8ebee), gpui::black())
+        } else {
+            (gpui::rgb(0x22d3ee), gpui::white())
+        };
+
         div()
             .flex()
             .items_center()
             .justify_center()
-            .bg(cx.theme().red)
+            .bg(badge_bg)
             .w(px(16.))
             .h(px(16.))
-            .text_color(gpui::white())
+            .text_color(badge_color)
             .rounded_full()
-            .text_size(px(9.))
+            .text_size(px(10.))
             .font_bold()
             .child(self.count.to_string())
     }
