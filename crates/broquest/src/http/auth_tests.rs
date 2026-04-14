@@ -25,7 +25,7 @@ async fn test_basic_auth_sends_correct_header() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -52,7 +52,7 @@ async fn test_api_key_auth_sends_custom_header() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -79,7 +79,7 @@ async fn test_oauth2_sends_bearer_token() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -106,7 +106,7 @@ async fn test_oauth2_no_token_sends_no_auth_header() {
         .mount_as_scoped(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -141,7 +141,7 @@ async fn test_none_auth_sends_no_auth_header() {
         .mount_as_scoped(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -172,7 +172,7 @@ async fn test_inherit_auth_sends_no_auth_header() {
         .mount_as_scoped(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -238,7 +238,7 @@ async fn test_digest_auth_challenge_response() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -269,7 +269,7 @@ async fn test_digest_auth_no_challenge_returns_initial_response() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -300,7 +300,7 @@ async fn test_auth_with_environment_variables() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -332,7 +332,7 @@ async fn test_auth_with_secret_variables() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -362,7 +362,7 @@ async fn test_post_request_with_auth() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Post,
@@ -394,7 +394,7 @@ async fn test_oauth2_client_credentials_fetches_token() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let mut oauth = OAuth2Auth {
         grant_type: OAuth2GrantType::ClientCredentials,
@@ -415,7 +415,7 @@ async fn test_oauth2_client_credentials_fetches_token() {
 
 #[tokio::test]
 async fn test_oauth2_uses_existing_token() {
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let mut oauth = OAuth2Auth {
         access_token: Some("existing-token".to_string()),
@@ -443,7 +443,7 @@ async fn test_oauth2_token_error_returns_meaningful_message() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let mut oauth = OAuth2Auth {
         grant_type: OAuth2GrantType::ClientCredentials,
@@ -475,7 +475,7 @@ async fn test_oauth2_refresh_token_stored() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let mut oauth = OAuth2Auth {
         grant_type: OAuth2GrantType::ClientCredentials,
@@ -508,7 +508,7 @@ async fn test_jwt_fetches_token_from_login_endpoint() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let mut jwt = JwtAuth {
         login_url: format!("{}/auth/login", mock_server.uri()),
@@ -539,7 +539,7 @@ async fn test_jwt_uses_custom_field_names() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let mut jwt = JwtAuth {
         login_url: format!("{}/auth/login", mock_server.uri()),
@@ -560,7 +560,7 @@ async fn test_jwt_uses_custom_field_names() {
 
 #[tokio::test]
 async fn test_jwt_reuses_valid_token() {
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let future = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -590,7 +590,7 @@ async fn test_jwt_sends_bearer_token() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -618,7 +618,7 @@ async fn test_jwt_sends_custom_token_type() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -645,7 +645,7 @@ async fn test_jwt_no_token_sends_no_auth_header() {
         .mount_as_scoped(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let request_data = RequestData {
         method: HttpMethod::Get,
@@ -682,7 +682,7 @@ async fn test_jwt_login_error_returns_meaningful_message() {
         .mount(&mock_server)
         .await;
 
-    let client = HttpClientService::new();
+    let client = HttpClientService::new(30);
 
     let mut jwt = JwtAuth {
         login_url: format!("{}/auth/login", mock_server.uri()),
