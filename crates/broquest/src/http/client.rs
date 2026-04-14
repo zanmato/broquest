@@ -519,16 +519,20 @@ impl HttpClientService {
             })
             .collect::<Vec<_>>();
 
-        // Detect if response is an image based on content-type header
+        // Detect response format to determine how to read the body
         let content_type_str = response
             .headers()
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        let is_image = image_format_from_content_type(content_type_str).is_some();
+        let response_format = ResponseFormat::from_content_type(content_type_str);
+        let is_binary_response = matches!(
+            response_format,
+            ResponseFormat::Image(_) | ResponseFormat::Pdf | ResponseFormat::Binary
+        );
 
-        // Read body as bytes for images, text for everything else
-        let (response_body, body_bytes) = if is_image {
+        // Read body as bytes for binary responses, text for everything else
+        let (response_body, body_bytes) = if is_binary_response {
             let bytes = async_compat::Compat::new(response.bytes())
                 .await
                 .map_err(|e| {
@@ -538,7 +542,7 @@ impl HttpClientService {
                     )
                 })?;
             let body_vec = bytes.to_vec();
-            let placeholder = format!("[Binary image data: {} bytes]", body_vec.len());
+            let placeholder = format!("[Binary data: {} bytes]", body_vec.len());
             (placeholder, Some(body_vec))
         } else {
             let text = async_compat::Compat::new(response.text())
@@ -733,6 +737,7 @@ pub enum ResponseFormat {
     PlainText,
     Binary,
     Image(gpui::ImageFormat),
+    Pdf,
     Unknown,
 }
 
@@ -771,6 +776,8 @@ impl ResponseFormat {
             ResponseFormat::Html
         } else if content_type.contains("text") || content_type.contains("plain") {
             ResponseFormat::PlainText
+        } else if content_type.contains("application/pdf") {
+            ResponseFormat::Pdf
         } else if let Some(img_format) = image_format_from_content_type(&content_type) {
             ResponseFormat::Image(img_format)
         } else if content_type.contains("application/octet-stream")
@@ -826,6 +833,7 @@ impl ResponseFormat {
             ResponseFormat::PlainText => "text",
             ResponseFormat::Binary => "text",
             ResponseFormat::Image(_) => "text",
+            ResponseFormat::Pdf => "text",
             ResponseFormat::Unknown => "text",
         }
     }
@@ -932,6 +940,18 @@ mod tests {
         assert_eq!(
             ResponseFormat::from_content_type("image/avif"),
             ResponseFormat::Binary
+        );
+    }
+
+    #[test]
+    fn test_pdf_content_type_detection() {
+        assert_eq!(
+            ResponseFormat::from_content_type("application/pdf"),
+            ResponseFormat::Pdf
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("application/pdf; charset=utf-8"),
+            ResponseFormat::Pdf
         );
     }
 

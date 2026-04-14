@@ -1380,7 +1380,35 @@ impl RequestEditor {
                         // Response content
                         div().flex_1().child(match self.active_response_tab {
                             ResponseTab::Response => {
-                                if let Some(image) = &self.response_image {
+                                if self.response_format == ResponseFormat::Pdf {
+                                    div()
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(
+                                            Button::new("open-pdf")
+                                                .label("Open PDF")
+                                                .icon(IconName::ExternalLink)
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    if let Some(bytes) = &this.response_data.body_bytes {
+                                                        let timestamp = std::time::SystemTime::now()
+                                                            .duration_since(std::time::UNIX_EPOCH)
+                                                            .unwrap_or_default()
+                                                            .as_millis();
+                                                        let file_name = format!("broquest-{}.pdf", timestamp);
+                                                        let path = std::env::temp_dir().join(file_name);
+                                                        match std::fs::write(&path, bytes) {
+                                                            Ok(()) => cx.open_with_system(&path),
+                                                            Err(error) => {
+                                                                tracing::error!("Failed to write PDF temp file: {}", error);
+                                                            }
+                                                        }
+                                                    }
+                                                })),
+                                        )
+                                        .into_any_element()
+                                } else if let Some(image) = &self.response_image {
                                     div()
                                         .h_full()
                                         .flex()
