@@ -1,8 +1,8 @@
 use gpui::{
     App, AppContext, BorrowAppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyBinding, KeybindingKeystroke, Keystroke,
-    ParentElement as _, Render, SharedString, Styled as _, Subscription, Task, WeakEntity, Window,
-    actions, div, prelude::FluentBuilder, px,
+    ImageSource, InteractiveElement as _, IntoElement, KeyBinding, KeybindingKeystroke, Keystroke,
+    ObjectFit, ParentElement as _, Render, SharedString, Styled as _, StyledImage as _,
+    Subscription, Task, WeakEntity, Window, actions, div, img, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt, WindowExt,
@@ -17,6 +17,7 @@ use gpui_component::{
     v_flex,
 };
 use jsonpath_rust::JsonPath;
+use std::sync::Arc;
 
 use super::auth_editor::{AuthEditor, AuthEditorEvent};
 use super::form_editor::{FormEditor, FormEditorEvent};
@@ -163,6 +164,7 @@ pub struct RequestEditor {
     original_response_body: Option<String>,
     _jsonpath_filter_task: Task<()>,
     response_format: ResponseFormat,
+    response_image: Option<Arc<gpui::Image>>,
     // Resizable panels
     request_response_state: Entity<ResizableState>,
 }
@@ -311,6 +313,7 @@ impl RequestEditor {
             original_response_body: None,
             _jsonpath_filter_task: Task::ready(()),
             response_format: ResponseFormat::Unknown,
+            response_image: None,
             request_response_state,
         }
     }
@@ -936,6 +939,12 @@ impl RequestEditor {
                             request_editor.is_loading = false;
                             request_editor.response_format = format;
                             request_editor.original_response_body = Some(formatted_content.clone());
+                            request_editor.response_image = match (format, &response_data.body_bytes) {
+                                (ResponseFormat::Image(img_format), Some(bytes)) => {
+                                    Some(Arc::new(gpui::Image::from_bytes(img_format, bytes.clone())))
+                                }
+                                _ => None,
+                            };
                             request_editor.jsonpath_input.update(cx, |input, cx| {
                                 input.set_value("", window, cx);
                             });
@@ -971,13 +980,15 @@ impl RequestEditor {
                             headers: vec![],
                             request_headers: vec![],
                             body: http_error.details.clone(),
-                            url: None, // No URL available for error responses
+                            body_bytes: None,
+                            url: None,
                         };
 
                         // Update the RequestEditor's response_data for status bar and reset loading state
                         editor_entity.update(cx, |request_editor, cx| {
                             request_editor.response_data = response_data.clone();
                             request_editor.is_loading = false;
+                            request_editor.response_image = None;
                             cx.notify();
                         });
 
@@ -1337,49 +1348,69 @@ impl RequestEditor {
                         // Response content
                         div().flex_1().child(match self.active_response_tab {
                             ResponseTab::Response => {
-                                let is_json = self.is_response_json();
-                                v_flex()
-                                    .h_full()
-                                    .child(
-                                        div().flex_1().child(
-                                            Input::new(&self.response_input)
-                                                .font_family(cx.theme().mono_font_family.clone())
-                                                .text_size(px(12.))
-                                                .h_full()
-                                                .py_3()
-                                                .bordered(false)
-                                                .rounded_none()
-                                                .cleanable(true),
-                                        ),
-                                    )
-                                    .when(is_json, |this| {
-                                        this.child(
-                                            h_flex()
-                                                .px_3()
-                                                .py_2()
-                                                .border_t_1()
-                                                .border_color(cx.theme().border)
-                                                .bg(cx.theme().background)
-                                                .gap_3()
-                                                .items_center()
-                                                .child(
-                                                    div()
-                                                        .text_color(cx.theme().blue)
-                                                        .child(Icon::new(IconName::Funnel)),
-                                                )
-                                                .child(
-                                                    div().flex_1().child(
-                                                        Input::new(&self.jsonpath_input)
-                                                            .font_family(
-                                                                cx.theme().mono_font_family.clone(),
-                                                            )
-                                                            .text_size(px(12.))
-                                                            .cleanable(true),
-                                                    ),
-                                                ),
+                                if let Some(image) = &self.response_image {
+                                    div()
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .overflow_hidden()
+                                        .child(
+                                            img(ImageSource::Image(image.clone()))
+                                                .max_w_full()
+                                                .max_h_full()
+                                                .object_fit(ObjectFit::Contain),
                                         )
-                                    })
-                                    .into_any_element()
+                                        .into_any_element()
+                                } else {
+                                    let is_json = self.is_response_json();
+                                    v_flex()
+                                        .h_full()
+                                        .child(
+                                            div().flex_1().child(
+                                                Input::new(&self.response_input)
+                                                    .font_family(
+                                                        cx.theme().mono_font_family.clone(),
+                                                    )
+                                                    .text_size(px(12.))
+                                                    .h_full()
+                                                    .py_3()
+                                                    .bordered(false)
+                                                    .rounded_none()
+                                                    .cleanable(true),
+                                            ),
+                                        )
+                                        .when(is_json, |this| {
+                                            this.child(
+                                                h_flex()
+                                                    .px_3()
+                                                    .py_2()
+                                                    .border_t_1()
+                                                    .border_color(cx.theme().border)
+                                                    .bg(cx.theme().background)
+                                                    .gap_3()
+                                                    .items_center()
+                                                    .child(
+                                                        div()
+                                                            .text_color(cx.theme().blue)
+                                                            .child(Icon::new(IconName::Funnel)),
+                                                    )
+                                                    .child(
+                                                        div().flex_1().child(
+                                                            Input::new(&self.jsonpath_input)
+                                                                .font_family(
+                                                                    cx.theme()
+                                                                        .mono_font_family
+                                                                        .clone(),
+                                                                )
+                                                                .text_size(px(12.))
+                                                                .cleanable(true),
+                                                        ),
+                                                    ),
+                                            )
+                                        })
+                                        .into_any_element()
+                                }
                             }
                             ResponseTab::Raw => div()
                                 .h_full()

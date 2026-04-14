@@ -91,5 +91,6 @@ pub struct ResponseData {
     pub headers: Vec<KeyValuePair>,
     pub request_headers: Vec<KeyValuePair>,
     pub body: String,
+    pub body_bytes: Option<Vec<u8>>,
     pub url: Option<String>,
 }

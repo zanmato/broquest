@@ -519,18 +519,44 @@ impl HttpClientService {
             })
             .collect::<Vec<_>>();
 
-        // Get response body with async-compat
-        let response_body = async_compat::Compat::new(response.text())
-            .await
-            .map_err(|e| {
-                HttpError::new(
-                    "Failed to read response body",
-                    format!("Failed to read response body: {}", e),
-                )
-            })?;
+        // Detect if response is an image based on content-type header
+        let content_type_str = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let is_image = image_format_from_content_type(content_type_str).is_some();
+
+        // Read body as bytes for images, text for everything else
+        let (response_body, body_bytes) = if is_image {
+            let bytes = async_compat::Compat::new(response.bytes())
+                .await
+                .map_err(|e| {
+                    HttpError::new(
+                        "Failed to read response body",
+                        format!("Failed to read response body: {}", e),
+                    )
+                })?;
+            let body_vec = bytes.to_vec();
+            let placeholder = format!("[Binary image data: {} bytes]", body_vec.len());
+            (placeholder, Some(body_vec))
+        } else {
+            let text = async_compat::Compat::new(response.text())
+                .await
+                .map_err(|e| {
+                    HttpError::new(
+                        "Failed to read response body",
+                        format!("Failed to read response body: {}", e),
+                    )
+                })?;
+            (text, None)
+        };
 
         let latency = start_time.elapsed();
-        let response_size = response_body.len();
+        let response_size = body_bytes
+            .as_ref()
+            .map(|b| b.len())
+            .unwrap_or(response_body.len());
 
         let response_data = ResponseData {
             status_code: Some(status_code),
@@ -540,6 +566,7 @@ impl HttpClientService {
             headers: response_headers,
             request_headers,
             body: response_body,
+            body_bytes,
             url: Some(request_data.url.clone()),
         };
 
@@ -705,7 +732,31 @@ pub enum ResponseFormat {
     Html,
     PlainText,
     Binary,
+    Image(gpui::ImageFormat),
     Unknown,
+}
+
+fn image_format_from_content_type(content_type: &str) -> Option<gpui::ImageFormat> {
+    let ct = content_type.to_lowercase();
+    if ct.contains("image/png") {
+        Some(gpui::ImageFormat::Png)
+    } else if ct.contains("image/jpeg") || ct.contains("image/jpg") {
+        Some(gpui::ImageFormat::Jpeg)
+    } else if ct.contains("image/webp") {
+        Some(gpui::ImageFormat::Webp)
+    } else if ct.contains("image/gif") {
+        Some(gpui::ImageFormat::Gif)
+    } else if ct.contains("image/svg+xml") {
+        Some(gpui::ImageFormat::Svg)
+    } else if ct.contains("image/bmp") {
+        Some(gpui::ImageFormat::Bmp)
+    } else if ct.contains("image/tiff") {
+        Some(gpui::ImageFormat::Tiff)
+    } else if ct.contains("image/x-icon") || ct.contains("image/vnd.microsoft.icon") {
+        Some(gpui::ImageFormat::Ico)
+    } else {
+        None
+    }
 }
 
 impl ResponseFormat {
@@ -714,12 +765,14 @@ impl ResponseFormat {
 
         if content_type.contains("json") {
             ResponseFormat::Json
-        } else if content_type.contains("xml") {
+        } else if content_type.contains("xml") && !content_type.contains("image/svg+xml") {
             ResponseFormat::Xml
         } else if content_type.contains("html") {
             ResponseFormat::Html
         } else if content_type.contains("text") || content_type.contains("plain") {
             ResponseFormat::PlainText
+        } else if let Some(img_format) = image_format_from_content_type(&content_type) {
+            ResponseFormat::Image(img_format)
         } else if content_type.contains("application/octet-stream")
             || content_type.contains("image/")
             || content_type.contains("video/")
@@ -772,6 +825,7 @@ impl ResponseFormat {
             ResponseFormat::Html => "html",
             ResponseFormat::PlainText => "text",
             ResponseFormat::Binary => "text",
+            ResponseFormat::Image(_) => "text",
             ResponseFormat::Unknown => "text",
         }
     }
@@ -779,18 +833,12 @@ impl ResponseFormat {
     /// Format content with pretty printing if it's JSON
     pub fn format_content(&self, content: &str) -> String {
         match self {
-            ResponseFormat::Json => {
-                // Try to parse as JSON and pretty print
-                match serde_json::from_str::<serde_json::Value>(content) {
-                    Ok(value) => {
-                        serde_json::to_string_pretty(&value).unwrap_or_else(|_| content.to_string())
-                    }
-                    Err(_) => {
-                        // If parsing fails, return the original content
-                        content.to_string()
-                    }
+            ResponseFormat::Json => match serde_json::from_str::<serde_json::Value>(content) {
+                Ok(value) => {
+                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| content.to_string())
                 }
-            }
+                Err(_) => content.to_string(),
+            },
             ResponseFormat::Xml => format_xml(content).unwrap_or_else(|| content.to_string()),
             _ => content.to_string(),
         }
@@ -842,6 +890,47 @@ mod tests {
         );
         assert_eq!(
             ResponseFormat::from_content_type("application/octet-stream"),
+            ResponseFormat::Binary
+        );
+    }
+
+    #[test]
+    fn test_image_content_type_detection() {
+        assert_eq!(
+            ResponseFormat::from_content_type("image/png"),
+            ResponseFormat::Image(gpui::ImageFormat::Png)
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("image/jpeg"),
+            ResponseFormat::Image(gpui::ImageFormat::Jpeg)
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("image/webp"),
+            ResponseFormat::Image(gpui::ImageFormat::Webp)
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("image/gif"),
+            ResponseFormat::Image(gpui::ImageFormat::Gif)
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("image/svg+xml"),
+            ResponseFormat::Image(gpui::ImageFormat::Svg)
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("image/bmp"),
+            ResponseFormat::Image(gpui::ImageFormat::Bmp)
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("image/tiff"),
+            ResponseFormat::Image(gpui::ImageFormat::Tiff)
+        );
+        assert_eq!(
+            ResponseFormat::from_content_type("image/x-icon"),
+            ResponseFormat::Image(gpui::ImageFormat::Ico)
+        );
+        // Unsupported image format should fall through to Binary
+        assert_eq!(
+            ResponseFormat::from_content_type("image/avif"),
             ResponseFormat::Binary
         );
     }

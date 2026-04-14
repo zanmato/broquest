@@ -309,8 +309,7 @@ impl SettingsView {
                                         .connection
                                         .request_timeout_seconds = val as u32;
 
-                                    HttpClientService::global_mut(cx)
-                                        .set_timeout(val as u32);
+                                    HttpClientService::global_mut(cx).set_timeout(val as u32);
 
                                     let key = "connection.request_timeout_seconds".to_string();
                                     let value = val.to_string();
