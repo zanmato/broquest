@@ -1,7 +1,7 @@
 use crate::app_database::AppDatabase;
 use crate::app_settings::AppSettings;
 use crate::http::HttpClientService;
-use crate::settings::Settings;
+use crate::settings::{EditorLayout, Settings};
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, Render, SharedString,
     Styled, Window, px, rems,
@@ -285,6 +285,39 @@ impl SettingsView {
                         .default_value(default_settings.editor.folding),
                     )
                     .description("Enable code folding in the editor."),
+                ]),
+                SettingGroup::new().title("Layout").items(vec![
+                    SettingItem::new(
+                        "Panel Layout",
+                        SettingField::dropdown(
+                            vec![
+                                ("vertical".into(), "Vertical".into()),
+                                ("horizontal".into(), "Horizontal".into()),
+                            ],
+                            move |cx: &App| {
+                                SharedString::from(
+                                    AppSettings::global(cx).settings.editor.layout.as_str(),
+                                )
+                            },
+                            {
+                                let view_handle = view_handle.clone();
+                                move |val: SharedString, cx: &mut App| {
+                                    AppSettings::global_mut(cx).settings.editor.layout =
+                                        EditorLayout::from_str(&val);
+
+                                    let key = "editor.layout".to_string();
+                                    let value = val.to_string();
+                                    if let Some(view) = view_handle.upgrade() {
+                                        view.update(cx, |view, cx| {
+                                            view.save_setting_debounced(key, value, cx);
+                                        });
+                                    }
+                                }
+                            },
+                        )
+                        .default_value(SharedString::from(EditorLayout::default().as_str())),
+                    )
+                    .description("Direction of the request and response panels."),
                 ]),
                 SettingGroup::new().title("Connection").items(vec![
                     SettingItem::new(

@@ -6,8 +6,8 @@ use gpui::{
 use gpui_component::{
     ActiveTheme, Root, Sizable as _, Theme, ThemeRegistry, TitleBar, WindowExt,
     button::{Button, ButtonVariants as _},
-    menu::AppMenuBar,
     global_state::GlobalState,
+    menu::AppMenuBar,
     notification::{Notification, NotificationType},
 };
 
@@ -531,10 +531,7 @@ fn init_menus(cx: &mut App) {
 
     cx.set_menus(build_menu());
 
-     let menu = build_menu()
-        .into_iter()
-        .map(|menu| menu.owned())
-        .collect();
+    let menu = build_menu().into_iter().map(|menu| menu.owned()).collect();
     GlobalState::global_mut(cx).set_app_menus(menu);
 }
 

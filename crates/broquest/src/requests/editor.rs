@@ -11,7 +11,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     kbd::Kbd,
     notification::NotificationType,
-    resizable::{ResizableState, resizable_panel, v_resizable},
+    resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
     select::{Select, SelectEvent, SelectItem, SelectState},
     tab::{Tab, TabBar},
     v_flex,
@@ -29,6 +29,7 @@ use crate::domain::{AuthType, ContentType, HttpMethod, KeyValuePair, RequestData
 use crate::http::ResponseFormat;
 use crate::result_ext::ResultExt;
 use crate::scripting::{ScriptEditor, ScriptEditorEvent};
+use crate::settings::EditorLayout;
 use crate::ui::icon::IconName;
 use crate::ui::tab_badge::TabBadge;
 use crate::{app_events::AppEvent, environments::EnvironmentResolver};
@@ -167,6 +168,7 @@ pub struct RequestEditor {
     response_image: Option<Arc<gpui::Image>>,
     // Resizable panels
     request_response_state: Entity<ResizableState>,
+    layout: EditorLayout,
 }
 
 impl RequestEditor {
@@ -315,6 +317,7 @@ impl RequestEditor {
             response_format: ResponseFormat::Unknown,
             response_image: None,
             request_response_state,
+            layout: AppSettings::global(cx).settings.editor.layout,
         }
     }
 
@@ -342,6 +345,10 @@ impl RequestEditor {
         self.script_editor.update(cx, |editor, cx| {
             editor.apply_editor_settings(window, cx);
         });
+        if self.layout != settings.layout {
+            self.layout = settings.layout;
+            self.request_response_state = cx.new(|_cx| ResizableState::default());
+        }
     }
 
     pub fn set_request_data(
@@ -1907,30 +1914,23 @@ impl RequestEditor {
     }
 }
 
-impl Render for RequestEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl RequestEditor {
+    fn render_vertical_layout(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         v_flex()
-            .key_context(CONTEXT)
-            .on_action(cx.listener(|this: &mut RequestEditor, &Save, window, cx| {
-                tracing::info!("Save action triggered");
-                this.save_request(window, cx);
-            }))
             .size_full()
-            .bg(cx.theme().background)
             .child(
-                // URL bar with method selector and buttons
                 div()
                     .p_3()
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(self.render_url_bar(cx)),
             )
+            .child(self.render_request_tabs(cx))
             .child(
-                // Request configuration tabs
-                self.render_request_tabs(cx),
-            )
-            .child(
-                // Resizable request/response panels
                 div().flex_1().min_h_0().child(
                     v_resizable("request-response")
                         .with_state(&self.request_response_state)
@@ -1943,10 +1943,68 @@ impl Render for RequestEditor {
                         .child(resizable_panel().child(self.render_response_area(window, cx))),
                 ),
             )
+            .child(self.render_status_bar(cx))
+    }
+
+    fn render_horizontal_layout(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .size_full()
             .child(
-                // Status bar
-                self.render_status_bar(cx),
+                div().flex_1().min_h_0().child(
+                    h_resizable("request-response")
+                        .with_state(&self.request_response_state)
+                        .child(
+                            resizable_panel()
+                                .size(px(400.))
+                                .size_range(px(200.)..gpui::Pixels::MAX)
+                                .child(
+                                    v_flex()
+                                        .size_full()
+                                        .child(
+                                            div()
+                                                .p_3()
+                                                .border_b_1()
+                                                .border_color(cx.theme().border)
+                                                .child(self.render_url_bar(cx)),
+                                        )
+                                        .child(self.render_request_tabs(cx))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_h_0()
+                                                .child(self.render_tab_content(cx)),
+                                        ),
+                                ),
+                        )
+                        .child(resizable_panel().child(self.render_response_area(window, cx))),
+                ),
             )
+            .child(self.render_status_bar(cx))
+    }
+}
+
+impl Render for RequestEditor {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = match self.layout {
+            EditorLayout::Vertical => self.render_vertical_layout(window, cx).into_any_element(),
+            EditorLayout::Horizontal => {
+                self.render_horizontal_layout(window, cx).into_any_element()
+            }
+        };
+
+        div()
+            .key_context(CONTEXT)
+            .on_action(cx.listener(|this: &mut RequestEditor, &Save, window, cx| {
+                tracing::info!("Save action triggered");
+                this.save_request(window, cx);
+            }))
+            .size_full()
+            .bg(cx.theme().background)
+            .child(content)
     }
 }
 

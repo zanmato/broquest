@@ -48,6 +48,9 @@ impl Settings {
                 "editor.folding" => {
                     settings.editor.folding = value.parse().unwrap_or(false);
                 }
+                "editor.layout" => {
+                    settings.editor.layout = EditorLayout::from_str(value);
+                }
                 "appearance.theme" => {
                     settings.appearance.theme = value.clone();
                 }
@@ -96,6 +99,30 @@ pub struct EditorSettings {
     pub show_whitespace: bool,
     pub soft_wrap: bool,
     pub folding: bool,
+    pub layout: EditorLayout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum EditorLayout {
+    #[default]
+    Vertical,
+    Horizontal,
+}
+
+impl EditorLayout {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EditorLayout::Vertical => "vertical",
+            EditorLayout::Horizontal => "horizontal",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "horizontal" => EditorLayout::Horizontal,
+            _ => EditorLayout::Vertical,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
