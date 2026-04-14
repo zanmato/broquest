@@ -7,6 +7,7 @@ use gpui_component::{
     ActiveTheme, Root, Sizable as _, Theme, ThemeRegistry, TitleBar, WindowExt,
     button::{Button, ButtonVariants as _},
     menu::AppMenuBar,
+    global_state::GlobalState,
     notification::{Notification, NotificationType},
 };
 
@@ -528,7 +529,17 @@ fn init_menus(cx: &mut App) {
         gpui::KeyBinding::new("ctrl-,", OpenSettings, None),
     ]);
 
-    cx.set_menus(vec![
+    cx.set_menus(build_menu());
+
+     let menu = build_menu()
+        .into_iter()
+        .map(|menu| menu.owned())
+        .collect();
+    GlobalState::global_mut(cx).set_app_menus(menu);
+}
+
+fn build_menu() -> Vec<Menu> {
+    vec![
         Menu {
             name: "File".into(),
             items: vec![
@@ -539,6 +550,7 @@ fn init_menus(cx: &mut App) {
                 MenuItem::Separator,
                 MenuItem::action("Quit", Quit),
             ],
+            disabled: false,
         },
         Menu {
             name: "Edit".into(),
@@ -552,6 +564,7 @@ fn init_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action("Select All", gpui_component::input::SelectAll),
             ],
+            disabled: false,
         },
-    ]);
+    ]
 }

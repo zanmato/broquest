@@ -480,7 +480,7 @@ impl EditorPanel {
         window.on_next_frame(move |window, _| {
             window.on_next_frame(move |_, _| {
                 let max_offset = scroll_handle.max_offset();
-                scroll_handle.set_offset(gpui::point(-max_offset.width, gpui::px(0.0)));
+                scroll_handle.set_offset(gpui::point(-max_offset.x, gpui::px(0.0)));
             })
         });
     }
