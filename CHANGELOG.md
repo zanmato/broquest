@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.12] - 2026-04-15
+
+### Features
+
+- Add settings view
+- Add panel layout setting
+- Add image support (detect image mime and render inline)
+- Detect PDF mime and offer to open with OS
+- WSDL import
+- Add XML formatting
+
+### Fixes
+
+- Allow overriding Content-Type header
+- Fix maximizing
+- Fix tab index
+
+### Style
+
+- Wrap URL bar
+- Change tab badge colors
+
 ## [0.1.11] - 2026-03-26
 
 ### Features
