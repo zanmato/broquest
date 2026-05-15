@@ -1,7 +1,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="docs/image/logo-light.png">
-  <img alt="Broquest" src="docs/image/logo-light.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/logo-light.png">
+  <img alt="Broquest" src="docs/images/logo-light.png">
 </picture>
 <hr><br>
 
