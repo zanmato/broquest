@@ -27,6 +27,19 @@ pub struct UserSetting {
     pub theme: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistoryEntry {
+    pub id: Option<i64>,
+    pub method: String,
+    pub url: String,
+    pub status_code: Option<i32>,
+    pub latency_ms: Option<i64>,
+    pub response_size: Option<i64>,
+    pub request_name: Option<String>,
+    pub collection_path: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
 impl Global for AppDatabase {}
 
 impl AppDatabase {
@@ -96,6 +109,31 @@ impl AppDatabase {
                 updated_at INTEGER NOT NULL
             )
             "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Request history table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS request_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL,
+                method TEXT NOT NULL,
+                url TEXT NOT NULL,
+                status_code INTEGER,
+                latency_ms INTEGER,
+                response_size INTEGER,
+                request_name TEXT,
+                collection_path TEXT
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_history_created_at ON request_history(created_at DESC)",
         )
         .execute(&self.pool)
         .await?;
@@ -238,5 +276,79 @@ impl AppDatabase {
         .await?;
 
         Ok(rows.into_iter().map(|r| (r.get(0), r.get(1))).collect())
+    }
+
+    // History operations
+    pub async fn insert_history(&self, entry: &HistoryEntry) -> Result<(), sqlx::Error> {
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO request_history (created_at, method, url, status_code, latency_ms, response_size, request_name, collection_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(now)
+        .bind(&entry.method)
+        .bind(&entry.url)
+        .bind(entry.status_code)
+        .bind(entry.latency_ms)
+        .bind(entry.response_size)
+        .bind(&entry.request_name)
+        .bind(&entry.collection_path)
+        .execute(&self.pool)
+        .await?;
+
+        // Prune old entries, keeping the most recent 500
+        sqlx::query(
+            r#"
+            DELETE FROM request_history WHERE id NOT IN (
+                SELECT id FROM request_history ORDER BY created_at DESC LIMIT 500
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn load_recent_history(&self, limit: i64) -> Result<Vec<HistoryEntry>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, created_at, method, url, status_code, latency_ms, response_size, request_name, collection_path
+            FROM request_history
+            ORDER BY created_at DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut entries = Vec::new();
+        for row in rows {
+            entries.push(HistoryEntry {
+                id: Some(row.get("id")),
+                method: row.get("method"),
+                url: row.get("url"),
+                status_code: row.get("status_code"),
+                latency_ms: row.get("latency_ms"),
+                response_size: row.get("response_size"),
+                request_name: row.get("request_name"),
+                collection_path: row.get("collection_path"),
+                created_at: chrono::DateTime::from_timestamp(row.get("created_at"), 0)
+                    .unwrap_or_default(),
+            });
+        }
+
+        Ok(entries)
+    }
+
+    pub async fn clear_history(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM request_history")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 }

@@ -1,7 +1,7 @@
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, ScrollHandle, Styled, Window, div,
-    prelude::FluentBuilder, px,
+    IntoElement, KeyBinding, MouseButton, ParentElement, Render, ScrollHandle, Styled, Window,
+    actions, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, Sizable, StyledExt,
@@ -20,6 +20,10 @@ use crate::collections::{CollectionEditor, CollectionManager, CollectionToml, Gr
 use crate::domain::{HttpMethod, RequestData};
 use crate::settings::SettingsView;
 use crate::ui::icon::IconName;
+
+const EDITOR_PANEL_CONTEXT: &str = "editor_panel";
+
+actions!(editor_panel, [CloseTab, NextTab, PrevTab]);
 
 pub enum TabType {
     Request(RequestTab),
@@ -74,6 +78,14 @@ pub struct EditorPanel {
 }
 
 impl EditorPanel {
+    pub fn init(cx: &mut App) {
+        cx.bind_keys([KeyBinding::new(
+            "secondary-w",
+            CloseTab,
+            Some(EDITOR_PANEL_CONTEXT),
+        )]);
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>, sidebar_collapsed: bool) -> Self {
         let this = cx.entity().downgrade();
         let settings_subscription = window.observe_global::<AppSettings>(cx, move |window, cx| {
@@ -113,6 +125,44 @@ impl EditorPanel {
         }
 
         cx.notify();
+    }
+
+    pub fn send_active_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(TabType::Request(tab)) = self.tabs.get(self.active_tab_ix) {
+            let editor = tab.request_editor.clone();
+            editor.update(cx, |editor, cx| editor.send_request(window, cx));
+        }
+    }
+
+    pub fn save_active_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(TabType::Request(tab)) = self.tabs.get(self.active_tab_ix) {
+            let editor = tab.request_editor.clone();
+            editor.update(cx, |editor, cx| editor.save_request(window, cx));
+        }
+    }
+
+    pub fn close_active_tab(&mut self, cx: &mut Context<Self>) {
+        if !self.tabs.is_empty() {
+            self.close_tab(self.active_tab_ix, cx);
+        }
+    }
+
+    pub fn select_next_tab(&mut self, cx: &mut Context<Self>) {
+        if self.tabs.len() > 1 {
+            self.active_tab_ix = (self.active_tab_ix + 1) % self.tabs.len();
+            cx.notify();
+        }
+    }
+
+    pub fn select_prev_tab(&mut self, cx: &mut Context<Self>) {
+        if self.tabs.len() > 1 {
+            self.active_tab_ix = if self.active_tab_ix == 0 {
+                self.tabs.len() - 1
+            } else {
+                self.active_tab_ix - 1
+            };
+            cx.notify();
+        }
     }
 
     fn next_tab_id(&self) -> usize {
@@ -506,6 +556,16 @@ impl Render for EditorPanel {
             .flex_1()
             .h_full()
             .overflow_hidden()
+            .key_context(EDITOR_PANEL_CONTEXT)
+            .on_action(cx.listener(|this: &mut Self, _: &CloseTab, _, cx| {
+                this.close_active_tab(cx);
+            }))
+            .on_action(cx.listener(|this: &mut Self, _: &NextTab, _, cx| {
+                this.select_next_tab(cx);
+            }))
+            .on_action(cx.listener(|this: &mut Self, _: &PrevTab, _, cx| {
+                this.select_prev_tab(cx);
+            }))
             .child(
                 // Tab bar
                 TabBar::new("editor-tabs")

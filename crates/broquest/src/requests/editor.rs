@@ -1,13 +1,12 @@
 use gpui::{
     App, AppContext, BorrowAppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    ImageSource, InteractiveElement as _, IntoElement, KeyBinding, KeybindingKeystroke, Keystroke,
-    ObjectFit, ParentElement as _, Render, SharedString, StyleRefinement, Styled as _,
-    StyledImage as _, Subscription, Task, WeakEntity, Window, actions, div, img,
-    prelude::FluentBuilder, px,
+    ImageSource, InteractiveElement as _, IntoElement, KeyBinding, Keystroke, ObjectFit,
+    ParentElement as _, Render, SharedString, StyleRefinement, Styled as _, StyledImage as _,
+    Subscription, Task, WeakEntity, Window, actions, div, img, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt, WindowExt,
-    button::Button,
+    button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
     kbd::Kbd,
@@ -28,6 +27,7 @@ use super::query_editor::{QueryParamEditor, QueryParamEvent};
 use crate::app_settings::AppSettings;
 use crate::domain::{AuthType, ContentType, HttpMethod, KeyValuePair, RequestData, ResponseData};
 use crate::http::ResponseFormat;
+use crate::http::curl;
 use crate::result_ext::ResultExt;
 use crate::scripting::{ScriptEditor, ScriptEditorEvent};
 use crate::settings::EditorLayout;
@@ -42,7 +42,7 @@ use std::time::Duration;
 
 const CONTEXT: &str = "request_editor";
 
-actions!(request_editor, [Save]);
+actions!(request_editor, [Save, Send]);
 
 /// Basic URL encoding function
 fn url_encode(input: &str) -> String {
@@ -156,7 +156,6 @@ pub struct RequestEditor {
     form_editor: Entity<FormEditor>,
     auth_editor: Entity<AuthEditor>,
     script_editor: Entity<ScriptEditor>,
-    send_keystroke: KeybindingKeystroke,
     _subscriptions: Vec<Subscription>,
     _updating_url_from_params: bool,
     _was_dirty: bool,
@@ -175,7 +174,10 @@ pub struct RequestEditor {
 
 impl RequestEditor {
     pub fn init(cx: &mut App) {
-        cx.bind_keys([KeyBinding::new("secondary-s", Save, Some(CONTEXT))]);
+        cx.bind_keys([
+            KeyBinding::new("secondary-s", Save, Some(CONTEXT)),
+            KeyBinding::new("secondary-enter", Send, Some(CONTEXT)),
+        ]);
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -308,7 +310,6 @@ impl RequestEditor {
             form_editor,
             auth_editor,
             script_editor,
-            send_keystroke: KeybindingKeystroke::from_keystroke(Keystroke::parse("enter").unwrap()),
             _subscriptions: subscriptions,
             _updating_url_from_params: false,
             _was_dirty: false,
@@ -785,7 +786,7 @@ impl RequestEditor {
         .detach();
     }
 
-    fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_loading {
             return;
         }
@@ -894,6 +895,12 @@ impl RequestEditor {
         let raw_response_input = self.raw_response_input.clone();
         let editor_entity = cx.entity().clone();
 
+        // Capture data for history
+        let history_request_name = request_data.name.clone();
+        let history_method = request_data.method.as_str().to_string();
+        let history_url = request_data.url.clone();
+        let history_collection_path = self.collection_path.clone();
+
         // Execute request using async-compat and GPUI's spawn
         let request_data_clone1 = final_request_data.clone();
         let http_client_clone = http_client.clone();
@@ -935,6 +942,30 @@ impl RequestEditor {
 
                     // Successfully got response data
                     window.update(|window, cx| {
+                        // Save to history
+                        {
+                            let history_entry = crate::app_database::HistoryEntry {
+                                id: None,
+                                method: history_method.clone(),
+                                url: history_url.clone(),
+                                status_code: response_data.status_code.map(|c| c as i32),
+                                latency_ms: response_data.latency.map(|l| l.as_millis() as i64),
+                                response_size: response_data.size.map(|s| s as i64),
+                                request_name: Some(history_request_name.clone()),
+                                collection_path: history_collection_path.clone(),
+                                created_at: chrono::Utc::now(),
+                            };
+                            let history_entry_for_db = history_entry.clone();
+                            let db = crate::app_database::AppDatabase::global(cx).clone();
+                            cx.spawn(async move |_| {
+                                db.insert_history(&history_entry_for_db).await.log_err().ok();
+                            })
+                            .detach();
+                            editor_entity.update(cx, |_, cx| {
+                                cx.emit(AppEvent::RequestHistoryRecorded(history_entry));
+                            });
+                        }
+
                         // Detect content type and get language for syntax highlighting
                         let format = ResponseFormat::detect_from_content(
                             &response_data.body,
@@ -1025,7 +1056,7 @@ impl RequestEditor {
         self.current_request_task = Some(task);
     }
 
-    fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Get current request data
         let request_data = self.get_request_data(cx);
 
@@ -1078,6 +1109,91 @@ impl RequestEditor {
         }
     }
 
+    fn copy_as_curl(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let request_data = self.get_request_data(cx);
+        let curl_string = curl::to_curl(&request_data);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(curl_string));
+        window.push_notification((NotificationType::Info, "Copied as cURL"), cx);
+    }
+
+    fn try_import_curl(
+        &mut self,
+        input: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let parsed = match curl::parse_curl(input) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        // Set method
+        if let Some(index) = HttpMethod::ALL.iter().position(|&m| m == parsed.method) {
+            self.method_select.update(cx, |state, cx| {
+                state.set_selected_index(Some(IndexPath::default().row(index)), window, cx);
+            });
+        }
+
+        // Set URL (strip query params so they go to the query editor)
+        let (base_url, url_query) = Self::strip_query_params_from_url(&parsed.url);
+        self.url_input.update(cx, |state, cx| {
+            state.set_value(&base_url, window, cx);
+        });
+
+        // Set headers
+        self.header_editor.update(cx, |editor, cx| {
+            editor.set_headers(&parsed.headers, window, cx);
+        });
+
+        // Set body
+        if let Some(body) = parsed.body {
+            self.body_input.update(cx, |state, cx| {
+                state.set_value(&body, window, cx);
+            });
+        }
+
+        // Handle basic auth from -u flag
+        if let Some((user, pass)) = parsed.basic_auth {
+            self.auth_editor.update(cx, |editor, cx| {
+                editor.set_auth(
+                    &AuthType::Basic(crate::domain::BasicAuth {
+                        username: user,
+                        password: pass,
+                    }),
+                    window,
+                    cx,
+                );
+            });
+        }
+
+        // Merge URL query params into query editor
+        if !url_query.is_empty() {
+            self.query_param_editor.update(cx, |editor, cx| {
+                let existing = editor.get_query_parameters(cx);
+                let mut merged = existing;
+                for param in url_query {
+                    if !merged.iter().any(|p| p.key == param.key) {
+                        merged.push(param);
+                    }
+                }
+                editor.set_parameters(&merged, window, cx);
+            });
+        }
+
+        if parsed.is_multipart {
+            window.push_notification(
+                (
+                    NotificationType::Warning,
+                    "Multipart cURL imported with limitations: form fields kept as raw body",
+                ),
+                cx,
+            );
+        } else {
+            window.push_notification((NotificationType::Success, "Imported from cURL"), cx);
+        }
+        true
+    }
+
     fn render_url_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_method = self
             .method_select
@@ -1115,21 +1231,12 @@ impl RequestEditor {
                     .refine_style(&self.url_bar_style_refinement)
                     .min_w(px(300.))
                     .child(
-                        div()
-                            .flex_1()
-                            .on_key_down(cx.listener(
-                                |this, evt: &gpui::KeyDownEvent, window, cx| {
-                                    if evt.keystroke.should_match(&this.send_keystroke) {
-                                        this.send_request(window, cx);
-                                    }
-                                },
-                            ))
-                            .child(
-                                Input::new(&self.url_input)
-                                    .cleanable(true)
-                                    .font_family(cx.theme().mono_font_family.clone())
-                                    .text_sm(),
-                            ),
+                        div().flex_1().child(
+                            Input::new(&self.url_input)
+                                .cleanable(true)
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .text_sm(),
+                        ),
                     )
                     .child(
                         div()
@@ -1143,7 +1250,7 @@ impl RequestEditor {
                             )
                             .child(
                                 Button::new("send-request")
-                                    .outline()
+                                    .primary()
                                     .icon(IconName::Send)
                                     .loading(self.is_loading)
                                     .loading_icon(IconName::LoaderCircle)
@@ -1151,6 +1258,16 @@ impl RequestEditor {
                                         this.send_request(window, cx);
                                     })),
                             ),
+                    )
+                    .child(
+                        Button::new("copy-curl")
+                            .ghost()
+                            .compact()
+                            .icon(IconName::Copy)
+                            .tooltip("Copy as cURL")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.copy_as_curl(window, cx);
+                            })),
                     ),
             )
     }
@@ -1329,7 +1446,7 @@ impl RequestEditor {
                     )
                     .child(
                         Button::new("save-request")
-                            .outline()
+                            .primary()
                             .compact()
                             .label("Save Request")
                             .icon(IconName::Save)
@@ -1389,6 +1506,7 @@ impl RequestEditor {
                                         .child(
                                             Button::new("open-pdf")
                                                 .label("Open PDF")
+                                                .primary()
                                                 .icon(IconName::ExternalLink)
                                                 .on_click(cx.listener(|this, _, _window, cx| {
                                                     if let Some(bytes) = &this.response_data.body_bytes {
@@ -1503,12 +1621,18 @@ impl RequestEditor {
                         return;
                     }
 
+                    let current_url = this.url_input.read(cx).value().to_string();
+
+                    // Try to detect and import cURL commands
+                    if current_url.trim().starts_with("curl") {
+                        this.try_import_curl(&current_url, window, cx);
+                        return;
+                    }
+
                     // Don't update query params if we're currently updating URL from params
                     if this._updating_url_from_params {
                         return;
                     }
-
-                    let current_url = this.url_input.read(cx).value().to_string();
                     let parsed_params = this.parse_query_params_from_url(&current_url);
 
                     // Only update query parameters if this is a genuine URL change (not from parameter editor)
@@ -2054,6 +2178,9 @@ impl Render for RequestEditor {
             .on_action(cx.listener(|this: &mut RequestEditor, &Save, window, cx| {
                 tracing::info!("Save action triggered");
                 this.save_request(window, cx);
+            }))
+            .on_action(cx.listener(|this: &mut RequestEditor, &Send, window, cx| {
+                this.send_request(window, cx);
             }))
             .size_full()
             .bg(cx.theme().background)

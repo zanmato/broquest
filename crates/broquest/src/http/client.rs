@@ -188,20 +188,18 @@ impl HttpClientService {
         use crate::domain::AuthType;
 
         match auth {
-            AuthType::OAuth2(oauth) => {
+            AuthType::OAuth2(oauth)
                 // Only auto-fetch for client credentials flow when token_url is configured
                 if matches!(oauth.grant_type, OAuth2GrantType::ClientCredentials)
                     && !oauth.token_url.is_empty()
-                {
+                => {
                     self.ensure_oauth2_token(oauth, |_| {}).await?;
                 }
-            }
-            AuthType::Jwt(jwt) => {
+            AuthType::Jwt(jwt)
                 // Only try to fetch if login_url is configured
-                if !jwt.login_url.is_empty() {
+                if !jwt.login_url.is_empty() => {
                     self.ensure_jwt_token(jwt).await?;
                 }
-            }
             _ => {}
         }
 

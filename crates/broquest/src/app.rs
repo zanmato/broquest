@@ -1,21 +1,28 @@
 use gpui::{
     Action, App, AppContext, BorrowAppContext, Context, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, Menu, MenuItem, ParentElement, Render,
-    SharedString, Styled, Subscription, Window, actions, div, prelude::FluentBuilder, px, svg,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, actions, div,
+    prelude::FluentBuilder, px, svg,
 };
 use gpui_component::{
-    ActiveTheme, Root, Sizable as _, Theme, ThemeRegistry, TitleBar, WindowExt,
+    ActiveTheme, Icon, Root, Selectable, Sizable as _, Theme, ThemeRegistry, TitleBar, WindowExt,
     button::{Button, ButtonVariants as _},
     global_state::GlobalState,
+    h_flex,
+    kbd::Kbd,
     menu::AppMenuBar,
     notification::{Notification, NotificationType},
+    v_flex,
 };
 
+#[allow(unused_imports)]
+use crate::requests::{CloseTab, NextTab, PrevTab};
 use crate::{
     app_database::{AppDatabase, CollectionData, UserSetting},
     app_events::AppEvent,
     collections::{CollectionManager, CollectionsPanel},
     domain::{AuthType, HttpMethod, RequestData},
+    history::HistoryPanel,
     requests::EditorPanel,
     result_ext::ResultExt,
     update_manager::UpdateManager,
@@ -23,18 +30,41 @@ use crate::{
 
 actions!(
     broquest_app,
-    [Quit, OpenNewCollectionTab, OpenCollection, OpenSettings]
+    [
+        Quit,
+        OpenNewCollectionTab,
+        OpenCollection,
+        OpenSettings,
+        ToggleCommandPalette,
+        NewScratchRequest
+    ]
 );
 
 #[derive(Action, Clone, PartialEq)]
 #[action(namespace = broquest_app, no_json)]
 pub(crate) struct SwitchTheme(pub(crate) SharedString);
 
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = broquest_app, no_json)]
+pub(crate) struct OpenRequestFromPalette {
+    pub(crate) collection_path: SharedString,
+    pub(crate) request_name: SharedString,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarTab {
+    Collections,
+    History,
+}
+
 pub struct BroquestApp {
     focus_handle: FocusHandle,
     sidebar_collapsed: bool,
+    sidebar_tab: SidebarTab,
     collections_panel: Entity<CollectionsPanel>,
+    history_panel: Entity<HistoryPanel>,
     editor_panel: Entity<EditorPanel>,
+    command_palette: Entity<crate::ui::command_palette::CommandPalette>,
     app_menu_bar: Entity<AppMenuBar>,
     _subscriptions: Vec<Subscription>,
 }
@@ -50,7 +80,11 @@ impl BroquestApp {
             panel.load_collections(cx);
         });
 
+        let history_panel = cx.new(|cx| HistoryPanel::new(window, cx));
+
         let editor_panel = cx.new(|cx| EditorPanel::new(window, cx, false));
+        let command_palette =
+            cx.new(|cx| crate::ui::command_palette::CommandPalette::new(window, cx));
         let app_menu_bar = AppMenuBar::new(cx);
 
         let mut subscriptions = Vec::new();
@@ -191,6 +225,21 @@ impl BroquestApp {
             });
         subscriptions.push(subscription);
 
+        // Subscribe to history events from request editors
+        let history_panel_for_events = history_panel.clone();
+        let history_subscription = cx.subscribe_in(
+            &editor_panel,
+            window,
+            move |_app, _panel, event, _window, cx| {
+                if let AppEvent::RequestHistoryRecorded(entry) = event {
+                    history_panel_for_events.update(cx, |panel, cx| {
+                        panel.add_entry(entry.clone(), cx);
+                    });
+                }
+            },
+        );
+        subscriptions.push(history_subscription);
+
         // Subscribe to CollectionManager global updates
         let collections_panel_updates = collections_panel.clone();
         let collection_subscription =
@@ -235,11 +284,17 @@ impl BroquestApp {
             window.refresh();
         });
 
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle, cx);
+
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             sidebar_collapsed: false,
+            sidebar_tab: SidebarTab::Collections,
             collections_panel,
+            history_panel,
             editor_panel,
+            command_palette,
             app_menu_bar,
             _subscriptions: subscriptions,
         }
@@ -264,6 +319,90 @@ impl BroquestApp {
             editor_panel.create_and_add_collection_tab(
                 collection_data,
                 collection_path,
+                window,
+                cx,
+            );
+        });
+    }
+
+    fn on_new_scratch_request(
+        &mut self,
+        _: &NewScratchRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let request_data = RequestData {
+            name: "New Request".to_string(),
+            method: HttpMethod::Get,
+            url: String::new(),
+            path_params: Vec::new(),
+            query_params: Vec::new(),
+            headers: Vec::new(),
+            body: String::new(),
+            auth: AuthType::None,
+            pre_request_script: None,
+            post_response_script: None,
+        };
+
+        self.editor_panel.update(cx, |editor_panel, cx| {
+            editor_panel.create_and_add_request_tab(request_data, String::new(), None, window, cx);
+        });
+    }
+
+    fn on_open_request_from_palette(
+        &mut self,
+        action: &OpenRequestFromPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let collection_path = action.collection_path.to_string();
+        let request_name = action.request_name.to_string();
+
+        let request_data = {
+            let manager = CollectionManager::global(cx);
+            let Some(collection) = manager.get_collection_by_path(&collection_path) else {
+                window.push_notification(
+                    (
+                        NotificationType::Warning,
+                        SharedString::from(format!("Collection not found: {}", collection_path)),
+                    ),
+                    cx,
+                );
+                return;
+            };
+
+            let direct = collection
+                .requests
+                .values()
+                .find(|r| r.name == request_name)
+                .cloned();
+
+            direct.or_else(|| {
+                collection
+                    .groups
+                    .values()
+                    .flat_map(|g| g.requests.values())
+                    .find(|r| r.name == request_name)
+                    .cloned()
+            })
+        };
+
+        let Some(request_data) = request_data else {
+            window.push_notification(
+                (
+                    NotificationType::Warning,
+                    SharedString::from(format!("Request not found: {}", request_name)),
+                ),
+                cx,
+            );
+            return;
+        };
+
+        self.editor_panel.update(cx, |editor_panel, cx| {
+            editor_panel.create_and_add_request_tab(
+                request_data,
+                collection_path,
+                None,
                 window,
                 cx,
             );
@@ -410,6 +549,50 @@ impl BroquestApp {
         });
     }
 
+    fn on_toggle_command_palette(
+        &mut self,
+        _: &ToggleCommandPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.command_palette.update(cx, |palette, cx| {
+            palette.toggle(window, cx);
+        });
+    }
+
+    fn render_palette_trigger(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let shortcut = Kbd::binding_for_action(&ToggleCommandPalette, None, window);
+        div()
+            .id("palette-trigger")
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_8()
+            .h(px(26.))
+            .w(px(420.))
+            .px_3()
+            .rounded_md()
+            .bg(cx.theme().muted)
+            .border_1()
+            .border_color(cx.theme().border)
+            .text_color(cx.theme().muted_foreground)
+            .text_sm()
+            .cursor_pointer()
+            .hover(|this| this.bg(cx.theme().accent))
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.dispatch_action(Box::new(ToggleCommandPalette), cx);
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(Icon::new(crate::ui::icon::IconName::Search).size(px(14.)))
+                    .child("Search commands..."),
+            )
+            .when_some(shortcut, |this, kbd| this.child(kbd))
+    }
+
     fn render_update_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let update_manager = UpdateManager::global(cx);
         let has_update = update_manager.pending_update.read(cx).is_some();
@@ -446,6 +629,8 @@ impl Render for BroquestApp {
         let notification_layer = Root::render_notification_layer(window, cx);
 
         div()
+            .track_focus(&self.focus_handle)
+            .key_context("BroquestApp")
             .flex()
             .flex_col()
             .on_action(cx.listener(Self::on_quit))
@@ -453,6 +638,34 @@ impl Render for BroquestApp {
             .on_action(cx.listener(Self::on_open_collection_dialog))
             .on_action(cx.listener(Self::on_switch_theme))
             .on_action(cx.listener(Self::on_settings))
+            .on_action(cx.listener(Self::on_toggle_command_palette))
+            .on_action(cx.listener(Self::on_open_request_from_palette))
+            .on_action(cx.listener(Self::on_new_scratch_request))
+            .on_action(cx.listener(|this, _: &crate::requests::Send, window, cx| {
+                this.editor_panel.update(cx, |panel, cx| {
+                    panel.send_active_request(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|this, _: &crate::requests::Save, window, cx| {
+                this.editor_panel.update(cx, |panel, cx| {
+                    panel.save_active_request(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|this, _: &CloseTab, _, cx| {
+                this.editor_panel.update(cx, |panel, cx| {
+                    panel.close_active_tab(cx);
+                });
+            }))
+            .on_action(cx.listener(|this, _: &NextTab, _, cx| {
+                this.editor_panel.update(cx, |panel, cx| {
+                    panel.select_next_tab(cx);
+                });
+            }))
+            .on_action(cx.listener(|this, _: &PrevTab, _, cx| {
+                this.editor_panel.update(cx, |panel, cx| {
+                    panel.select_prev_tab(cx);
+                });
+            }))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
@@ -478,6 +691,7 @@ impl Render for BroquestApp {
                                 )
                                 .child(self.app_menu_bar.clone()),
                         )
+                        .child(self.render_palette_trigger(window, cx))
                         .child(self.render_update_button(cx)),
                 ),
             )
@@ -489,7 +703,7 @@ impl Render for BroquestApp {
                     .w_full()
                     .overflow_hidden()
                     .items_start()
-                    // Left side: Connections panel sidebar
+                    // Left side: sidebar with tab switcher
                     .when(!self.sidebar_collapsed, |this| {
                         this.child(
                             div()
@@ -498,7 +712,68 @@ impl Render for BroquestApp {
                                 .overflow_hidden()
                                 .border_r_1()
                                 .border_color(cx.theme().border)
-                                .child(self.collections_panel.clone()),
+                                .child(
+                                    v_flex()
+                                        .h_full()
+                                        .child(
+                                            // Sidebar tab switcher
+                                            h_flex()
+                                                .items_center()
+                                                .pt(px(3.))
+                                                .pb(px(4.))
+                                                .px(px(4.))
+                                                .border_b_1()
+                                                .border_color(cx.theme().border)
+                                                .child(
+                                                    Button::new("tab-collections")
+                                                        .small()
+                                                        .ghost()
+                                                        .selected(
+                                                            self.sidebar_tab
+                                                                == SidebarTab::Collections,
+                                                        )
+                                                        .label("Collections")
+                                                        .flex_1()
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.sidebar_tab =
+                                                                SidebarTab::Collections;
+                                                            cx.notify();
+                                                        })),
+                                                )
+                                                .child(
+                                                    Button::new("tab-history")
+                                                        .small()
+                                                        .ghost()
+                                                        .selected(
+                                                            self.sidebar_tab == SidebarTab::History,
+                                                        )
+                                                        .label("History")
+                                                        .flex_1()
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.sidebar_tab = SidebarTab::History;
+                                                            if !this.history_panel.read(cx).loaded {
+                                                                this.history_panel.update(
+                                                                    cx,
+                                                                    |panel, cx| {
+                                                                        panel.load_history(cx);
+                                                                    },
+                                                                );
+                                                            }
+                                                            cx.notify();
+                                                        })),
+                                                ),
+                                        )
+                                        .child(match self.sidebar_tab {
+                                            SidebarTab::Collections => div()
+                                                .flex_1()
+                                                .min_h_0()
+                                                .child(self.collections_panel.clone()),
+                                            SidebarTab::History => div()
+                                                .flex_1()
+                                                .min_h_0()
+                                                .child(self.history_panel.clone()),
+                                        }),
+                                ),
                         )
                     })
                     // Main panel
@@ -514,6 +789,7 @@ impl Render for BroquestApp {
             .children(sheet_layer)
             .children(dialog_layer)
             .children(notification_layer)
+            .child(self.command_palette.clone())
     }
 }
 
@@ -527,6 +803,10 @@ fn init_menus(cx: &mut App) {
         gpui::KeyBinding::new("cmd-,", OpenSettings, None),
         #[cfg(not(target_os = "macos"))]
         gpui::KeyBinding::new("ctrl-,", OpenSettings, None),
+        gpui::KeyBinding::new("secondary-k", ToggleCommandPalette, None),
+        gpui::KeyBinding::new("secondary-n", NewScratchRequest, None),
+        gpui::KeyBinding::new("ctrl-tab", NextTab, None),
+        gpui::KeyBinding::new("ctrl-shift-tab", PrevTab, None),
     ]);
 
     cx.set_menus(build_menu());

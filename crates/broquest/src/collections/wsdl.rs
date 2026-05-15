@@ -98,12 +98,10 @@ fn extract_schema_imports(xsd_content: &str) -> Vec<String> {
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(quick_xml::events::Event::Empty(e)) => {
-                if e.local_name().as_ref() == b"import" {
-                    for attr in e.attributes().flatten() {
-                        if attr.key.local_name().as_ref() == b"schemaLocation" {
-                            locations.push(String::from_utf8_lossy(&attr.value).to_string());
-                        }
+            Ok(quick_xml::events::Event::Empty(e)) if e.local_name().as_ref() == b"import" => {
+                for attr in e.attributes().flatten() {
+                    if attr.key.local_name().as_ref() == b"schemaLocation" {
+                        locations.push(String::from_utf8_lossy(&attr.value).to_string());
                     }
                 }
             }

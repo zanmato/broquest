@@ -1,7 +1,7 @@
 use gpui::{App, Context, Entity, KeyBinding, Window, actions, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, Sizable as _, StyledExt, WindowExt,
-    button::Button,
+    button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputState},
     kbd::Kbd,
@@ -789,7 +789,7 @@ impl Render for CollectionEditor {
                     .justify_end()
                     .child(
                         Button::new("save_collection_bottom")
-                            .outline()
+                            .primary()
                             .compact()
                             .icon(IconName::Save)
                             .label("Save Collection")

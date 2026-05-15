@@ -4,7 +4,7 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme as _, StyledExt, WindowExt,
-    button::Button,
+    button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputState},
     kbd::Kbd,
@@ -140,7 +140,7 @@ impl Render for GroupEditor {
                     .justify_end()
                     .child(
                         Button::new("save_group")
-                            .outline()
+                            .primary()
                             .compact()
                             .icon(IconName::Save)
                             .label("Save Group")

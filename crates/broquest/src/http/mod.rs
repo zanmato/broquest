@@ -1,6 +1,7 @@
 //! HTTP client service module
 
 mod client;
+pub mod curl;
 pub mod jwt;
 pub mod oauth2;
 

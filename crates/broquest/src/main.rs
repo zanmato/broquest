@@ -13,6 +13,7 @@ mod collections;
 mod domain;
 mod environments;
 mod highlighting;
+mod history;
 mod http;
 mod requests;
 mod result_ext;
@@ -43,7 +44,9 @@ fn main() {
     app.run(move |cx| {
         gpui_component::init(cx);
         ui::draggable_tree::init(cx);
+        ui::command_palette::CommandPalette::init(cx);
         requests::RequestEditor::init(cx);
+        requests::EditorPanel::init(cx);
         collections::GroupEditor::init(cx);
         collections::CollectionEditor::init(cx);
 

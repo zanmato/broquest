@@ -84,16 +84,24 @@ pub struct RequestScript {
     pub post_response: Option<String>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct HeaderToml {
     pub key: String,
     pub value: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct QueryToml {
     pub key: String,
     pub value: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 /// TOML structure for environment files
@@ -209,7 +217,7 @@ impl From<RequestToml> for RequestData {
             .map(|h| KeyValuePair {
                 key: h.key,
                 value: h.value,
-                enabled: true,
+                enabled: h.enabled,
             })
             .collect::<Vec<_>>();
 
@@ -221,7 +229,7 @@ impl From<RequestToml> for RequestData {
             .map(|q| KeyValuePair {
                 key: q.key,
                 value: q.value,
-                enabled: true,
+                enabled: q.enabled,
             })
             .collect();
 
@@ -335,6 +343,7 @@ impl From<RequestData> for RequestToml {
                     .map(|h| HeaderToml {
                         key: h.key,
                         value: h.value,
+                        enabled: h.enabled,
                     })
                     .collect(),
             )
@@ -350,6 +359,7 @@ impl From<RequestData> for RequestToml {
                     .map(|q| QueryToml {
                         key: q.key,
                         value: q.value,
+                        enabled: q.enabled,
                     })
                     .collect(),
             )

@@ -86,6 +86,8 @@ pub enum AppEvent {
     },
     /// Request was moved (drag and drop)
     RequestMoved,
+    /// A request was completed and saved to history
+    RequestHistoryRecorded(crate::app_database::HistoryEntry),
 }
 
 /// Error severity levels

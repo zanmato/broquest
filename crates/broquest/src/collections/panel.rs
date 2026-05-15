@@ -7,7 +7,6 @@ use gpui_component::{
     ActiveTheme as _, Icon, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
-    label::Label,
     list::ListItem,
     menu::PopupMenuItem,
     notification::NotificationType,
@@ -895,34 +894,23 @@ impl CollectionsPanel {
         self.tree_item_metadata.get(item_id)
     }
 
-    fn render_header_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .gap_2()
-            .px_3()
-            .pt(px(5.))
-            .pb(px(6.))
-            .border_b_1()
+    fn render_footer_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .justify_end()
+            .items_center()
+            .px(px(4.))
+            .py(px(4.))
+            .border_t_1()
             .border_color(cx.theme().border)
             .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        Label::new("Collections")
-                            .font_bold()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .child(
-                        Button::new("refresh_collections")
-                            .xsmall()
-                            .ghost()
-                            .icon(Icon::new(IconName::Refresh).size(px(14.)))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                tracing::info!("Refresh collections clicked");
-                                this.refresh_collections(cx);
-                            })),
-                    ),
+                Button::new("refresh_collections")
+                    .xsmall()
+                    .ghost()
+                    .icon(Icon::new(IconName::Refresh).size(px(14.)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        tracing::info!("Refresh collections clicked");
+                        this.refresh_collections(cx);
+                    })),
             )
     }
 }
@@ -931,11 +919,15 @@ impl Render for CollectionsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .gap_2()
             .bg(cx.theme().sidebar_primary_foreground)
             .px(px(1.))
-            .child(self.render_header_section(cx))
-            .child(DraggableTree::new(&self.tree_state))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(DraggableTree::new(&self.tree_state)),
+            )
+            .child(self.render_footer_section(cx))
     }
 }
 
