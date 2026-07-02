@@ -28,6 +28,9 @@ pub enum AuthTypeOption {
     Key,
     OAuth2,
     Jwt,
+    /// An auth scheme broquest cannot edit (imported from OpenCollection).
+    /// Selectable only when a request already carries such auth; preserved as-is.
+    Unsupported,
 }
 
 impl AuthTypeOption {
@@ -40,6 +43,7 @@ impl AuthTypeOption {
             AuthTypeOption::Key,
             AuthTypeOption::OAuth2,
             AuthTypeOption::Jwt,
+            AuthTypeOption::Unsupported,
         ];
         OPTIONS
     }
@@ -53,6 +57,7 @@ impl AuthTypeOption {
             AuthType::Key(_) => AuthTypeOption::Key,
             AuthType::OAuth2(_) => AuthTypeOption::OAuth2,
             AuthType::Jwt(_) => AuthTypeOption::Jwt,
+            AuthType::Unsupported { .. } => AuthTypeOption::Unsupported,
         }
     }
 
@@ -65,11 +70,17 @@ impl AuthTypeOption {
             AuthTypeOption::Key => AuthType::Key(KeyAuth::default()),
             AuthTypeOption::OAuth2 => AuthType::OAuth2(OAuth2Auth::default()),
             AuthTypeOption::Jwt => AuthType::Jwt(JwtAuth::default()),
+            // The real preserved value is held by the editor; this is only a
+            // fallback used if a user somehow selects it for a fresh request.
+            AuthTypeOption::Unsupported => AuthType::None,
         }
     }
 
     pub fn name(&self) -> &'static str {
-        self.to_auth_type().name()
+        match self {
+            AuthTypeOption::Unsupported => "Unsupported",
+            other => other.to_auth_type().name(),
+        }
     }
 }
 
@@ -105,6 +116,8 @@ pub struct AuthEditor {
     jwt_token_field_input: Entity<InputState>,
     jwt_token_type_field_input: Entity<InputState>,
     jwt_expiry_field_input: Entity<InputState>,
+    /// Preserved definition for an OpenCollection auth scheme broquest can't edit.
+    unsupported_auth: Option<AuthType>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -244,11 +257,18 @@ impl AuthEditor {
             jwt_token_field_input,
             jwt_token_type_field_input,
             jwt_expiry_field_input,
+            unsupported_auth: None,
             _subscriptions: subscriptions,
         }
     }
 
     pub fn set_auth(&mut self, auth: &AuthType, window: &mut Window, cx: &mut Context<Self>) {
+        // Preserve any unmodeled (OpenCollection) auth so get_auth can return it
+        // unchanged; clear it when a normal auth type is loaded.
+        self.unsupported_auth = match auth {
+            AuthType::Unsupported { .. } => Some(auth.clone()),
+            _ => None,
+        };
         let auth_type_option = AuthTypeOption::from_auth_type(auth);
         if let Some(index) = self
             .auth_type_options
@@ -329,7 +349,7 @@ impl AuthEditor {
                     state.set_value(jwt.expiry_field.clone(), window, cx);
                 });
             }
-            AuthType::None | AuthType::Inherit => {}
+            AuthType::None | AuthType::Inherit | AuthType::Unsupported { .. } => {}
         }
 
         cx.notify();
@@ -344,6 +364,10 @@ impl AuthEditor {
             .unwrap_or(AuthTypeOption::None);
 
         match selected_type {
+            AuthTypeOption::Unsupported => {
+                // Return the preserved, unmodeled auth definition unchanged.
+                self.unsupported_auth.clone().unwrap_or(AuthType::None)
+            }
             AuthTypeOption::None => AuthType::None,
             AuthTypeOption::Inherit => AuthType::Inherit,
             AuthTypeOption::Basic => AuthType::Basic(BasicAuth {
@@ -496,6 +520,21 @@ impl AuthEditor {
                 .child("No authentication will be used for this request."),
         )
     }
+
+    fn render_unsupported(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let kind = match &self.unsupported_auth {
+            Some(AuthType::Unsupported { kind, .. }) => kind.clone(),
+            _ => "unknown".to_string(),
+        };
+        v_flex().gap_3().p_4().child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(format!(
+                    "This request uses '{kind}' authentication, which broquest cannot edit. It is preserved unchanged when you save."
+                )),
+        )
+    }
 }
 
 impl Render for AuthEditor {
@@ -533,6 +572,7 @@ impl Render for AuthEditor {
                     AuthTypeOption::Key => self.render_api_key(cx).into_any_element(),
                     AuthTypeOption::OAuth2 => self.render_oauth2(cx).into_any_element(),
                     AuthTypeOption::Jwt => self.render_jwt(cx).into_any_element(),
+                    AuthTypeOption::Unsupported => self.render_unsupported(cx).into_any_element(),
                 }),
             ))
     }

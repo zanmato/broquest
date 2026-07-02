@@ -178,6 +178,7 @@ fn main() {
             display_id: None,
             window_background: gpui::WindowBackgroundAppearance::Opaque,
             app_id: Some("broquest".into()),
+            icon: None,
         };
 
         cx.spawn(async move |cx| {

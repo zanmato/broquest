@@ -432,7 +432,7 @@ impl EnvironmentEditor {
                     .child(
                         Input::new(&var.key_input)
                             .small()
-                            .bordered(false)
+                            .appearance(false)
                             .text_sm()
                             .font_family(cx.theme().mono_font_family.clone()),
                     ),
@@ -447,7 +447,7 @@ impl EnvironmentEditor {
                     .child(
                         Input::new(&var.value_input)
                             .small()
-                            .bordered(false)
+                            .appearance(false)
                             .text_sm()
                             .font_family(cx.theme().mono_font_family.clone()),
                     ),
@@ -502,7 +502,7 @@ impl EnvironmentEditor {
                     .child(
                         Input::new(&secret.key_input)
                             .small()
-                            .bordered(false)
+                            .appearance(false)
                             .text_sm()
                             .font_family(cx.theme().mono_font_family.clone()),
                     ),
@@ -517,7 +517,7 @@ impl EnvironmentEditor {
                     .child(
                         Input::new(&secret.value_input)
                             .small()
-                            .bordered(false)
+                            .appearance(false)
                             .text_sm()
                             .font_family(cx.theme().mono_font_family.clone())
                             .mask_toggle(),

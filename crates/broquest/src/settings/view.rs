@@ -3,8 +3,8 @@ use crate::app_settings::AppSettings;
 use crate::http::HttpClientService;
 use crate::settings::{EditorLayout, Settings};
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, Render, SharedString,
-    Styled, Window, px, rems,
+    App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    ParentElement, Render, SharedString, Styled, Window, div, px, rems,
 };
 use gpui_component::ThemeRegistry;
 use gpui_component::{
@@ -461,8 +461,10 @@ impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_font_selects(window, cx);
 
-        GpuiSettings::new("broquest-settings")
-            .with_group_variant(GroupBoxVariant::Outline)
-            .pages(self.setting_pages(cx))
+        div().track_focus(&self.focus_handle).size_full().child(
+            GpuiSettings::new("broquest-settings")
+                .with_group_variant(GroupBoxVariant::Outline)
+                .pages(self.setting_pages(cx)),
+        )
     }
 }

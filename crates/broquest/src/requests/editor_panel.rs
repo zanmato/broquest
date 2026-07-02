@@ -207,7 +207,7 @@ impl EditorPanel {
 
         // Set the request data from the collection
         request_editor.update(cx, |editor, cx| {
-            editor.set_collection_path(Some(collection_path.clone()));
+            editor.set_collection_path(Some(collection_path.clone()), cx);
             if let Some(ref group_path) = group_path {
                 editor.set_group_path(Some(group_path.clone()));
             }
@@ -324,7 +324,7 @@ impl EditorPanel {
 
         self.tabs.push(TabType::Request(request_tab));
         self.active_tab_ix = self.tabs.len() - 1;
-        self.scroll_tabbar_to_the_end(window);
+        self.scroll_tabbar_to_active();
 
         cx.notify();
     }
@@ -431,7 +431,7 @@ impl EditorPanel {
 
         self.tabs.push(TabType::Collection(collection_tab));
         self.active_tab_ix = self.tabs.len() - 1;
-        self.scroll_tabbar_to_the_end(window);
+        self.scroll_tabbar_to_active();
 
         cx.notify();
     }
@@ -501,13 +501,13 @@ impl EditorPanel {
 
         self.tabs.push(TabType::Group(group_tab));
         self.active_tab_ix = self.tabs.len() - 1;
-        self.scroll_tabbar_to_the_end(window);
+        self.scroll_tabbar_to_active();
 
         cx.notify();
     }
 
     /// Add or focus the Settings tab (singleton)
-    pub fn add_settings_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn add_settings_tab(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         // Check if settings tab already exists
         for (ix, tab) in self.tabs.iter().enumerate() {
             if let TabType::Settings(_) = tab {
@@ -522,19 +522,15 @@ impl EditorPanel {
         self.tabs
             .push(TabType::Settings(SettingsTab { settings_view }));
         self.active_tab_ix = self.tabs.len() - 1;
-        self.scroll_tabbar_to_the_end(window);
+        self.scroll_tabbar_to_active();
 
         cx.notify();
     }
 
-    fn scroll_tabbar_to_the_end(&self, window: &mut Window) {
-        let scroll_handle = self.tabbar_scroll_handle.clone();
-        window.on_next_frame(move |window, _| {
-            window.on_next_frame(move |_, _| {
-                let max_offset = scroll_handle.max_offset();
-                scroll_handle.set_offset(gpui::point(-max_offset.x, gpui::px(0.0)));
-            })
-        });
+    /// Scroll the tab bar so the active tab is visible. `scroll_to_item` defers
+    /// to the next paint, so this is safe to call right after adding a tab.
+    fn scroll_tabbar_to_active(&self) {
+        self.tabbar_scroll_handle.scroll_to_item(self.active_tab_ix);
     }
 }
 
@@ -551,9 +547,14 @@ impl Render for EditorPanel {
         let current_tab = self.tabs.get(self.active_tab_ix);
 
         div()
+            .track_focus(&self.focus_handle)
             .flex()
             .flex_col()
             .flex_1()
+            // Constrain to the allocated width. Without this, a flex-1 item
+            // defaults to min-width:auto and grows to fit its widest child, so
+            // the tab bar's scroll container never overflows and can't scroll.
+            .min_w_0()
             .h_full()
             .overflow_hidden()
             .key_context(EDITOR_PANEL_CONTEXT)
@@ -570,7 +571,10 @@ impl Render for EditorPanel {
                 // Tab bar
                 TabBar::new("editor-tabs")
                     .menu(true)
-                    .w_full()
+                    // No .w_full(): an explicit width can interfere with
+                    // flex-shrink and stop the tab strip from overflowing to
+                    // scroll. The dock's TabBar omits it and relies on flex
+                    // stretch, so we match that.
                     .min_h(px(32.))
                     .selected_index(self.active_tab_ix)
                     .on_click(cx.listener(|this, ix: &usize, _, _| {

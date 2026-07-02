@@ -13,14 +13,15 @@ description = "Desktop API Client"
 
 [workspace.dependencies]
 # Core GPUI dependencies
-gpui = { git = "https://github.com/zed-industries/zed" }
+# Pinned to match gpui-component 0.5.2 (rev 1505b148), which requires this gpui rev.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
 gpui-macros = "0.2.2"
 # longbridge/gpui-component
-gpui-component = { git = "https://github.com/longbridge/gpui-component/", features = [
+gpui-component = { git = "https://github.com/longbridge/gpui-component/", rev = "1505b1487131adbb443f6c69e87847db35bfa2d1", features = [
     "tree-sitter-languages",
 ] }
-gpui-component-macros = { git = "https://github.com/longbridge/gpui-component/" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
+gpui-component-macros = { git = "https://github.com/longbridge/gpui-component/", rev = "1505b1487131adbb443f6c69e87847db35bfa2d1" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = [
     "font-kit",
     "x11",
     "wayland",

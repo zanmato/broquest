@@ -12,6 +12,13 @@ pub enum AuthType {
     Inherit,
     OAuth2(OAuth2Auth),
     Jwt(JwtAuth),
+    /// An OpenCollection auth scheme broquest does not model (e.g. ntlm, awsv4,
+    /// oauth1, wsse, api-key-in-query). The original definition is preserved in
+    /// `raw` so it round-trips losslessly when the collection is saved back.
+    Unsupported {
+        kind: String,
+        raw: serde_json::Value,
+    },
 }
 
 impl AuthType {
@@ -24,6 +31,7 @@ impl AuthType {
             Self::Inherit => "Inherit from Collection",
             Self::OAuth2(_) => "OAuth2 Client Credentials",
             Self::Jwt(_) => "JWT",
+            Self::Unsupported { .. } => "Unsupported",
         }
     }
 
@@ -43,6 +51,7 @@ impl AuthType {
             Self::Inherit => "inherit",
             Self::OAuth2(_) => "oauth2",
             Self::Jwt(_) => "jwt",
+            Self::Unsupported { .. } => "unsupported",
         }
     }
 

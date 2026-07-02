@@ -139,6 +139,7 @@ impl BroquestApp {
                         auth: AuthType::None,
                         pre_request_script: None,
                         post_response_script: None,
+                        vars: Vec::new(),
                     };
 
                     editor_panel_clone.update(cx, |editor_panel, cx| {
@@ -342,6 +343,7 @@ impl BroquestApp {
             auth: AuthType::None,
             pre_request_script: None,
             post_response_script: None,
+            vars: Vec::new(),
         };
 
         self.editor_panel.update(cx, |editor_panel, cx| {
@@ -429,29 +431,34 @@ impl BroquestApp {
             {
                 let dir_str = dir_str.to_owned();
 
-                // Validate that the path contains a collection.toml file
-                let collection_file = std::path::PathBuf::from(&dir_str).join("collection.toml");
+                // Detect the collection format: prefer OpenCollection
+                // (opencollection.yml) when present, otherwise the native
+                // collection.toml.
+                let dir_path = std::path::PathBuf::from(&dir_str);
+                let is_opencollection =
+                    crate::collections::find_opencollection_file(&dir_path).is_some();
+                let has_toml = dir_path.join("collection.toml").exists();
 
-                if collection_file.exists() {
+                if is_opencollection || has_toml {
                     let _ = window
                         .update(|window, cx| {
                             // Load the collection with CollectionManager
                             let collection = cx.update_global(
                                 |collection_manager: &mut CollectionManager, cx| {
-                                    match collection_manager.load_collection_toml(
-                                        std::path::PathBuf::from(&dir_str).as_path(),
-                                    ) {
+                                    let load_result = if is_opencollection {
+                                        collection_manager.load_opencollection_dir(&dir_path)
+                                    } else {
+                                        collection_manager.load_collection_toml(&dir_path)
+                                    };
+                                    match load_result {
                                         Ok(col) => {
                                             window.push_notification(
                                                 (
                                                     NotificationType::Success,
-                                                    SharedString::from(
-                                                        format!(
-                                                            "Opened {}",
-                                                            col.collection.name.clone()
-                                                        )
-                                                        .to_string(),
-                                                    ),
+                                                    SharedString::from(format!(
+                                                        "Opened {}",
+                                                        col.collection.name.clone()
+                                                    )),
                                                 ),
                                                 cx,
                                             );
@@ -462,7 +469,9 @@ impl BroquestApp {
                                             window.push_notification(
                                                 (
                                                     NotificationType::Error,
-                                                    "Failed to load collection",
+                                                    SharedString::from(format!(
+                                                        "Failed to load collection: {e}"
+                                                    )),
                                                 ),
                                                 cx,
                                             );
@@ -482,6 +491,11 @@ impl BroquestApp {
                             // Save the collection to the database and get its ID
                             if let Some(collection) = collection {
                                 let app_database = AppDatabase::global(cx).clone();
+                                let format = if is_opencollection {
+                                    crate::collections::CollectionFormat::OpenCollection
+                                } else {
+                                    crate::collections::CollectionFormat::Broquest
+                                };
 
                                 cx.spawn(async move |_| {
                                     app_database
@@ -490,6 +504,7 @@ impl BroquestApp {
                                             name: collection.collection.name.clone(),
                                             path: dir_str.to_string(),
                                             position: 1,
+                                            format: format.as_db_str().to_string(),
                                             created_at: chrono::Utc::now(),
                                             updated_at: chrono::Utc::now(),
                                         })
@@ -504,7 +519,7 @@ impl BroquestApp {
                     let _ = window
                         .update(|window, cx| {
                             window.push_notification(
-                                "No collection.toml found in selected directory",
+                                "No collection.toml or opencollection.yml found in selected directory",
                                 cx,
                             );
                         })
@@ -572,13 +587,13 @@ impl BroquestApp {
             .w(px(420.))
             .px_3()
             .rounded_md()
-            .bg(cx.theme().muted)
+            .bg(cx.theme().input_background())
             .border_1()
             .border_color(cx.theme().border)
             .text_color(cx.theme().muted_foreground)
             .text_sm()
             .cursor_pointer()
-            .hover(|this| this.bg(cx.theme().accent))
+            .hover(|this| this.border_color(cx.theme().accent_foreground))
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(Box::new(ToggleCommandPalette), cx);
             }))
@@ -719,6 +734,7 @@ impl Render for BroquestApp {
                                             // Sidebar tab switcher
                                             h_flex()
                                                 .items_center()
+                                                .gap_1()
                                                 .pt(px(3.))
                                                 .pb(px(4.))
                                                 .px(px(4.))
@@ -781,6 +797,10 @@ impl Render for BroquestApp {
                         div()
                             .flex()
                             .flex_1()
+                            // Allow this flex item to shrink below its content
+                            // width; without it the panel grows to fit the widest
+                            // tab/content and the tab bar never overflows to scroll.
+                            .min_w_0()
                             .h_full()
                             .overflow_hidden()
                             .child(self.editor_panel.clone()),

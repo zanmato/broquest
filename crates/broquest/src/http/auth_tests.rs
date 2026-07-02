@@ -37,7 +37,9 @@ async fn test_basic_auth_sends_correct_header() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 }
 
@@ -64,7 +66,9 @@ async fn test_api_key_auth_sends_custom_header() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 }
 
@@ -92,7 +96,9 @@ async fn test_oauth2_sends_bearer_token() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 }
 
@@ -119,7 +125,9 @@ async fn test_oauth2_no_token_sends_no_auth_header() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 
     let received = guard.received_requests().await;
@@ -150,7 +158,9 @@ async fn test_none_auth_sends_no_auth_header() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 
     let received = guard.received_requests().await;
@@ -181,7 +191,9 @@ async fn test_inherit_auth_sends_no_auth_header() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 
     let received = guard.received_requests().await;
@@ -250,7 +262,9 @@ async fn test_digest_auth_challenge_response() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 
     let (response_data, _) = result.unwrap();
@@ -281,7 +295,9 @@ async fn test_digest_auth_no_challenge_returns_initial_response() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 
     let (response_data, _) = result.unwrap();
@@ -316,7 +332,7 @@ async fn test_auth_with_environment_variables() {
     variables.insert("api_key".to_string(), "resolved-api-key".to_string());
 
     let result = client
-        .send_request(request_data, Some(variables), None)
+        .send_request(request_data, Some(variables), None, None, None)
         .await;
     assert!(result.is_ok());
 }
@@ -347,7 +363,9 @@ async fn test_auth_with_secret_variables() {
     let mut secrets = HashMap::new();
     secrets.insert("password".to_string(), "secret-token".to_string());
 
-    let result = client.send_request(request_data, None, Some(secrets)).await;
+    let result = client
+        .send_request(request_data, None, Some(secrets), None, None)
+        .await;
     assert!(result.is_ok());
 }
 
@@ -375,7 +393,9 @@ async fn test_post_request_with_auth() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 }
 
@@ -603,7 +623,9 @@ async fn test_jwt_sends_bearer_token() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 }
 
@@ -631,7 +653,9 @@ async fn test_jwt_sends_custom_token_type() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 }
 
@@ -657,7 +681,9 @@ async fn test_jwt_no_token_sends_no_auth_header() {
         ..Default::default()
     };
 
-    let result = client.send_request(request_data, None, None).await;
+    let result = client
+        .send_request(request_data, None, None, None, None)
+        .await;
     assert!(result.is_ok());
 
     let received = guard.received_requests().await;

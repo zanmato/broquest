@@ -17,11 +17,20 @@ pub struct CollectionMeta {
     pub version: String,
     #[serde(rename = "type")]
     pub collection_type: String,
-    pub description: String,
+    /// Markdown documentation for the collection. Rendered as a read-only
+    /// preview and editable via a markdown code editor in the collection view.
+    /// Maps to OpenCollection's `docs` field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs: Option<String>,
     #[serde(default)]
     pub ignore: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthType>,
+    /// Collection-level variables: environment-independent key/value pairs,
+    /// resolvable via `{{name}}` and accessible in scripts via
+    /// `bru.getCollectionVar` / `bru.hasCollectionVar`. Persisted to disk.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vars: Vec<KeyValuePair>,
 }
 
 /// TOML structure for request .toml files
@@ -36,6 +45,9 @@ pub struct RequestToml {
     pub query: Option<Vec<QueryToml>>,
     pub body: Option<RequestBodyToml>,
     pub params: Option<RequestParams>,
+    /// Request-level variables, resolvable via `{{name}}`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vars: Vec<KeyValuePair>,
 }
 
 /// TOML structure for request body
@@ -318,6 +330,7 @@ impl From<RequestToml> for RequestData {
             auth: toml.auth.unwrap_or_default(),
             pre_request_script,
             post_response_script,
+            vars: toml.vars,
         }
     }
 }
@@ -419,6 +432,7 @@ impl From<RequestData> for RequestToml {
                 create_body_toml(&data.body, body_type)
             },
             params,
+            vars: data.vars,
         }
     }
 }
@@ -528,9 +542,10 @@ pub fn create_empty_collection() -> CollectionToml {
             name: "".to_string(),
             version: "1.0.0".to_string(),
             collection_type: "collection".to_string(),
-            description: "".to_string(),
+            docs: None,
             ignore: Vec::new(),
             auth: None,
+            vars: Vec::new(),
         },
         environments: vec![],
     }
@@ -547,9 +562,10 @@ mod tests {
                 name: "Test Collection".to_string(),
                 version: "1.0.0".to_string(),
                 collection_type: "collection".to_string(),
-                description: "Test Description".to_string(),
+                docs: Some("Test Description".to_string()),
                 ignore: Vec::new(),
                 auth: None,
+                vars: Vec::new(),
             },
             environments: vec![],
         };
@@ -579,9 +595,10 @@ mod tests {
                 name: "Test Collection".to_string(),
                 version: "1.0.0".to_string(),
                 collection_type: "collection".to_string(),
-                description: "Test Description".to_string(),
+                docs: Some("Test Description".to_string()),
                 ignore: Vec::new(),
                 auth: None,
+                vars: Vec::new(),
             },
             environments: vec![EnvironmentToml {
                 name: "Development".to_string(),
@@ -705,5 +722,39 @@ auth = "none"
             }
             _ => panic!("Expected OAuth2 auth"),
         }
+    }
+
+    #[test]
+    fn test_collection_docs_roundtrip() {
+        // docs present
+        let with_docs = CollectionToml {
+            collection: CollectionMeta {
+                name: "Docced".to_string(),
+                version: "1.0.0".to_string(),
+                collection_type: "collection".to_string(),
+                docs: Some("# Title\n\nbody".to_string()),
+                ignore: Vec::new(),
+                auth: None,
+                vars: Vec::new(),
+            },
+            environments: vec![],
+        };
+        let toml_str = toml::to_string(&with_docs).expect("serialize");
+        assert!(toml_str.contains("docs"));
+        let back: CollectionToml = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(back.collection.docs.as_deref(), Some("# Title\n\nbody"));
+
+        // docs absent (None) must not emit the field and deserialize back to None.
+        let without_docs = CollectionToml {
+            collection: CollectionMeta {
+                docs: None,
+                ..with_docs.collection.clone()
+            },
+            environments: vec![],
+        };
+        let toml_none = toml::to_string(&without_docs).expect("serialize");
+        assert!(!toml_none.contains("docs"));
+        let back_none: CollectionToml = toml::from_str(&toml_none).expect("deserialize");
+        assert!(back_none.collection.docs.is_none());
     }
 }

@@ -1,0 +1,73 @@
+info:
+  name: Create a pet
+  type: http
+  seq: 2
+  tags:
+    - pets
+
+http:
+  method: POST
+  url: "{{baseUrl}}/pets"
+  body:
+    type: json
+    data: |-
+      {
+        "id": 0,
+        "name": "",
+        "tag": "",
+        "createdAt": ""
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+examples:
+  - name: 201 Response
+    description: Null response
+    request:
+      url: "{{baseUrl}}/pets"
+      method: POST
+      body:
+        type: json
+        data: |-
+          {
+            "id": 0,
+            "name": "",
+            "tag": "",
+            "createdAt": ""
+          }
+    response:
+      status: 201
+      statusText: Created
+      body:
+        type: text
+        data: ""
+  - name: default Response
+    description: unexpected error
+    request:
+      url: "{{baseUrl}}/pets"
+      method: POST
+      body:
+        type: json
+        data: |-
+          {
+            "id": 0,
+            "name": "",
+            "tag": "",
+            "createdAt": ""
+          }
+    response:
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": 0,
+            "message": ""
+          }

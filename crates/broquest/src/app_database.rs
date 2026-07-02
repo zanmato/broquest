@@ -17,6 +17,9 @@ pub struct CollectionData {
     pub name: String,
     pub path: String,
     pub position: i32,
+    /// On-disk format, e.g. "broquest" or "opencollection".
+    /// See [`crate::collections::CollectionFormat`].
+    pub format: String,
     #[allow(dead_code)]
     pub created_at: chrono::DateTime<chrono::Utc>,
     #[allow(dead_code)]
@@ -86,6 +89,15 @@ impl AppDatabase {
         .execute(&self.pool)
         .await?;
 
+        // Migration: add the per-collection format column for databases created
+        // before OpenCollection support. Errors (e.g. column already exists) are
+        // ignored so this is safe to run on every startup.
+        let _ = sqlx::query(
+            "ALTER TABLE collections ADD COLUMN format TEXT NOT NULL DEFAULT 'broquest'",
+        )
+        .execute(&self.pool)
+        .await;
+
         // User settings table (legacy)
         sqlx::query(
             r#"
@@ -148,16 +160,18 @@ impl AppDatabase {
         // Upsert collection - insert new or update existing based on unique path constraint
         let result = sqlx::query(
             r#"
-            INSERT INTO collections (name, path, position, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO collections (name, path, position, format, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 name = EXCLUDED.name,
+                format = EXCLUDED.format,
                 updated_at = EXCLUDED.updated_at
             "#,
         )
         .bind(&collection.name)
         .bind(&collection.path)
         .bind(collection.position)
+        .bind(&collection.format)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -170,7 +184,7 @@ impl AppDatabase {
         // TODO: allow re-ordering via position
         let rows = sqlx::query(
             r#"
-            SELECT c.id, c.name, c.path, c.position, c.created_at, c.updated_at
+            SELECT c.id, c.name, c.path, c.position, c.format, c.created_at, c.updated_at
             FROM collections c
             ORDER BY c.id ASC
             "#,
@@ -185,6 +199,7 @@ impl AppDatabase {
                 name: row.get("name"),
                 path: row.get("path"),
                 position: row.get("position"),
+                format: row.get("format"),
                 created_at: chrono::DateTime::from_timestamp(row.get("created_at"), 0)
                     .unwrap_or_default(),
                 updated_at: chrono::DateTime::from_timestamp(row.get("updated_at"), 0)

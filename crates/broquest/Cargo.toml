@@ -32,6 +32,7 @@ digest_auth = { workspace = true }
 urlencoding = "2.1"
 url = "2"
 toml = { workspace = true }
+serde_yaml_ng = "0.10"
 thiserror = { workspace = true }
 
 # Script execution dependencies

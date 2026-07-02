@@ -663,8 +663,20 @@ impl CollectionsPanel {
             return;
         };
 
-        match collection_manager.read_collection_toml(std::path::Path::new(collection_path)) {
-            Ok(collection_data) => {
+        // Use the in-memory cache (works for both native TOML and OpenCollection
+        // collections, which have no collection.toml on disk). Fall back to
+        // reading collection.toml only if the collection isn't cached yet.
+        let collection_data = collection_manager
+            .get_collection_by_path(collection_path)
+            .map(|info| info.toml.clone())
+            .or_else(|| {
+                collection_manager
+                    .read_collection_toml(std::path::Path::new(collection_path))
+                    .ok()
+            });
+
+        match collection_data {
+            Some(collection_data) => {
                 tracing::info!(
                     "Successfully loaded collection data: {}",
                     collection_data.collection.name
@@ -677,11 +689,10 @@ impl CollectionsPanel {
                     collection_path: collection_path.to_string().into(),
                 });
             }
-            Err(e) => {
+            None => {
                 tracing::error!(
-                    "Failed to load collection data from {}: {}",
+                    "Failed to load collection data from {}: collection not cached and no collection.toml on disk",
                     collection_path,
-                    e
                 );
             }
         }

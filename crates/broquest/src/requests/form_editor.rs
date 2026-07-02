@@ -233,8 +233,7 @@ impl FormEditor {
                     .child(
                         Input::new(&row.key_input)
                             .small()
-                            .bordered(false)
-                            .bg(cx.theme().table)
+                            .appearance(false)
                             .text_sm()
                             .font_family(cx.theme().mono_font_family.clone()),
                     ),
@@ -249,8 +248,7 @@ impl FormEditor {
                     .child(
                         Input::new(&row.value_input)
                             .small()
-                            .bordered(false)
-                            .bg(cx.theme().table)
+                            .appearance(false)
                             .text_sm()
                             .font_family(cx.theme().mono_font_family.clone()),
                     ),

@@ -7,7 +7,9 @@ mod form_editor;
 mod header_editor;
 mod path_editor;
 mod query_editor;
+mod vars_editor;
 
 pub use auth_editor::AuthEditor;
 pub use editor::*;
 pub use editor_panel::*;
+pub use query_editor::QueryParamEditor;

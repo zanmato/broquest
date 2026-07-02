@@ -12,11 +12,13 @@ use gpui_component::{
     kbd::Kbd,
     notification::NotificationType,
     resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
+    scroll::ScrollableElement,
     select::{Select, SelectEvent, SelectItem, SelectState},
     tab::{Tab, TabBar},
     v_flex,
 };
 use jsonpath_rust::JsonPath;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::auth_editor::{AuthEditor, AuthEditorEvent};
@@ -24,6 +26,7 @@ use super::form_editor::{FormEditor, FormEditorEvent};
 use super::header_editor::{HeaderEditor, HeaderEditorEvent};
 use super::path_editor::{PathParamEditor, PathParamEvent};
 use super::query_editor::{QueryParamEditor, QueryParamEvent};
+use super::vars_editor::RequestVarsEditor;
 use crate::app_settings::AppSettings;
 use crate::domain::{AuthType, ContentType, HttpMethod, KeyValuePair, RequestData, ResponseData};
 use crate::http::ResponseFormat;
@@ -118,6 +121,7 @@ pub enum RequestTab {
     Headers,
     Auth,
     Scripts,
+    Vars,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +160,10 @@ pub struct RequestEditor {
     form_editor: Entity<FormEditor>,
     auth_editor: Entity<AuthEditor>,
     script_editor: Entity<ScriptEditor>,
+    /// Editable request-level variables (Bruno `runtime.variables`).
+    request_vars_editor: Entity<RequestVarsEditor>,
+    /// Read-only variable inspector scoped to the owning collection.
+    vars_view: Entity<crate::collections::VarsView>,
     _subscriptions: Vec<Subscription>,
     _updating_url_from_params: bool,
     _was_dirty: bool,
@@ -252,11 +260,21 @@ impl RequestEditor {
 
         let query_param_editor = cx.new(|cx| QueryParamEditor::new(window, cx));
 
+        let request_vars_editor = cx.new(|cx| RequestVarsEditor::new(window, cx));
+
         let header_editor = cx.new(|cx| HeaderEditor::new(window, cx));
 
         let form_editor = cx.new(|cx| FormEditor::new(window, cx));
 
         let script_editor = cx.new(|cx| ScriptEditor::new(window, cx));
+
+        // Read-only variable inspector (scoped later via set_collection_path).
+        // Embedded so it shares the Vars tab's scroll region with the editor.
+        let vars_view = cx.new(|cx| {
+            let mut view = crate::collections::VarsView::new(cx);
+            view.set_embedded(true);
+            view
+        });
 
         let auth_editor = cx.new(|cx| AuthEditor::new(window, cx));
 
@@ -310,6 +328,8 @@ impl RequestEditor {
             form_editor,
             auth_editor,
             script_editor,
+            request_vars_editor,
+            vars_view,
             _subscriptions: subscriptions,
             _updating_url_from_params: false,
             _was_dirty: false,
@@ -329,8 +349,13 @@ impl RequestEditor {
         }
     }
 
-    pub fn set_collection_path(&mut self, collection_path: Option<String>) {
-        self.collection_path = collection_path;
+    pub fn set_collection_path(&mut self, collection_path: Option<String>, cx: &mut Context<Self>) {
+        self.collection_path = collection_path.clone();
+        // Scope the read-only Vars view to this collection so it shows the right
+        // collection + runtime variables.
+        self.vars_view.update(cx, |view, cx| {
+            view.set_collection(collection_path, cx);
+        });
     }
 
     pub fn set_group_path(&mut self, group_path: Option<String>) {
@@ -403,6 +428,11 @@ impl RequestEditor {
         // Update query parameters
         self.query_param_editor.update(cx, |editor, cx| {
             editor.set_parameters(&data.query_params, window, cx);
+        });
+
+        // Update request variables
+        self.request_vars_editor.update(cx, |editor, cx| {
+            editor.set_vars(&data.vars, window, cx);
         });
 
         // Update headers
@@ -629,11 +659,16 @@ impl RequestEditor {
             data.body = form_body;
         }
 
+        let vars = self
+            .request_vars_editor
+            .read_with(cx, |editor, cx| editor.get_vars(cx));
+
         data.path_params = path_params;
         data.query_params = query_params;
         data.headers = headers;
         data.pre_request_script = pre_request_script;
         data.post_response_script = post_response_script;
+        data.vars = vars;
 
         // Set Content-Type header from the dropdown only if the user hasn't set one
         // in the headers editor.
@@ -885,6 +920,29 @@ impl RequestEditor {
                 .unwrap_or_default();
         }
 
+        // Gather the collection's session runtime vars and declared collection
+        // vars so they can be seeded into the request's VariableStore and
+        // participate in {{}} resolution (precedence: runtime > collection).
+        let (runtime_vars_for_request, collection_vars_for_request) =
+            if let Some(path) = &self.collection_path {
+                let collection = CollectionManager::global(cx).get_collection_by_path(path);
+                if let Some(info) = collection {
+                    let cv: HashMap<String, String> = info
+                        .toml
+                        .collection
+                        .vars
+                        .iter()
+                        .filter(|v| v.enabled && !v.key.is_empty())
+                        .map(|v| (v.key.clone(), v.value.clone()))
+                        .collect();
+                    (Some(info.runtime_vars.clone()), Some(cv))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+
         // Get the HTTP client after updating UI to avoid borrow issues
         let http_client = HttpClientService::global(cx);
 
@@ -907,8 +965,13 @@ impl RequestEditor {
 
         let task = cx.spawn_in(window, async move |_this, window| {
             match async_compat::Compat::new(
-                http_client_clone
-                    .send_request(request_data_clone1, variables, secrets)
+                http_client_clone.send_request(
+                    request_data_clone1,
+                    variables,
+                    secrets,
+                    runtime_vars_for_request,
+                    collection_vars_for_request,
+                )
             ).await {
                 Ok((response_data, variable_store)) => {
                     // Check for dirty environment variables
@@ -938,6 +1001,21 @@ impl RequestEditor {
                         } else {
                             tracing::warn!("No collection or environment selected, cannot update dirty variables");
                         }
+                    }
+
+                    // Write runtime vars set by scripts (bru.setVar) back into the
+                    // collection's session store so they survive to the next
+                    // request and refresh the Vars view.
+                    let runtime_vars = variable_store.get_all_vars();
+                    if let Some(collection_path) = collection_path.as_ref()
+                        && let Err(e) = window.update_global(
+                            |collection_manager: &mut CollectionManager, _window, _cx| {
+                                collection_manager
+                                    .update_runtime_vars(collection_path, runtime_vars)
+                            },
+                        )
+                    {
+                        tracing::error!("Failed to update runtime variables: {}", e);
                     }
 
                     // Successfully got response data
@@ -1280,6 +1358,10 @@ impl RequestEditor {
         let path_count = self.get_path_badge_count(cx);
         let scripts_count = self.get_scripts_badge_count(cx);
         let has_auth = self.has_auth_configured(cx);
+        // Badge counts the editable request variables defined on this request.
+        let vars_count = self
+            .request_vars_editor
+            .read_with(cx, |editor, cx| editor.count(cx));
 
         TabBar::new("request-tabs")
             .left(px(-1.)) // Avoid double border with container
@@ -1289,7 +1371,8 @@ impl RequestEditor {
                 RequestTab::Headers => 2,
                 RequestTab::Auth => 3,
                 RequestTab::Path => 4,
-                RequestTab::Scripts => 5,
+                RequestTab::Vars => 5,
+                RequestTab::Scripts => 6,
             })
             .on_click(cx.listener(|this, &index, _, cx| {
                 this.active_tab = match index {
@@ -1298,7 +1381,8 @@ impl RequestEditor {
                     2 => RequestTab::Headers,
                     3 => RequestTab::Auth,
                     4 => RequestTab::Path,
-                    5 => RequestTab::Scripts,
+                    5 => RequestTab::Vars,
+                    6 => RequestTab::Scripts,
                     _ => RequestTab::Query,
                 };
                 cx.notify();
@@ -1321,6 +1405,9 @@ impl RequestEditor {
             )
             .child(Tab::new().label("Path").when(path_count > 0, |tab| {
                 tab.pr_2().suffix(TabBadge::new().count(path_count))
+            }))
+            .child(Tab::new().label("Vars").when(vars_count > 0, |tab| {
+                tab.pr_2().suffix(TabBadge::new().count(vars_count))
             }))
             .child(Tab::new().label("Scripts").when(scripts_count > 0, |tab| {
                 tab.pr_2().suffix(TabBadge::new().count(scripts_count))
@@ -1376,6 +1463,24 @@ impl RequestEditor {
             RequestTab::Headers => div().size_full().child(self.header_editor.clone()),
             RequestTab::Auth => div().size_full().child(self.auth_editor.clone()),
             RequestTab::Scripts => div().size_full().child(self.script_editor.clone()),
+            RequestTab::Vars => div().size_full().child(
+                // A single scroll region (like the other editors): editable
+                // request variables on top, then the read-only inherited
+                // collection + runtime variables, all scrolling together.
+                v_flex()
+                    .h_full()
+                    .overflow_y_scrollbar()
+                    .child(self.request_vars_editor.clone())
+                    .child(
+                        div()
+                            // Space the inherited (read-only) variables away
+                            // from the editable request variables above.
+                            .mt_6()
+                            .border_t_1()
+                            .border_color(cx.theme().border)
+                            .child(self.vars_view.clone()),
+                    ),
+            ),
         }
     }
 

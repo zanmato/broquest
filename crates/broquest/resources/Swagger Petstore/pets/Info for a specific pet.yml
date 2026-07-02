@@ -1,0 +1,70 @@
+info:
+  name: Info for a specific pet
+  type: http
+  seq: 3
+  tags:
+    - pets
+
+http:
+  method: GET
+  url: "{{baseUrl}}/pets/:petId"
+  params:
+    - name: petId
+      value: ""
+      type: path
+      description: The id of the pet to retrieve
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+examples:
+  - name: 200 Response
+    description: Expected response to a valid request
+    request:
+      url: "{{baseUrl}}/pets/:petId"
+      method: GET
+      params:
+        - name: petId
+          value: ""
+          type: path
+          description: The id of the pet to retrieve
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "id": 0,
+            "name": "",
+            "tag": "",
+            "createdAt": ""
+          }
+  - name: default Response
+    description: unexpected error
+    request:
+      url: "{{baseUrl}}/pets/:petId"
+      method: GET
+      params:
+        - name: petId
+          value: ""
+          type: path
+          description: The id of the pet to retrieve
+    response:
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": 0,
+            "message": ""
+          }

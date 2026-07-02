@@ -1,6 +1,6 @@
 use gpui::{
-    App, AppContext, BorrowAppContext, Context, Entity, EventEmitter, IntoElement, KeyBinding,
-    ParentElement, Render, Styled, Window, actions, div, prelude::*,
+    App, AppContext, BorrowAppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, KeyBinding, ParentElement, Render, Styled, Window, actions, div, prelude::*,
 };
 use gpui_component::{
     ActiveTheme as _, StyledExt, WindowExt,
@@ -23,6 +23,7 @@ pub struct GroupEditor {
     collection_path: String,
     group_name: Option<String>, // Some for editing, None for new group
     name_input: Entity<InputState>,
+    focus_handle: FocusHandle,
 }
 
 impl GroupEditor {
@@ -43,6 +44,7 @@ impl GroupEditor {
             collection_path,
             group_name,
             name_input,
+            focus_handle: cx.focus_handle(),
         }
     }
 
@@ -107,9 +109,16 @@ impl GroupEditor {
 
 impl EventEmitter<AppEvent> for GroupEditor {}
 
+impl Focusable for GroupEditor {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for GroupEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .track_focus(&self.focus_handle)
             .key_context(CONTEXT)
             .on_action(cx.listener(|this: &mut GroupEditor, &Save, window, cx| {
                 this.save_group(window, cx);

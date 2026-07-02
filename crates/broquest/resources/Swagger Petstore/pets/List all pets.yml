@@ -1,0 +1,75 @@
+info:
+  name: List all pets
+  type: http
+  seq: 1
+  tags:
+    - pets
+
+http:
+  method: GET
+  url: "{{baseUrl}}/pets"
+  params:
+    - name: limit
+      value: ""
+      type: query
+      description: How many items to return at one time (max 100)
+      disabled: true
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+examples:
+  - name: 200 Response
+    description: A paged array of pets
+    request:
+      url: "{{baseUrl}}/pets"
+      method: GET
+      params:
+        - name: limit
+          value: ""
+          type: query
+          description: How many items to return at one time (max 100)
+          disabled: true
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          [
+            {
+              "id": 0,
+              "name": "",
+              "tag": "",
+              "createdAt": ""
+            }
+          ]
+  - name: default Response
+    description: unexpected error
+    request:
+      url: "{{baseUrl}}/pets"
+      method: GET
+      params:
+        - name: limit
+          value: ""
+          type: query
+          description: How many items to return at one time (max 100)
+          disabled: true
+    response:
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": 0,
+            "message": ""
+          }

@@ -62,6 +62,10 @@ pub struct RequestData {
     pub post_response_script: Option<String>,
     #[serde(default)]
     pub auth: AuthType,
+    /// Request-level variables (Bruno `runtime.variables` / `bru.getRequestVar`),
+    /// resolvable in this request via `{{name}}`.
+    #[serde(default)]
+    pub vars: Vec<KeyValuePair>,
 }
 
 impl Default for RequestData {
@@ -77,6 +81,7 @@ impl Default for RequestData {
             pre_request_script: None,
             post_response_script: None,
             auth: AuthType::None,
+            vars: Vec::new(),
         }
     }
 }

@@ -1,14 +1,20 @@
-use gpui::{App, Context, Entity, KeyBinding, Window, actions, div, prelude::*, px};
+use gpui::{
+    App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString, Window, actions, div,
+    prelude::*, px,
+};
 use gpui_component::{
-    ActiveTheme, Sizable as _, StyledExt, WindowExt,
+    ActiveTheme, Icon, IndexPath, Sizable as _, StyledExt, WindowExt,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputState},
     kbd::Kbd,
     notification::NotificationType,
+    resizable::{ResizableState, h_resizable, resizable_panel},
+    scroll::ScrollableElement,
+    select::{Select, SelectItem, SelectState},
     switch::Switch,
     tab::{Tab, TabBar},
-    v_flex,
+    text, v_flex,
 };
 
 use super::manager::CollectionManager;
@@ -26,7 +32,41 @@ use crate::{
 
 const CONTEXT: &str = "collection_editor";
 
-actions!(collection_editor, [Save]);
+/// What to import into a newly-created collection.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ImportKind {
+    None,
+    OpenApi,
+    Wsdl,
+}
+
+impl ImportKind {
+    fn all() -> Vec<ImportKind> {
+        vec![ImportKind::None, ImportKind::OpenApi, ImportKind::Wsdl]
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            ImportKind::None => "No import",
+            ImportKind::OpenApi => "OpenAPI",
+            ImportKind::Wsdl => "WSDL / SOAP",
+        }
+    }
+}
+
+impl SelectItem for ImportKind {
+    type Value = ImportKind;
+
+    fn title(&self) -> SharedString {
+        self.label().into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        self
+    }
+}
+
+actions!(collection_editor, [Save, ToggleDocsEdit]);
 
 pub struct CollectionEditor {
     active_tab: usize,
@@ -36,18 +76,43 @@ pub struct CollectionEditor {
     auth_editor: Entity<AuthEditor>,
     name_input: Entity<InputState>,
     path_input: Entity<InputState>,
-    // OpenAPI import fields
-    import_openapi: bool,
+    /// Editable collection-level variables (`CollectionMeta.vars`).
+    vars_editor: Entity<crate::requests::QueryParamEditor>,
+    /// Read-only runtime variable inspector for this collection.
+    vars_view: Entity<super::VarsView>,
+    /// Markdown docs editor (code editor mode).
+    docs_input: Entity<InputState>,
+    /// Whether the docs pane shows the editor (true) or the rendered preview.
+    docs_editing: bool,
+    /// Split state between the collection form and the docs pane.
+    docs_split_state: Entity<ResizableState>,
+    focus_handle: FocusHandle,
+    // Import: pick a spec format to import from (or None).
+    import_select: Entity<SelectState<Vec<ImportKind>>>,
     openapi_spec_input: Entity<InputState>,
     openapi_spec_path: Option<String>,
-    // WSDL import fields
-    import_wsdl: bool,
     wsdl_spec_input: Entity<InputState>,
+    // Save this collection in Bruno's OpenCollection (YAML) format instead of
+    // broquest's native TOML.
+    use_opencollection: bool,
 }
 
 impl CollectionEditor {
     pub fn init(cx: &mut App) {
-        cx.bind_keys([KeyBinding::new("secondary-s", Save, Some(CONTEXT))]);
+        cx.bind_keys([
+            KeyBinding::new("secondary-s", Save, Some(CONTEXT)),
+            KeyBinding::new("secondary-e", ToggleDocsEdit, Some(CONTEXT)),
+        ]);
+    }
+
+    fn on_toggle_docs_edit(
+        &mut self,
+        _: &ToggleDocsEdit,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.docs_editing = !self.docs_editing;
+        cx.notify();
     }
 
     pub fn new(
@@ -80,6 +145,40 @@ impl CollectionEditor {
 
         let openapi_spec_input = cx.new(|cx| InputState::new(window, cx));
         let wsdl_spec_input = cx.new(|cx| InputState::new(window, cx));
+        let import_select = cx.new(|cx| {
+            SelectState::new(
+                ImportKind::all(),
+                Some(IndexPath::default().row(0)),
+                window,
+                cx,
+            )
+        });
+
+        // Collection vars editor (editable key/value list) + read-only runtime
+        // vars view, both scoped to this collection.
+        let vars_editor = cx.new(|cx| crate::requests::QueryParamEditor::new(window, cx));
+        let vars_view = cx.new(|cx| {
+            let mut view = super::VarsView::new(cx);
+            view.set_collection(
+                if collection_path.is_empty() {
+                    None
+                } else {
+                    Some(collection_path.clone())
+                },
+                cx,
+            );
+            view
+        });
+
+        // Markdown docs editor, seeded from the collection's docs.
+        let docs_seed = collection_data.collection.docs.clone().unwrap_or_default();
+        let docs_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("markdown")
+                .placeholder("Write collection docs in Markdown...")
+                .default_value(docs_seed)
+        });
+        let docs_split_state = cx.new(|_cx| ResizableState::default());
 
         let editor = Self {
             active_tab: 0, // Collection tab
@@ -89,11 +188,17 @@ impl CollectionEditor {
             auth_editor,
             name_input,
             path_input,
-            import_openapi: false,
+            vars_editor,
+            vars_view,
+            docs_input,
+            docs_editing: false,
+            docs_split_state,
+            focus_handle: cx.focus_handle(),
+            import_select,
             openapi_spec_input,
             openapi_spec_path: None,
-            import_wsdl: false,
             wsdl_spec_input,
+            use_opencollection: false,
         };
 
         // Load initial environments data from CollectionManager
@@ -104,11 +209,20 @@ impl CollectionEditor {
             environments_count
         );
 
-        // Always load from CollectionManager cache since we're using path-based approach
-        let collection_manager = CollectionManager::global(cx);
-        if let Some(environments) =
-            collection_manager.get_collection_environments(&collection_path_for_lookup)
-        {
+        // Always load from CollectionManager cache since we're using path-based approach.
+        // Extract all needed data up front so the immutable borrow of `cx` ends
+        // before we mutate the editor below.
+        let (environments, collection_vars) = {
+            let collection_manager = CollectionManager::global(cx);
+            let envs = collection_manager.get_collection_environments(&collection_path_for_lookup);
+            let vars = collection_manager
+                .get_collection_by_path(&collection_path_for_lookup)
+                .map(|info| info.toml.collection.vars.clone())
+                .unwrap_or_default();
+            (envs, vars)
+        };
+
+        if let Some(environments) = &environments {
             tracing::info!(
                 "Found {} environments for collection '{}': {:?}",
                 environments.len(),
@@ -116,7 +230,7 @@ impl CollectionEditor {
                 environments.iter().map(|e| &e.name).collect::<Vec<_>>()
             );
             editor.environment_editor.update(cx, |env_editor, cx| {
-                env_editor.load_environments(&environments, window, cx);
+                env_editor.load_environments(environments, window, cx);
             });
         } else {
             tracing::warn!(
@@ -126,6 +240,11 @@ impl CollectionEditor {
             );
         }
 
+        // Seed the vars editor with any existing collection-level variables.
+        editor.vars_editor.update(cx, |vars_editor, cx| {
+            vars_editor.set_parameters(&collection_vars, window, cx);
+        });
+
         editor
     }
 
@@ -133,7 +252,12 @@ impl CollectionEditor {
         let name = self.name_input.read(cx).value().to_string();
         let version = self.collection_data.collection.version.clone();
         let collection_type = self.collection_data.collection.collection_type.clone();
-        let description = self.collection_data.collection.description.clone();
+        let docs_text = self.docs_input.read(cx).value().to_string();
+        let docs = if docs_text.trim().is_empty() {
+            None
+        } else {
+            Some(docs_text)
+        };
         let ignore = self.collection_data.collection.ignore.clone();
 
         let auth = match self.auth_editor.read(cx).get_auth(cx) {
@@ -152,9 +276,10 @@ impl CollectionEditor {
                 name,
                 version,
                 collection_type,
-                description,
+                docs,
                 ignore,
                 auth,
+                vars: self.vars_editor.read(cx).get_query_parameters(cx),
             },
             environments,
         }
@@ -187,31 +312,19 @@ impl CollectionEditor {
         cx.notify();
     }
 
-    fn render_collection_tab(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let import_section = if self.import_openapi {
-            Some(
-                v_flex().gap_2().children([
-                    div()
-                        .text_sm()
-                        .font_medium()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("OpenAPI Spec File"),
-                    h_flex()
-                        .gap_2()
-                        .child(Input::new(&self.openapi_spec_input))
-                        .child(
-                            Button::new("browse-spec")
-                                .outline()
-                                .icon(IconName::FolderOpen)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.handle_browse_spec_file(window, cx)
-                                })),
-                        ),
-                ]),
-            )
-        } else {
-            None
-        };
+    /// The currently-selected import source.
+    fn selected_import(&self, cx: &App) -> ImportKind {
+        self.import_select
+            .read(cx)
+            .selected_value()
+            .copied()
+            .unwrap_or(ImportKind::None)
+    }
+
+    /// The left-hand form: name, path, import toggles, OpenCollection switch.
+    fn render_collection_form(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let import_kind = self.selected_import(cx);
+        let label_color = cx.theme().muted_foreground;
 
         v_flex()
             .gap_3()
@@ -222,82 +335,45 @@ impl CollectionEditor {
                     div()
                         .text_sm()
                         .font_medium()
-                        .text_color(cx.theme().muted_foreground)
+                        .text_color(label_color)
                         .child("Name"),
                     div().child(Input::new(&self.name_input)),
                 ]),
             )
             .child(
-                // OpenAPI Import section
+                // Import section: a single dropdown (No import / OpenAPI /
+                // WSDL) with the relevant input shown below the selection.
                 v_flex()
                     .gap_2()
                     .child(
-                        h_flex().gap_2().items_center().child(
-                            Switch::new("import-openapi")
-                                .small()
-                                .label("Import from OpenAPI")
-                                .checked(self.import_openapi)
-                                .on_click(cx.listener(|this, checked, window, cx| {
-                                    this.import_openapi = *checked;
-                                    if !*checked {
-                                        this.openapi_spec_path = None;
-                                        this.openapi_spec_input.update(cx, |input, cx| {
-                                            input.set_value("".to_string(), window, cx);
-                                        });
-                                    }
-                                    // Mutually exclusive with WSDL
-                                    if *checked {
-                                        this.import_wsdl = false;
-                                        this.wsdl_spec_input.update(cx, |input, cx| {
-                                            input.set_value("".to_string(), window, cx);
-                                        });
-                                    }
-                                    cx.notify();
-                                })),
-                        ),
+                        div()
+                            .text_sm()
+                            .font_medium()
+                            .text_color(label_color)
+                            .child("Import from"),
                     )
-                    .when_some(import_section, |this, section| this.child(section)),
-            )
-            .child(
-                // WSDL/SOAP Import section
-                v_flex()
-                    .gap_2()
                     .child(
-                        h_flex().gap_2().items_center().child(
-                            Switch::new("import-wsdl")
-                                .small()
-                                .label("Import from WSDL/SOAP")
-                                .checked(self.import_wsdl)
-                                .on_click(cx.listener(|this, checked, window, cx| {
-                                    this.import_wsdl = *checked;
-                                    if !*checked {
-                                        this.wsdl_spec_input.update(cx, |input, cx| {
-                                            input.set_value("".to_string(), window, cx);
-                                        });
-                                    }
-                                    // Mutually exclusive with OpenAPI
-                                    if *checked {
-                                        this.import_openapi = false;
-                                        this.openapi_spec_path = None;
-                                        this.openapi_spec_input.update(cx, |input, cx| {
-                                            input.set_value("".to_string(), window, cx);
-                                        });
-                                    }
-                                    cx.notify();
-                                })),
-                        ),
+                        div()
+                            .w_full()
+                            .child(Select::new(&self.import_select).small()),
                     )
-                    .when(self.import_wsdl, |this| {
+                    .when(import_kind == ImportKind::OpenApi, |this| {
                         this.child(
-                            v_flex().gap_2().children([
-                                div()
-                                    .text_sm()
-                                    .font_medium()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("WSDL URL"),
-                                h_flex().child(Input::new(&self.wsdl_spec_input)),
-                            ]),
+                            h_flex()
+                                .gap_2()
+                                .child(Input::new(&self.openapi_spec_input))
+                                .child(
+                                    Button::new("browse-spec")
+                                        .outline()
+                                        .icon(IconName::FolderOpen)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.handle_browse_spec_file(window, cx)
+                                        })),
+                                ),
                         )
+                    })
+                    .when(import_kind == ImportKind::Wsdl, |this| {
+                        this.child(h_flex().child(Input::new(&self.wsdl_spec_input)))
                     }),
             )
             .child(
@@ -318,6 +394,117 @@ impl CollectionEditor {
                     ),
                 ]),
             )
+            .child(
+                // OpenCollection format toggle (kept at the bottom of the form).
+                v_flex().gap_2().child(
+                    h_flex().gap_2().items_center().child(
+                        Switch::new("use-opencollection")
+                            .small()
+                            .label("Use OpenCollection format")
+                            .checked(self.use_opencollection)
+                            .on_click(cx.listener(|this, checked, _window, cx| {
+                                this.use_opencollection = *checked;
+                                cx.notify();
+                            })),
+                    ),
+                ),
+            )
+    }
+
+    /// The Collection tab: a horizontal split with the form on the left and the
+    /// docs view/editor on the right.
+    fn render_collection_tab(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_resizable("collection-docs")
+            .with_state(&self.docs_split_state)
+            .child(
+                resizable_panel()
+                    .size(px(420.))
+                    .size_range(px(280.)..gpui::Pixels::MAX)
+                    .child(
+                        v_flex()
+                            .size_full()
+                            .overflow_y_scrollbar()
+                            .child(self.render_collection_form(cx)),
+                    ),
+            )
+            .child(resizable_panel().child(v_flex().size_full().child(self.render_docs_pane(cx))))
+    }
+
+    /// The docs pane: a toggle between a rendered markdown preview and a
+    /// markdown code editor.
+    fn render_docs_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_editing = self.docs_editing;
+        // The button shows the action it performs: while previewing it offers
+        // Edit (pen); while editing it offers Preview (eye).
+        let toggle_icon = if is_editing {
+            IconName::Eye
+        } else {
+            IconName::SquarePen
+        };
+
+        let body = if is_editing {
+            // The code editor must fill the remaining height. Wrap in a flex
+            // container that can shrink (min_h_0) so the Input's h_full resolves.
+            div()
+                .flex_1()
+                .min_h_0()
+                .child(
+                    Input::new(&self.docs_input)
+                        .h_full()
+                        .p_0()
+                        .border_0()
+                        .focus_bordered(false)
+                        .rounded_none(),
+                )
+                .into_any_element()
+        } else {
+            let md = self.docs_input.read(cx).value().to_string();
+            let empty = md.trim().is_empty();
+            if empty {
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .p_3()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("No docs yet. Click the edit button to write Markdown documentation for this collection.")
+                    .into_any_element()
+            } else {
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .p_3()
+                    .child(text::markdown(md).selectable(true))
+                    .into_any_element()
+            }
+        };
+
+        // Floating edit/preview toggle in the top-right corner, overlaid on the
+        // content instead of a dedicated header row.
+        let toggle = div()
+            .absolute()
+            .top_2()
+            .right_2()
+            .rounded_md()
+            .bg(cx.theme().background)
+            .child(
+                Button::new("toggle-docs-edit")
+                    .small()
+                    .ghost()
+                    .icon(Icon::new(toggle_icon).size(px(14.)))
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.docs_editing = !this.docs_editing;
+                        cx.notify();
+                    })),
+            );
+
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .relative()
+            .child(body)
+            .child(toggle)
     }
 
     fn render_environments_tab(&self, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -334,6 +521,7 @@ impl CollectionEditor {
             .children(vec![
                 Tab::new().label("Collection"),
                 Tab::new().label("Environments"),
+                Tab::new().label("Vars"),
                 Tab::new().label("Auth"),
             ])
     }
@@ -342,18 +530,39 @@ impl CollectionEditor {
         div().flex_1().size_full().child(match self.active_tab {
             0 => {
                 let content = self.render_collection_tab(cx);
-                div().child(content)
+                div().size_full().child(content)
             }
             1 => {
                 let content = self.render_environments_tab(cx);
                 div().child(content)
             }
-            2 => div().size_full().child(self.auth_editor.clone()),
+            2 => div().size_full().child(self.render_vars_tab(cx)),
+            3 => div().size_full().child(self.auth_editor.clone()),
             _ => {
                 let content = self.render_collection_tab(cx);
                 div().child(content)
             }
         })
+    }
+
+    /// Vars tab: editable collection-level variables (top) + read-only runtime
+    /// variable inspector (bottom) for this collection.
+    fn render_vars_tab(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(div().flex_1().min_h_0().child(self.vars_editor.clone())),
+            )
+            .child(
+                v_flex()
+                    .h(px(220.))
+                    .border_t_1()
+                    .border_color(_cx.theme().border)
+                    .child(self.vars_view.clone()),
+            )
     }
 
     // Event handlers
@@ -375,6 +584,12 @@ impl CollectionEditor {
             return;
         }
 
+        let format = if self.use_opencollection {
+            super::CollectionFormat::OpenCollection
+        } else {
+            super::CollectionFormat::Broquest
+        };
+
         // Save to database first to get proper ID
         let app_database = AppDatabase::global(cx).clone();
         let collection_data_clone = collection_data.clone();
@@ -387,6 +602,7 @@ impl CollectionEditor {
                     name: collection_data_clone.collection.name.clone(),
                     path: current_path_clone.clone(),
                     position: 2,
+                    format: format.as_db_str().to_string(),
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
                 })
@@ -394,8 +610,19 @@ impl CollectionEditor {
         })
         .detach();
 
+        let use_opencollection = self.use_opencollection;
         let save_result = cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-            collection_manager.save_collection(&collection_data, &current_path)
+            // If the collection already exists in the manager, save in its
+            // current format; otherwise create it in the chosen format.
+            if collection_manager
+                .get_collection_by_path(&current_path)
+                .is_none()
+                && use_opencollection
+            {
+                collection_manager.create_opencollection(&collection_data, &current_path)
+            } else {
+                collection_manager.save_collection(&collection_data, &current_path)
+            }
         });
 
         match save_result {
@@ -407,20 +634,20 @@ impl CollectionEditor {
                 tracing::info!("Collection saved successfully to: {}", current_path);
                 tracing::info!("Collection name: {}", collection_data.collection.name);
 
-                // Import from OpenAPI if enabled
-                if self.import_openapi {
-                    let spec_path = self.openapi_spec_path.clone();
-                    if let Some(spec_path_value) = spec_path {
-                        self.import_from_openapi(&spec_path_value, &current_path, window, cx);
+                // Import from the selected spec source, if any.
+                match self.selected_import(cx) {
+                    ImportKind::OpenApi => {
+                        if let Some(spec_path_value) = self.openapi_spec_path.clone() {
+                            self.import_from_openapi(&spec_path_value, &current_path, window, cx);
+                        }
                     }
-                }
-
-                // Import from WSDL if enabled
-                if self.import_wsdl {
-                    let wsdl_url = self.wsdl_spec_input.read(cx).value().to_string();
-                    if !wsdl_url.is_empty() {
-                        self.import_from_wsdl_url(&wsdl_url, &current_path, window, cx);
+                    ImportKind::Wsdl => {
+                        let wsdl_url = self.wsdl_spec_input.read(cx).value().to_string();
+                        if !wsdl_url.is_empty() {
+                            self.import_from_wsdl_url(&wsdl_url, &current_path, window, cx);
+                        }
                     }
+                    ImportKind::None => {}
                 }
 
                 // Show success notification
@@ -760,13 +987,25 @@ impl CollectionEditor {
     }
 }
 
+impl Focusable for CollectionEditor {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for CollectionEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .track_focus(&self.focus_handle)
             .key_context(CONTEXT)
             .on_action(
                 cx.listener(|this: &mut CollectionEditor, &Save, window, cx| {
                     this.handle_save_collection(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this: &mut CollectionEditor, &ToggleDocsEdit, window, cx| {
+                    this.on_toggle_docs_edit(&ToggleDocsEdit, window, cx);
                 }),
             )
             .flex_1()

@@ -12,6 +12,18 @@ use crate::scripting::{ScriptExecutionService, VariableStore};
 use super::jwt;
 use super::oauth2::{self, calculate_expires_at, is_oauth_token_expired};
 
+/// Flatten a JSON value to its broquest string representation for `{{}}`
+/// template resolution: strings are used verbatim; other JSON values are
+/// serialized compactly (so objects/arrays become valid JSON strings, and
+/// numbers/bools become their string form).
+fn value_to_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
 /// Well-defined error type for HTTP requests
 #[derive(Debug, Clone)]
 pub struct HttpError {
@@ -211,9 +223,17 @@ impl HttpClientService {
         request_data: RequestData,
         variables: Option<HashMap<String, String>>,
         secrets: Option<HashMap<String, String>>,
+        runtime_vars: Option<HashMap<String, serde_json::Value>>,
+        collection_vars: Option<HashMap<String, String>>,
     ) -> std::result::Result<(ResponseData, VariableStore), HttpError> {
-        self.send_request_internal(request_data, variables, secrets)
-            .await
+        self.send_request_internal(
+            request_data,
+            variables,
+            secrets,
+            runtime_vars,
+            collection_vars,
+        )
+        .await
     }
 
     async fn send_request_internal(
@@ -221,11 +241,62 @@ impl HttpClientService {
         mut request_data: RequestData,
         variables: Option<HashMap<String, String>>,
         secrets: Option<HashMap<String, String>>,
+        runtime_vars: Option<HashMap<String, serde_json::Value>>,
+        collection_vars: Option<HashMap<String, String>>,
     ) -> std::result::Result<(ResponseData, VariableStore), HttpError> {
         let start_time = std::time::Instant::now();
 
         // Create variable store for this request
         let variable_store = VariableStore::new();
+
+        // Seed the read-only collection variable bucket (bru.getCollectionVar).
+        if let Some(cv) = &collection_vars {
+            let map = cv
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            variable_store.set_collection_vars(map);
+        }
+
+        // Seed runtime vars from the collection's session store so bru.getVar
+        // sees values set by earlier requests in the same run.
+        if let Some(rv) = &runtime_vars {
+            for (name, value) in rv {
+                variable_store.set_var(name, value.clone());
+            }
+        }
+
+        // Flatten runtime vars to strings for {{}} template resolution.
+        let runtime_str: HashMap<String, String> = runtime_vars
+            .as_ref()
+            .map(|rv| {
+                rv.iter()
+                    .map(|(k, v)| (k.clone(), value_to_string(v)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut collection_str: HashMap<String, String> = collection_vars.unwrap_or_default();
+
+        // Request-level variables: seed the store for bru.getRequestVar and fold
+        // into the resolution map (request overrides collection) so {{name}}
+        // resolves. Precedence: runtime > request > collection > env.
+        let request_vars_map: HashMap<String, String> = request_data
+            .vars
+            .iter()
+            .filter(|v| v.enabled && !v.key.is_empty())
+            .map(|v| (v.key.clone(), v.value.clone()))
+            .collect();
+        if !request_vars_map.is_empty() {
+            variable_store.set_request_vars(
+                request_vars_map
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                    .collect(),
+            );
+            for (k, v) in &request_vars_map {
+                collection_str.insert(k.clone(), v.clone());
+            }
+        }
 
         // Initialize variable store with environment data if provided
         if let (Some(variables), Some(secrets)) = (variables, secrets) {
@@ -238,12 +309,30 @@ impl HttpClientService {
             // Initialize variable store with environment data
             variable_store.initialize_with_env(&variables, &secrets);
 
-            // Resolve variables in request data using EnvironmentResolver
-            request_data =
-                self.environment_resolver
-                    .resolve_request_data(request_data, &variables, &secrets);
+            // Resolve variables in request data using EnvironmentResolver.
+            // Precedence: runtime > collection > env > secret.
+            request_data = self.environment_resolver.resolve_request_data(
+                request_data,
+                &runtime_str,
+                &collection_str,
+                &variables,
+                &secrets,
+            );
 
             tracing::info!("URL after environment substitution: {}", request_data.url);
+        } else {
+            // No environment selected, but runtime/collection vars may still apply.
+            if !runtime_str.is_empty() || !collection_str.is_empty() {
+                let empty = HashMap::new();
+                request_data = self.environment_resolver.resolve_request_data(
+                    request_data,
+                    &runtime_str,
+                    &collection_str,
+                    &empty,
+                    &empty,
+                );
+                tracing::info!("URL after variable substitution: {}", request_data.url);
+            }
         }
 
         tracing::info!(
@@ -664,7 +753,10 @@ impl HttpClientService {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
         let mut headers = Vec::new();
         let request = match auth {
-            AuthType::None | AuthType::Inherit | AuthType::Digest(_) => request,
+            AuthType::None
+            | AuthType::Inherit
+            | AuthType::Digest(_)
+            | AuthType::Unsupported { .. } => request,
             AuthType::Basic(basic) => {
                 let encoded = STANDARD.encode(format!("{}:{}", basic.username, basic.password));
                 headers.push(KeyValuePair {
