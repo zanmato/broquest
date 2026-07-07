@@ -13,8 +13,8 @@ Options:
   "
 }
 
-# Get version from Cargo.toml
-VERSION=$(grep '^version' ./crates/broquest/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+# Get version from the workspace Cargo.toml ([workspace.package] version)
+VERSION=$(grep '^version' ./Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 PACKAGE_NAME="broquest"
 PACKAGE_VERSION="${VERSION}"
 PACKAGE_ARCH="amd64"

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.13] - 2026-07-07
+
+### Features
+
+- Added partial support for the opencollection format
+- Added a history panel
+- Added a command palette
+
+### Style
+
+- Updated app icon
+
 ## [0.1.12] - 2026-04-15
 
 ### Features
