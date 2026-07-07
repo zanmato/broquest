@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/broquest", "crates/tree-sitter-url", "crates/wsdl"]
+exclude = ["vendor/llrt"]
 resolver = "2"
 
 [workspace.package]
@@ -77,6 +78,10 @@ llrt_modules = { path = "vendor/llrt/llrt_modules", default-features = false, fe
     "buffer",
     "crypto",
     "url",
+    # Required unconditionally by llrt_modules internals (require.rs, resolver.rs),
+    # even though broquest does not init these modules itself.
+    "path",
+    "timers",
 ] }
 
 [workspace.lints.clippy]
