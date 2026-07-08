@@ -1568,6 +1568,7 @@ impl RequestEditor {
 
     fn render_response_area(
         &self,
+        layout: EditorLayout,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1582,7 +1583,9 @@ impl RequestEditor {
                     .child(
                         // Response tabs
                         TabBar::new("response-tabs")
-                            .left(px(-1.)) // Avoid double border with container
+                            .when(layout == EditorLayout::Vertical, |this| {
+                                this.left(px(-1.)) // Avoid double border with container
+                            })
                             .selected_index(match self.active_response_tab {
                                 ResponseTab::Response => 0,
                                 ResponseTab::Raw => 1,
@@ -2222,7 +2225,11 @@ impl RequestEditor {
                                 .size_range(px(100.)..gpui::Pixels::MAX)
                                 .child(self.render_tab_content(cx)),
                         )
-                        .child(resizable_panel().child(self.render_response_area(window, cx))),
+                        .child(resizable_panel().child(self.render_response_area(
+                            EditorLayout::Vertical,
+                            window,
+                            cx,
+                        ))),
                 ),
             )
             .child(self.render_status_bar(cx))
@@ -2262,7 +2269,11 @@ impl RequestEditor {
                                         ),
                                 ),
                         )
-                        .child(resizable_panel().child(self.render_response_area(window, cx))),
+                        .child(resizable_panel().child(self.render_response_area(
+                            EditorLayout::Horizontal,
+                            window,
+                            cx,
+                        ))),
                 ),
             )
             .child(self.render_status_bar(cx))
