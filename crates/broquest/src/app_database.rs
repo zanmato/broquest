@@ -90,13 +90,20 @@ impl AppDatabase {
         .await?;
 
         // Migration: add the per-collection format column for databases created
-        // before OpenCollection support. Errors (e.g. column already exists) are
-        // ignored so this is safe to run on every startup.
-        let _ = sqlx::query(
+        // before OpenCollection support. A "duplicate column" error is expected
+        // once the migration has run, so it is logged at trace level rather than
+        // treated as a failure (safe to run on every startup).
+        if let Err(e) = sqlx::query(
             "ALTER TABLE collections ADD COLUMN format TEXT NOT NULL DEFAULT 'broquest'",
         )
         .execute(&self.pool)
-        .await;
+        .await
+        {
+            tracing::trace!(
+                "Skipping format column migration (likely already applied): {}",
+                e
+            );
+        }
 
         // User settings table (legacy)
         sqlx::query(

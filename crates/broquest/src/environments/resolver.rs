@@ -360,8 +360,12 @@ fn resolve_placeholders<F: Fn(&str) -> Option<String>>(input: &str, resolve: F) 
                 continue;
             }
         }
-        // No placeholder start; copy this byte as a UTF-8 boundary.
-        let ch = input[i..].chars().next().expect("non-empty char slice");
+        // No placeholder start; copy this char as a UTF-8 boundary. The loop
+        // condition guarantees `i < len`, but guard the slice defensively rather
+        // than panicking if that ever changes.
+        let Some(ch) = input[i..].chars().next() else {
+            break;
+        };
         out.push(ch);
         i += ch.len_utf8();
     }

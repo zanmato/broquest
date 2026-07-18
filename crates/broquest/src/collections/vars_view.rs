@@ -18,7 +18,7 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme, h_flex, scroll::ScrollableElement, v_flex};
 
-use crate::collections::manager::CollectionManager;
+use crate::collections::manager::{CollectionManager, CollectionManagerEvent};
 
 /// A single displayed variable row (key + value, value rendered as a string).
 #[derive(Clone)]
@@ -45,11 +45,27 @@ impl VarsView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
-        // Refresh whenever the CollectionManager global changes (e.g. after a
-        // request writes back runtime vars).
-        let subscription = cx.observe_global::<CollectionManager>(|this, cx| {
-            this.refresh_from_manager(cx);
-        });
+        // Refresh whenever the CollectionManager changes (e.g. after a request
+        // writes back runtime vars).
+        let manager = CollectionManager::global(cx);
+        let subscription = cx.subscribe(
+            &manager,
+            |this, _manager, event: &CollectionManagerEvent, cx| {
+                // Only refresh for changes to the bound collection (or a global
+                // collection-set change).
+                let relevant = match event {
+                    CollectionManagerEvent::CollectionsChanged => true,
+                    CollectionManagerEvent::EnvironmentsChanged { collection_path }
+                    | CollectionManagerEvent::RequestsChanged { collection_path }
+                    | CollectionManagerEvent::RuntimeVarsChanged { collection_path } => {
+                        this.collection_path.as_deref() == Some(collection_path.as_ref())
+                    }
+                };
+                if relevant {
+                    this.refresh_from_manager(cx);
+                }
+            },
+        );
 
         Self {
             collection_path: None,
@@ -82,6 +98,7 @@ impl VarsView {
             return;
         };
         let manager = CollectionManager::global(cx);
+        let manager = manager.read(cx);
         if let Some(info) = manager.get_collection_by_path(&path) {
             self.collection_vars = info
                 .toml

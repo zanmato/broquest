@@ -1,8 +1,8 @@
 use gpui::{
-    App, AppContext, BorrowAppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    ImageSource, InteractiveElement as _, IntoElement, KeyBinding, Keystroke, ObjectFit,
-    ParentElement as _, Render, SharedString, StyleRefinement, Styled as _, StyledImage as _,
-    Subscription, Task, WeakEntity, Window, actions, div, img, prelude::FluentBuilder, px,
+    App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
+    InteractiveElement as _, IntoElement, KeyBinding, ObjectFit, ParentElement as _, Render,
+    SharedString, StyleRefinement, Styled as _, StyledImage as _, Subscription, Task, Window,
+    actions, div, img, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt, WindowExt,
@@ -22,11 +22,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::auth_editor::{AuthEditor, AuthEditorEvent};
-use super::form_editor::{FormEditor, FormEditorEvent};
-use super::header_editor::{HeaderEditor, HeaderEditorEvent};
-use super::path_editor::{PathParamEditor, PathParamEvent};
-use super::query_editor::{QueryParamEditor, QueryParamEvent};
-use super::vars_editor::RequestVarsEditor;
+use super::key_value_editor::{KeyValueConfig, KeyValueEditor, KeyValueEvent};
 use crate::app_settings::AppSettings;
 use crate::domain::{AuthType, ContentType, HttpMethod, KeyValuePair, RequestData, ResponseData};
 use crate::http::ResponseFormat;
@@ -154,20 +150,19 @@ pub struct RequestEditor {
     body_input: Entity<InputState>,
     response_input: Entity<InputState>,
     raw_response_input: Entity<InputState>,
-    path_param_editor: Entity<PathParamEditor>,
-    query_param_editor: Entity<QueryParamEditor>,
-    header_editor: Entity<HeaderEditor>,
-    form_editor: Entity<FormEditor>,
+    path_param_editor: Entity<KeyValueEditor>,
+    query_param_editor: Entity<KeyValueEditor>,
+    header_editor: Entity<KeyValueEditor>,
+    form_editor: Entity<KeyValueEditor>,
     auth_editor: Entity<AuthEditor>,
     script_editor: Entity<ScriptEditor>,
     /// Editable request-level variables (Bruno `runtime.variables`).
-    request_vars_editor: Entity<RequestVarsEditor>,
+    request_vars_editor: Entity<KeyValueEditor>,
     /// Read-only variable inspector scoped to the owning collection.
     vars_view: Entity<crate::collections::VarsView>,
     _subscriptions: Vec<Subscription>,
     _updating_url_from_params: bool,
     _was_dirty: bool,
-    _dirty_check_task: Task<()>,
     // JSONPath filtering
     jsonpath_input: Entity<InputState>,
     original_response_body: Option<String>,
@@ -256,15 +251,46 @@ impl RequestEditor {
                 .soft_wrap(editor_settings.soft_wrap)
         });
 
-        let path_param_editor = cx.new(|cx| PathParamEditor::new(window, cx));
+        let path_param_editor = cx.new(|cx| {
+            KeyValueEditor::new(
+                KeyValueConfig::new("path-params", "Parameter name", "Parameter value"),
+                window,
+                cx,
+            )
+        });
 
-        let query_param_editor = cx.new(|cx| QueryParamEditor::new(window, cx));
+        let query_param_editor = cx.new(|cx| {
+            KeyValueEditor::new(
+                KeyValueConfig::new("query-params", "Parameter name", "Parameter value"),
+                window,
+                cx,
+            )
+        });
 
-        let request_vars_editor = cx.new(|cx| RequestVarsEditor::new(window, cx));
+        let request_vars_editor = cx.new(|cx| {
+            KeyValueEditor::new(
+                KeyValueConfig::new("request-vars", "Variable name", "Variable value").embedded(),
+                window,
+                cx,
+            )
+        });
 
-        let header_editor = cx.new(|cx| HeaderEditor::new(window, cx));
+        let header_editor = cx.new(|cx| {
+            KeyValueEditor::new(
+                KeyValueConfig::new("headers", "Header name", "Header value"),
+                window,
+                cx,
+            )
+        });
 
-        let form_editor = cx.new(|cx| FormEditor::new(window, cx));
+        let form_editor = cx.new(|cx| {
+            KeyValueEditor::new(
+                KeyValueConfig::new("form-fields", "Field name", "Field value or @/path/to/file")
+                    .with_file_picker(),
+                window,
+                cx,
+            )
+        });
 
         let script_editor = cx.new(|cx| ScriptEditor::new(window, cx));
 
@@ -333,7 +359,6 @@ impl RequestEditor {
             _subscriptions: subscriptions,
             _updating_url_from_params: false,
             _was_dirty: false,
-            _dirty_check_task: Task::ready(()),
             jsonpath_input,
             original_response_body: None,
             _jsonpath_filter_task: Task::ready(()),
@@ -417,7 +442,7 @@ impl RequestEditor {
 
         // Update path parameters
         self.path_param_editor.update(cx, |editor, cx| {
-            editor.set_parameters(&data.path_params, window, cx);
+            editor.set_pairs(&data.path_params, window, cx);
         });
 
         // Update body input
@@ -427,17 +452,17 @@ impl RequestEditor {
 
         // Update query parameters
         self.query_param_editor.update(cx, |editor, cx| {
-            editor.set_parameters(&data.query_params, window, cx);
+            editor.set_pairs(&data.query_params, window, cx);
         });
 
         // Update request variables
         self.request_vars_editor.update(cx, |editor, cx| {
-            editor.set_vars(&data.vars, window, cx);
+            editor.set_pairs(&data.vars, window, cx);
         });
 
         // Update headers
         self.header_editor.update(cx, |editor, cx| {
-            editor.set_headers(&data.headers, window, cx);
+            editor.set_pairs(&data.headers, window, cx);
         });
 
         // Update content type selector based on Content-Type header
@@ -485,6 +510,11 @@ impl RequestEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Preserve the currently-selected environment across the refresh so an
+        // external change (e.g. adding another environment in the collection
+        // editor) doesn't silently reset the dropdown to "No environment".
+        let selected_name = self.get_selected_environment(cx).map(|env| env.name);
+
         let mut env_options = vec![EnvironmentOption::None];
 
         // Add each environment to the options
@@ -492,26 +522,18 @@ impl RequestEditor {
             env_options.push(EnvironmentOption::Environment(env.clone()));
         }
 
-        // Create a new environment selector with updated options
-        let new_environment_select = cx.new(|cx| {
-            SelectState::new(
-                env_options,
-                Some(IndexPath::default().row(0)), // Select None by default
-                window,
-                cx,
-            )
+        // Row 0 is the "No environment" option; environments follow in order.
+        // Fall back to row 0 if the previous selection no longer exists.
+        let selected_row = selected_name
+            .and_then(|name| environments.iter().position(|env| env.name == name))
+            .map_or(0, |index| index + 1);
+
+        // Mutate the existing SelectState (rather than replacing the entity) so
+        // the selection-change subscription set up in `new` stays intact.
+        self.environment_select.update(cx, |state, cx| {
+            state.set_items(env_options, window, cx);
+            state.set_selected_index(Some(IndexPath::default().row(selected_row)), window, cx);
         });
-
-        // Subscribe to environment selection changes for the new selector
-        cx.subscribe(
-            &new_environment_select,
-            |this, _state, _event: &SelectEvent<Vec<EnvironmentOption>>, cx| {
-                this.on_environment_change(cx);
-            },
-        )
-        .detach();
-
-        self.environment_select = new_environment_select;
 
         cx.notify();
     }
@@ -600,11 +622,11 @@ impl RequestEditor {
 
         let path_params = self
             .path_param_editor
-            .read_with(cx, |editor, cx| editor.get_path_parameters(cx));
+            .read_with(cx, |editor, cx| editor.get_pairs(cx));
 
         let editor_query_params = self
             .query_param_editor
-            .read_with(cx, |editor, cx| editor.get_query_parameters(cx));
+            .read_with(cx, |editor, cx| editor.get_pairs(cx));
 
         // Merge URL query params with editor query params
         // Editor params take precedence, but preserve disabled state for URL params not in editor
@@ -623,7 +645,7 @@ impl RequestEditor {
 
         let headers = self
             .header_editor
-            .read_with(cx, |editor, cx| editor.get_headers(cx));
+            .read_with(cx, |editor, cx| editor.get_pairs(cx));
 
         let (pre_request_script, post_response_script) =
             self.script_editor.read_with(cx, |editor, cx| {
@@ -641,7 +663,7 @@ impl RequestEditor {
         if let Some(selected_content_type) = self.content_type_select.read(cx).selected_value()
             && selected_content_type == &ContentType::Form
         {
-            let form_data = self.form_editor.read(cx).get_form_data(cx);
+            let form_data = self.form_editor.read(cx).get_pairs(cx);
             let form_body = form_data
                 .iter()
                 .filter(|field| field.enabled && !field.key.is_empty())
@@ -661,7 +683,7 @@ impl RequestEditor {
 
         let vars = self
             .request_vars_editor
-            .read_with(cx, |editor, cx| editor.get_vars(cx));
+            .read_with(cx, |editor, cx| editor.get_pairs(cx));
 
         data.path_params = path_params;
         data.query_params = query_params;
@@ -746,23 +768,17 @@ impl RequestEditor {
         false
     }
 
-    fn schedule_dirty_check(&mut self, cx: &mut Context<Self>) {
-        self._dirty_check_task = cx.spawn(
-            async move |weak_entity: WeakEntity<RequestEditor>, async_cx| {
-                smol::Timer::after(std::time::Duration::from_millis(1)).await;
-                let _ = weak_entity
-                    .update(async_cx, |this: &mut RequestEditor, cx| {
-                        let is_now_dirty = this.is_dirty(cx);
-                        if is_now_dirty != this._was_dirty {
-                            this._was_dirty = is_now_dirty;
-                            cx.emit(RequestEditorEvent::DirtyStateChanged {
-                                is_dirty: is_now_dirty,
-                            });
-                        }
-                    })
-                    .log_err();
-            },
-        );
+    /// Recompute dirty state and emit a change event if it flipped. Called
+    /// synchronously from the child-editor/input subscriptions, which already
+    /// fire after their value has settled.
+    fn recompute_dirty(&mut self, cx: &mut Context<Self>) {
+        let is_now_dirty = self.is_dirty(cx);
+        if is_now_dirty != self._was_dirty {
+            self._was_dirty = is_now_dirty;
+            cx.emit(RequestEditorEvent::DirtyStateChanged {
+                is_dirty: is_now_dirty,
+            });
+        }
     }
 
     fn on_content_type_change(&mut self, cx: &mut Context<Self>) {
@@ -799,26 +815,12 @@ impl RequestEditor {
     }
 
     fn cancel_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(task) = self.current_request_task.take() {
-            drop(task); // Cancel the task by dropping it
-        }
+        // Dropping the task aborts the in-flight request.
+        self.current_request_task.take();
+        self.is_loading = false;
 
         window.push_notification((NotificationType::Info, "Request cancelled"), cx);
-
-        // Hacky workaround to prevent the button from sending another request when cancelling
-        cx.spawn_in(window, async move |weak_editor, window| {
-            window
-                .background_executor()
-                .timer(Duration::from_millis(200))
-                .await;
-
-            let _ = weak_editor
-                .update_in(window, |this, _, _| {
-                    this.is_loading = false;
-                })
-                .log_err();
-        })
-        .detach();
+        cx.notify();
     }
 
     pub fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -837,7 +839,7 @@ impl RequestEditor {
         if let Some(selected_content_type) = self.content_type_select.read(cx).selected_value()
             && selected_content_type == &ContentType::Form
         {
-            let form_data = self.form_editor.read(cx).get_form_data(cx);
+            let form_data = self.form_editor.read(cx).get_pairs(cx);
             // Convert form data to body format (key=value pairs, files as @path)
             let form_body = form_data
                 .iter()
@@ -879,6 +881,7 @@ impl RequestEditor {
             let env_name = selected_env.name.clone();
             let selected_env_clone = selected_env.clone();
             let collection_manager = CollectionManager::global(cx);
+            let collection_manager = collection_manager.read(cx);
 
             if let Some(ref collection_path) = self.collection_path
                 && let Some(collection) = collection_manager.get_collection_by_path(collection_path)
@@ -915,7 +918,11 @@ impl RequestEditor {
             final_request_data.auth = self
                 .collection_path
                 .as_ref()
-                .and_then(|path| CollectionManager::global(cx).get_collection_by_path(path))
+                .and_then(|path| {
+                    CollectionManager::global(cx)
+                        .read(cx)
+                        .get_collection_by_path(path)
+                })
                 .and_then(|collection| collection.toml.collection.auth.clone())
                 .unwrap_or_default();
         }
@@ -925,7 +932,8 @@ impl RequestEditor {
         // participate in {{}} resolution (precedence: runtime > collection).
         let (runtime_vars_for_request, collection_vars_for_request) =
             if let Some(path) = &self.collection_path {
-                let collection = CollectionManager::global(cx).get_collection_by_path(path);
+                let manager = CollectionManager::global(cx);
+                let collection = manager.read(cx).get_collection_by_path(path);
                 if let Some(info) = collection {
                     let cv: HashMap<String, String> = info
                         .toml
@@ -945,6 +953,9 @@ impl RequestEditor {
 
         // Get the HTTP client after updating UI to avoid borrow issues
         let http_client = HttpClientService::global(cx);
+        // Capture the manager entity so the async task can write back dirty env
+        // vars and runtime vars after the request completes.
+        let collection_manager = CollectionManager::global(cx);
 
         // Clone necessary data before moving into async closure
         let collection_path = self.collection_path.clone();
@@ -981,21 +992,14 @@ impl RequestEditor {
                         tracing::info!("Dirty variables that need to be persisted: {:?}", dirty_vars);
                         if let (Some(collection_path), Some(selected_env)) = (collection_path.as_ref(), selected_env_for_later) {
                             // Update the CollectionManager with dirty variables
-                            match window.update_global(|collection_manager: &mut CollectionManager, _window, cx| {
+                            match collection_manager.update(window, |collection_manager, cx| {
                                 collection_manager.update_environment_variables(collection_path, selected_env.name.as_str(), &dirty_vars, cx)
                             }) {
-                                Ok(inner_result) => {
-                                    match inner_result {
-                                        Ok(()) => {
-                                            tracing::info!("Successfully updated {} environment variables in CollectionManager", dirty_vars.len());
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Failed to update environment variables in CollectionManager: {}", e);
-                                        }
-                                    }
+                                Ok(()) => {
+                                    tracing::info!("Successfully updated {} environment variables in CollectionManager", dirty_vars.len());
                                 }
                                 Err(e) => {
-                                    tracing::error!("Failed to access CollectionManager for update: {}", e);
+                                    tracing::error!("Failed to update environment variables in CollectionManager: {}", e);
                                 }
                             }
                         } else {
@@ -1008,12 +1012,9 @@ impl RequestEditor {
                     // request and refresh the Vars view.
                     let runtime_vars = variable_store.get_all_vars();
                     if let Some(collection_path) = collection_path.as_ref()
-                        && let Err(e) = window.update_global(
-                            |collection_manager: &mut CollectionManager, _window, _cx| {
-                                collection_manager
-                                    .update_runtime_vars(collection_path, runtime_vars)
-                            },
-                        )
+                        && let Err(e) = collection_manager.update(window, |collection_manager, cx| {
+                            collection_manager.update_runtime_vars(collection_path, runtime_vars, cx)
+                        })
                     {
                         tracing::error!("Failed to update runtime variables: {}", e);
                     }
@@ -1146,17 +1147,18 @@ impl RequestEditor {
         };
 
         if let Some(ref collection_path) = self.collection_path {
-            // Use cx.update_global to call the save_request method on CollectionManager
+            // Persist the request through the CollectionManager entity.
             let group_path_ref = self.group_path.as_deref();
-            let save_result =
-                cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-                    collection_manager.save_request(
-                        collection_path,
-                        &request_data,
-                        &request_name,
-                        group_path_ref,
-                    )
-                });
+            let manager = CollectionManager::global(cx);
+            let save_result = manager.update(cx, |collection_manager, cx| {
+                collection_manager.save_request(
+                    collection_path,
+                    &request_data,
+                    &request_name,
+                    group_path_ref,
+                    cx,
+                )
+            });
 
             match save_result {
                 Ok(()) => {
@@ -1220,7 +1222,7 @@ impl RequestEditor {
 
         // Set headers
         self.header_editor.update(cx, |editor, cx| {
-            editor.set_headers(&parsed.headers, window, cx);
+            editor.set_pairs(&parsed.headers, window, cx);
         });
 
         // Set body
@@ -1247,14 +1249,14 @@ impl RequestEditor {
         // Merge URL query params into query editor
         if !url_query.is_empty() {
             self.query_param_editor.update(cx, |editor, cx| {
-                let existing = editor.get_query_parameters(cx);
+                let existing = editor.get_pairs(cx);
                 let mut merged = existing;
                 for param in url_query {
                     if !merged.iter().any(|p| p.key == param.key) {
                         merged.push(param);
                     }
                 }
-                editor.set_parameters(&merged, window, cx);
+                editor.set_pairs(&merged, window, cx);
             });
         }
 
@@ -1317,12 +1319,18 @@ impl RequestEditor {
                         ),
                     )
                     .child(
+                        // A single mouse-down handler toggles between send and
+                        // cancel. The Button is purely visual (`loading` gates
+                        // off its own on_click), so cancel and send can never
+                        // both fire for one click.
                         div()
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener(|this, _, window, cx| {
                                     if this.is_loading {
                                         this.cancel_request(window, cx);
+                                    } else {
+                                        this.send_request(window, cx);
                                     }
                                 }),
                             )
@@ -1331,10 +1339,7 @@ impl RequestEditor {
                                     .primary()
                                     .icon(IconName::Send)
                                     .loading(self.is_loading)
-                                    .loading_icon(IconName::LoaderCircle)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.send_request(window, cx);
-                                    })),
+                                    .loading_icon(IconName::LoaderCircle),
                             ),
                     )
                     .child(
@@ -1556,7 +1561,7 @@ impl RequestEditor {
                             .label("Save Request")
                             .icon(IconName::Save)
                             .children(vec![
-                                Kbd::new(Keystroke::parse("secondary-s").unwrap())
+                                Kbd::new(crate::ui::keybinding::parse_keystroke("secondary-s"))
                                     .into_any_element(),
                             ])
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -1745,7 +1750,7 @@ impl RequestEditor {
 
                     // Only update query parameters if this is a genuine URL change (not from parameter editor)
                     query_param_editor.update(cx, |editor, cx| {
-                        let existing_params = editor.get_query_parameters(cx);
+                        let existing_params = editor.get_pairs(cx);
 
                         // Skip if URL doesn't have query parameters
                         if !current_url.contains('?') {
@@ -1764,7 +1769,7 @@ impl RequestEditor {
 
                         // Quick check: if counts differ, update is needed
                         if existing_enabled.len() != parsed_params.len() {
-                            editor.set_parameters(&parsed_params, window, cx);
+                            editor.set_pairs(&parsed_params, window, cx);
                             return;
                         }
 
@@ -1789,12 +1794,12 @@ impl RequestEditor {
                             // Add new/updated parameters from URL
                             merged_params.extend(parsed_params);
 
-                            editor.set_parameters(&merged_params, window, cx);
+                            editor.set_pairs(&merged_params, window, cx);
                         }
                     });
 
                     // Schedule dirty state check after URL change
-                    this.schedule_dirty_check(cx);
+                    this.recompute_dirty(cx);
                 }
             }
         });
@@ -1802,25 +1807,21 @@ impl RequestEditor {
 
         // Set up subscription for query parameter changes
         let query_param_subscription = cx.subscribe_in(&self.query_param_editor, window, {
-            move |this: &mut Self, _editor, event: &QueryParamEvent, window, cx| {
-                match event {
-                    QueryParamEvent::ParameterChanged => {
-                        let current_params =
-                            this.query_param_editor.read(cx).get_query_parameters(cx);
-                        let current_url = this.url_input.read(cx).value().to_string();
-                        let new_url =
-                            this.build_url_with_query_params(&current_url, &current_params);
+            move |this: &mut Self, _editor, event: &KeyValueEvent, window, cx| match event {
+                KeyValueEvent::Changed => {
+                    let current_params = this.query_param_editor.read(cx).get_pairs(cx);
+                    let current_url = this.url_input.read(cx).value().to_string();
+                    let new_url = this.build_url_with_query_params(&current_url, &current_params);
 
-                        // Set flag to prevent URL change from triggering query param update
-                        this._updating_url_from_params = true;
-                        this.url_input.update(cx, |state, cx| {
-                            state.set_value(new_url, window, cx);
-                        });
-                        this._updating_url_from_params = false;
+                    // Set flag to prevent URL change from triggering query param update
+                    this._updating_url_from_params = true;
+                    this.url_input.update(cx, |state, cx| {
+                        state.set_value(new_url, window, cx);
+                    });
+                    this._updating_url_from_params = false;
 
-                        // Schedule dirty state check after query param change
-                        this.schedule_dirty_check(cx);
-                    }
+                    // Schedule dirty state check after query param change
+                    this.recompute_dirty(cx);
                 }
             }
         });
@@ -1831,7 +1832,7 @@ impl RequestEditor {
         let name_subscription =
             cx.subscribe(&name_input, |this, _input, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
-                    this.schedule_dirty_check(cx);
+                    this.recompute_dirty(cx);
                 }
             });
         self._subscriptions.push(name_subscription);
@@ -1841,7 +1842,7 @@ impl RequestEditor {
         let method_subscription = cx.subscribe(
             &method_select,
             |this, _state, _event: &SelectEvent<Vec<HttpMethod>>, cx| {
-                this.schedule_dirty_check(cx);
+                this.recompute_dirty(cx);
             },
         );
         self._subscriptions.push(method_subscription);
@@ -1850,8 +1851,8 @@ impl RequestEditor {
         // Subscribe to path parameter editor changes
         let path_param_subscription = cx.subscribe(
             &self.path_param_editor,
-            |this, _editor, _: &PathParamEvent, cx| {
-                this.schedule_dirty_check(cx);
+            |this, _editor, _: &KeyValueEvent, cx| {
+                this.recompute_dirty(cx);
                 cx.notify();
             },
         );
@@ -1860,8 +1861,8 @@ impl RequestEditor {
         // Subscribe to header editor changes
         let header_subscription = cx.subscribe(
             &self.header_editor,
-            |this, _editor, _: &HeaderEditorEvent, cx| {
-                this.schedule_dirty_check(cx);
+            |this, _editor, _: &KeyValueEvent, cx| {
+                this.recompute_dirty(cx);
                 cx.notify();
             },
         );
@@ -1871,7 +1872,7 @@ impl RequestEditor {
         let script_subscription = cx.subscribe(
             &self.script_editor,
             |this, _editor, _: &ScriptEditorEvent, cx| {
-                this.schedule_dirty_check(cx);
+                this.recompute_dirty(cx);
                 cx.notify();
             },
         );
@@ -1881,27 +1882,25 @@ impl RequestEditor {
         let auth_subscription = cx.subscribe(
             &self.auth_editor,
             |this, _editor, _: &AuthEditorEvent, cx| {
-                this.schedule_dirty_check(cx);
+                this.recompute_dirty(cx);
                 cx.notify();
             },
         );
         self._subscriptions.push(auth_subscription);
 
         // Subscribe to form editor changes
-        let form_subscription = cx.subscribe(
-            &self.form_editor,
-            |this, _editor, _: &FormEditorEvent, cx| {
-                this.schedule_dirty_check(cx);
+        let form_subscription =
+            cx.subscribe(&self.form_editor, |this, _editor, _: &KeyValueEvent, cx| {
+                this.recompute_dirty(cx);
                 cx.notify();
-            },
-        );
+            });
         self._subscriptions.push(form_subscription);
 
         // Subscribe to body input changes
         let body_subscription =
             cx.subscribe(&self.body_input, |this, _input, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
-                    this.schedule_dirty_check(cx);
+                    this.recompute_dirty(cx);
                     cx.notify();
                 }
             });
@@ -1911,7 +1910,7 @@ impl RequestEditor {
         let content_type_subscription = cx.subscribe(
             &self.content_type_select,
             |this, _state, _event: &SelectEvent<Vec<ContentType>>, cx| {
-                this.schedule_dirty_check(cx);
+                this.recompute_dirty(cx);
                 cx.notify();
             },
         );
@@ -2041,7 +2040,7 @@ impl RequestEditor {
     fn get_query_badge_count(&self, cx: &App) -> usize {
         self.query_param_editor
             .read(cx)
-            .get_query_parameters(cx)
+            .get_pairs(cx)
             .iter()
             .filter(|param| param.enabled && !param.key.is_empty())
             .count()
@@ -2054,23 +2053,15 @@ impl RequestEditor {
         match selected_content_type {
             Some(ContentType::Form) => {
                 // Check if form editor has any non-empty fields
-                self.form_editor
-                    .read(cx)
-                    .get_form_data(cx)
-                    .iter()
-                    .any(|field| {
-                        field.enabled && (!field.key.is_empty() || !field.value.is_empty())
-                    })
+                self.form_editor.read(cx).get_pairs(cx).iter().any(|field| {
+                    field.enabled && (!field.key.is_empty() || !field.value.is_empty())
+                })
             }
             Some(ContentType::UrlEncoded) => {
                 // Check if form editor has any non-empty fields
-                self.form_editor
-                    .read(cx)
-                    .get_form_data(cx)
-                    .iter()
-                    .any(|field| {
-                        field.enabled && (!field.key.is_empty() || !field.value.is_empty())
-                    })
+                self.form_editor.read(cx).get_pairs(cx).iter().any(|field| {
+                    field.enabled && (!field.key.is_empty() || !field.value.is_empty())
+                })
             }
             _ => {
                 // For other content types, check if body has content
@@ -2083,7 +2074,7 @@ impl RequestEditor {
     fn get_headers_badge_count(&self, cx: &App) -> usize {
         self.header_editor
             .read(cx)
-            .get_headers(cx)
+            .get_pairs(cx)
             .iter()
             .filter(|header| header.enabled && !header.key.is_empty())
             .count()
@@ -2093,7 +2084,7 @@ impl RequestEditor {
     fn get_path_badge_count(&self, cx: &App) -> usize {
         self.path_param_editor
             .read(cx)
-            .get_path_parameters(cx)
+            .get_pairs(cx)
             .iter()
             .filter(|param| param.enabled && !param.key.is_empty())
             .count()

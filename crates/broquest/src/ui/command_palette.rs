@@ -534,7 +534,9 @@ fn build_commands(cx: &App) -> Vec<CommandItem> {
 }
 
 fn add_collection_requests(commands: &mut Vec<CommandItem>, cx: &App) {
-    let collections = crate::collections::CollectionManager::global(cx).get_all_collections();
+    let manager = crate::collections::CollectionManager::global(cx);
+    let manager = manager.read(cx);
+    let collections = manager.get_all_collections();
 
     for collection in collections {
         let mut push_request = |request: &crate::domain::RequestData, group: Option<&str>| {

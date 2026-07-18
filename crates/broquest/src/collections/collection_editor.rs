@@ -1,6 +1,6 @@
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString, Window, actions, div,
-    prelude::*, px,
+    App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString, Subscription, Window,
+    actions, div, prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IndexPath, Sizable as _, StyledExt, WindowExt,
@@ -17,7 +17,7 @@ use gpui_component::{
     text, v_flex,
 };
 
-use super::manager::CollectionManager;
+use super::manager::{CollectionManager, CollectionManagerEvent};
 use super::openapi::OpenAPIImporter;
 use super::types::{CollectionMeta, CollectionToml};
 
@@ -77,7 +77,7 @@ pub struct CollectionEditor {
     name_input: Entity<InputState>,
     path_input: Entity<InputState>,
     /// Editable collection-level variables (`CollectionMeta.vars`).
-    vars_editor: Entity<crate::requests::QueryParamEditor>,
+    vars_editor: Entity<crate::requests::KeyValueEditor>,
     /// Read-only runtime variable inspector for this collection.
     vars_view: Entity<super::VarsView>,
     /// Markdown docs editor (code editor mode).
@@ -95,6 +95,7 @@ pub struct CollectionEditor {
     // Save this collection in Bruno's OpenCollection (YAML) format instead of
     // broquest's native TOML.
     use_opencollection: bool,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl CollectionEditor {
@@ -156,7 +157,17 @@ impl CollectionEditor {
 
         // Collection vars editor (editable key/value list) + read-only runtime
         // vars view, both scoped to this collection.
-        let vars_editor = cx.new(|cx| crate::requests::QueryParamEditor::new(window, cx));
+        let vars_editor = cx.new(|cx| {
+            crate::requests::KeyValueEditor::new(
+                crate::requests::KeyValueConfig::new(
+                    "collection-vars",
+                    "Variable name",
+                    "Variable value",
+                ),
+                window,
+                cx,
+            )
+        });
         let vars_view = cx.new(|cx| {
             let mut view = super::VarsView::new(cx);
             view.set_collection(
@@ -180,6 +191,22 @@ impl CollectionEditor {
         });
         let docs_split_state = cx.new(|_cx| ResizableState::default());
 
+        // Keep the environment editor fresh when this collection's environments
+        // change elsewhere (another tab, a script writing back dirty vars, etc.).
+        let manager = CollectionManager::global(cx);
+        let sub_path = collection_path_for_lookup.clone();
+        let manager_subscription = cx.subscribe_in(
+            &manager,
+            window,
+            move |this, _manager, event: &CollectionManagerEvent, window, cx| {
+                if let CollectionManagerEvent::EnvironmentsChanged { collection_path } = event
+                    && collection_path.as_ref() == sub_path
+                {
+                    this.reload_environments(&sub_path, window, cx);
+                }
+            },
+        );
+
         let editor = Self {
             active_tab: 0, // Collection tab
             collection_data,
@@ -199,6 +226,7 @@ impl CollectionEditor {
             openapi_spec_path: None,
             wsdl_spec_input,
             use_opencollection: false,
+            _subscriptions: vec![manager_subscription],
         };
 
         // Load initial environments data from CollectionManager
@@ -214,6 +242,7 @@ impl CollectionEditor {
         // before we mutate the editor below.
         let (environments, collection_vars) = {
             let collection_manager = CollectionManager::global(cx);
+            let collection_manager = collection_manager.read(cx);
             let envs = collection_manager.get_collection_environments(&collection_path_for_lookup);
             let vars = collection_manager
                 .get_collection_by_path(&collection_path_for_lookup)
@@ -242,7 +271,7 @@ impl CollectionEditor {
 
         // Seed the vars editor with any existing collection-level variables.
         editor.vars_editor.update(cx, |vars_editor, cx| {
-            vars_editor.set_parameters(&collection_vars, window, cx);
+            vars_editor.set_pairs(&collection_vars, window, cx);
         });
 
         editor
@@ -279,7 +308,7 @@ impl CollectionEditor {
                 docs,
                 ignore,
                 auth,
-                vars: self.vars_editor.read(cx).get_query_parameters(cx),
+                vars: self.vars_editor.read(cx).get_pairs(cx),
             },
             environments,
         }
@@ -298,9 +327,10 @@ impl CollectionEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let collection_manager = CollectionManager::global(cx);
-        if let Some(environments) = collection_manager.get_collection_environments(collection_path)
-        {
+        let environments = CollectionManager::global(cx)
+            .read(cx)
+            .get_collection_environments(collection_path);
+        if let Some(environments) = environments {
             self.environment_editor.update(cx, |env_editor, cx| {
                 env_editor.load_environments(&environments, window, cx);
             });
@@ -611,7 +641,8 @@ impl CollectionEditor {
         .detach();
 
         let use_opencollection = self.use_opencollection;
-        let save_result = cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
+        let manager = CollectionManager::global(cx);
+        let save_result = manager.update(cx, |collection_manager, cx| {
             // If the collection already exists in the manager, save in its
             // current format; otherwise create it in the chosen format.
             if collection_manager
@@ -619,9 +650,9 @@ impl CollectionEditor {
                 .is_none()
                 && use_opencollection
             {
-                collection_manager.create_opencollection(&collection_data, &current_path)
+                collection_manager.create_opencollection(&collection_data, &current_path, cx)
             } else {
-                collection_manager.save_collection(&collection_data, &current_path)
+                collection_manager.save_collection(&collection_data, &current_path, cx)
             }
         });
 
@@ -744,53 +775,35 @@ impl CollectionEditor {
     ) {
         let wsdl_url = wsdl_url.to_string();
         let collection_path = collection_path.to_string();
+        let manager = CollectionManager::global(cx);
 
         cx.spawn_in(window, async move |entity, window| {
             match super::wsdl::import_from_wsdl_url(&wsdl_url).await {
                 Ok(result) => {
-                    match window.update_global(
-                        |collection_manager: &mut CollectionManager, _window, _cx| {
-                            if let Err(e) = collection_manager
-                                .add_environment_to_collection(&collection_path, result.environment)
+                    match manager.update(window, |collection_manager, cx| {
+                        if let Err(e) = collection_manager.add_environment_to_collection(
+                            &collection_path,
+                            result.environment,
+                            cx,
+                        ) {
+                            tracing::error!("Failed to add environment to collection: {}", e);
+                        }
+
+                        for (group_name, requests) in result.groups {
+                            if let Err(e) =
+                                collection_manager.create_group(&collection_path, &group_name, cx)
                             {
-                                tracing::error!("Failed to add environment to collection: {}", e);
+                                tracing::error!("Failed to create group '{}': {}", group_name, e);
                             }
 
-                            for (group_name, requests) in result.groups {
-                                if let Err(e) =
-                                    collection_manager.create_group(&collection_path, &group_name)
-                                {
-                                    tracing::error!(
-                                        "Failed to create group '{}': {}",
-                                        group_name,
-                                        e
-                                    );
-                                }
-
-                                for request in requests {
-                                    let request_name = request.name.clone();
-                                    if let Err(e) = collection_manager.save_request(
-                                        &collection_path,
-                                        &request,
-                                        &request_name,
-                                        Some(&group_name),
-                                    ) {
-                                        tracing::error!(
-                                            "Failed to save request '{}': {}",
-                                            request_name,
-                                            e
-                                        );
-                                    }
-                                }
-                            }
-
-                            for request in result.requests {
+                            for request in requests {
                                 let request_name = request.name.clone();
                                 if let Err(e) = collection_manager.save_request(
                                     &collection_path,
                                     &request,
                                     &request_name,
-                                    None,
+                                    Some(&group_name),
+                                    cx,
                                 ) {
                                     tracing::error!(
                                         "Failed to save request '{}': {}",
@@ -799,10 +812,23 @@ impl CollectionEditor {
                                     );
                                 }
                             }
-                            Ok::<(), anyhow::Error>(())
-                        },
-                    ) {
-                        Ok(Ok(())) => {
+                        }
+
+                        for request in result.requests {
+                            let request_name = request.name.clone();
+                            if let Err(e) = collection_manager.save_request(
+                                &collection_path,
+                                &request,
+                                &request_name,
+                                None,
+                                cx,
+                            ) {
+                                tracing::error!("Failed to save request '{}': {}", request_name, e);
+                            }
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    }) {
+                        Ok(()) => {
                             window
                                 .update(|window, cx| {
                                     window.push_notification(
@@ -849,6 +875,7 @@ impl CollectionEditor {
     ) {
         let spec_path = spec_path.to_string();
         let collection_path = collection_path.to_string();
+        let manager = CollectionManager::global(cx);
 
         cx.spawn_in(window, async move |entity, window| {
             match OpenAPIImporter::from_path(&spec_path) {
@@ -856,59 +883,42 @@ impl CollectionEditor {
                     match importer.import() {
                         Ok(result) => {
                             // Import is successful, now update the collection manager
-                            match window.update_global(
-                                |collection_manager: &mut CollectionManager, _window, _cx| {
-                                    // First, create the Default environment with baseUrl variable
-                                    // We need to update the collection to include this environment
-                                    if let Err(e) = collection_manager
-                                        .add_environment_to_collection(
-                                            &collection_path,
-                                            result.environment,
-                                        )
-                                    {
+                            match manager.update(window, |collection_manager, cx| {
+                                // First, create the Default environment with baseUrl variable
+                                // We need to update the collection to include this environment
+                                if let Err(e) = collection_manager.add_environment_to_collection(
+                                    &collection_path,
+                                    result.environment,
+                                    cx,
+                                ) {
+                                    tracing::error!(
+                                        "Failed to add environment to collection: {}",
+                                        e
+                                    );
+                                }
+
+                                // Create groups and requests
+                                for (group_name, requests) in result.groups {
+                                    if let Err(e) = collection_manager.create_group(
+                                        &collection_path,
+                                        &group_name,
+                                        cx,
+                                    ) {
                                         tracing::error!(
-                                            "Failed to add environment to collection: {}",
+                                            "Failed to create group '{}': {}",
+                                            group_name,
                                             e
                                         );
                                     }
 
-                                    // Create groups and requests
-                                    for (group_name, requests) in result.groups {
-                                        if let Err(e) = collection_manager
-                                            .create_group(&collection_path, &group_name)
-                                        {
-                                            tracing::error!(
-                                                "Failed to create group '{}': {}",
-                                                group_name,
-                                                e
-                                            );
-                                        }
-
-                                        for request in requests {
-                                            let request_name = request.name.clone();
-                                            if let Err(e) = collection_manager.save_request(
-                                                &collection_path,
-                                                &request,
-                                                &request_name,
-                                                Some(&group_name),
-                                            ) {
-                                                tracing::error!(
-                                                    "Failed to save request '{}': {}",
-                                                    request_name,
-                                                    e
-                                                );
-                                            }
-                                        }
-                                    }
-
-                                    // Add root-level requests
-                                    for request in result.requests {
+                                    for request in requests {
                                         let request_name = request.name.clone();
                                         if let Err(e) = collection_manager.save_request(
                                             &collection_path,
                                             &request,
                                             &request_name,
-                                            None,
+                                            Some(&group_name),
+                                            cx,
                                         ) {
                                             tracing::error!(
                                                 "Failed to save request '{}': {}",
@@ -917,10 +927,28 @@ impl CollectionEditor {
                                             );
                                         }
                                     }
-                                    Ok::<(), anyhow::Error>(())
-                                },
-                            ) {
-                                Ok(Ok(())) => {
+                                }
+
+                                // Add root-level requests
+                                for request in result.requests {
+                                    let request_name = request.name.clone();
+                                    if let Err(e) = collection_manager.save_request(
+                                        &collection_path,
+                                        &request,
+                                        &request_name,
+                                        None,
+                                        cx,
+                                    ) {
+                                        tracing::error!(
+                                            "Failed to save request '{}': {}",
+                                            request_name,
+                                            e
+                                        );
+                                    }
+                                }
+                                Ok::<(), anyhow::Error>(())
+                            }) {
+                                Ok(()) => {
                                     window
                                         .update(|window, cx| {
                                             window.push_notification(
@@ -1033,7 +1061,7 @@ impl Render for CollectionEditor {
                             .icon(IconName::Save)
                             .label("Save Collection")
                             .children(vec![
-                                Kbd::new(gpui::Keystroke::parse("secondary-s").unwrap())
+                                Kbd::new(crate::ui::keybinding::parse_keystroke("secondary-s"))
                                     .into_any_element(),
                             ])
                             .on_click(cx.listener(|this, _, window, cx| {

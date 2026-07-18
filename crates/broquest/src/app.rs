@@ -1,8 +1,8 @@
 use gpui::{
-    Action, App, AppContext, BorrowAppContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, Menu, MenuItem, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, actions, div,
-    prelude::FluentBuilder, px, svg,
+    Action, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, Menu, MenuItem, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Window, actions, div, prelude::FluentBuilder,
+    px, svg,
 };
 use gpui_component::{
     ActiveTheme, Icon, Root, Selectable, Sizable as _, Theme, ThemeRegistry, TitleBar, WindowExt,
@@ -20,7 +20,7 @@ use crate::requests::{CloseTab, NextTab, PrevTab};
 use crate::{
     app_database::{AppDatabase, CollectionData, UserSetting},
     app_events::AppEvent,
-    collections::{CollectionManager, CollectionsPanel},
+    collections::{CollectionManager, CollectionManagerEvent, CollectionsPanel},
     domain::{AuthType, HttpMethod, RequestData},
     history::HistoryPanel,
     requests::EditorPanel,
@@ -241,18 +241,20 @@ impl BroquestApp {
         );
         subscriptions.push(history_subscription);
 
-        // Subscribe to CollectionManager global updates
+        // Subscribe to CollectionManager change events and refresh the panel.
+        let manager = CollectionManager::global(cx);
         let collections_panel_updates = collections_panel.clone();
-        let collection_subscription =
-            window.observe_global::<CollectionManager>(cx, move |_window, cx| {
-                // This callback will be triggered whenever CollectionManager is updated
-                tracing::debug!("CollectionManager updated");
+        let collection_subscription = cx.subscribe(
+            &manager,
+            move |_this, _manager, _event: &CollectionManagerEvent, cx| {
+                tracing::debug!("CollectionManager changed");
 
                 // Refresh collections panel when collections change
                 collections_panel_updates.update(cx, |panel: &mut CollectionsPanel, cx| {
                     panel.load_collections(cx);
                 });
-            });
+            },
+        );
 
         subscriptions.push(collection_subscription);
 
@@ -362,7 +364,27 @@ impl BroquestApp {
 
         let request_data = {
             let manager = CollectionManager::global(cx);
-            let Some(collection) = manager.get_collection_by_path(&collection_path) else {
+            let found = manager
+                .read(cx)
+                .get_collection_by_path(&collection_path)
+                .map(|collection| {
+                    let direct = collection
+                        .requests
+                        .values()
+                        .find(|r| r.name == request_name)
+                        .cloned();
+
+                    direct.or_else(|| {
+                        collection
+                            .groups
+                            .values()
+                            .flat_map(|g| g.requests.values())
+                            .find(|r| r.name == request_name)
+                            .cloned()
+                    })
+                });
+
+            let Some(request_data) = found else {
                 window.push_notification(
                     (
                         NotificationType::Warning,
@@ -372,21 +394,7 @@ impl BroquestApp {
                 );
                 return;
             };
-
-            let direct = collection
-                .requests
-                .values()
-                .find(|r| r.name == request_name)
-                .cloned();
-
-            direct.or_else(|| {
-                collection
-                    .groups
-                    .values()
-                    .flat_map(|g| g.requests.values())
-                    .find(|r| r.name == request_name)
-                    .cloned()
-            })
+            request_data
         };
 
         let Some(request_data) = request_data else {
@@ -443,50 +451,49 @@ impl BroquestApp {
                     let _ = window
                         .update(|window, cx| {
                             // Load the collection with CollectionManager
-                            let collection = cx.update_global(
-                                |collection_manager: &mut CollectionManager, cx| {
-                                    let load_result = if is_opencollection {
-                                        collection_manager.load_opencollection_dir(&dir_path)
-                                    } else {
-                                        collection_manager.load_collection_toml(&dir_path)
-                                    };
-                                    match load_result {
-                                        Ok(col) => {
-                                            window.push_notification(
-                                                (
-                                                    NotificationType::Success,
-                                                    SharedString::from(format!(
-                                                        "Opened {}",
-                                                        col.collection.name.clone()
-                                                    )),
-                                                ),
-                                                cx,
-                                            );
+                            let manager = CollectionManager::global(cx);
+                            let collection = manager.update(cx, |collection_manager, cx| {
+                                let load_result = if is_opencollection {
+                                    collection_manager.load_opencollection_dir(&dir_path, cx)
+                                } else {
+                                    collection_manager.load_collection_toml(&dir_path, cx)
+                                };
+                                match load_result {
+                                    Ok(col) => {
+                                        window.push_notification(
+                                            (
+                                                NotificationType::Success,
+                                                SharedString::from(format!(
+                                                    "Opened {}",
+                                                    col.collection.name.clone()
+                                                )),
+                                            ),
+                                            cx,
+                                        );
 
-                                            Some(col)
-                                        }
-                                        Err(e) => {
-                                            window.push_notification(
-                                                (
-                                                    NotificationType::Error,
-                                                    SharedString::from(format!(
-                                                        "Failed to load collection: {e}"
-                                                    )),
-                                                ),
-                                                cx,
-                                            );
-
-                                            tracing::error!(
-                                                "Failed to load collection from {}: {}",
-                                                dir_str,
-                                                e
-                                            );
-
-                                            None
-                                        }
+                                        Some(col)
                                     }
-                                },
-                            );
+                                    Err(e) => {
+                                        window.push_notification(
+                                            (
+                                                NotificationType::Error,
+                                                SharedString::from(format!(
+                                                    "Failed to load collection: {e}"
+                                                )),
+                                            ),
+                                            cx,
+                                        );
+
+                                        tracing::error!(
+                                            "Failed to load collection from {}: {}",
+                                            dir_str,
+                                            e
+                                        );
+
+                                        None
+                                    }
+                                }
+                            });
 
                             // Save the collection to the database and get its ID
                             if let Some(collection) = collection {

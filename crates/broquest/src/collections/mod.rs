@@ -7,6 +7,7 @@ mod manager;
 mod openapi;
 mod opencollection;
 mod panel;
+mod storage;
 mod types;
 mod vars_view;
 mod wsdl;

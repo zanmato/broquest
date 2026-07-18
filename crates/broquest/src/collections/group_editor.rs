@@ -1,6 +1,6 @@
 use gpui::{
-    App, AppContext, BorrowAppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, KeyBinding, ParentElement, Render, Styled, Window, actions, div, prelude::*,
+    App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    KeyBinding, ParentElement, Render, Styled, Window, actions, div, prelude::*,
 };
 use gpui_component::{
     ActiveTheme as _, StyledExt, WindowExt,
@@ -59,18 +59,19 @@ impl GroupEditor {
         let collection_path = self.collection_path.clone();
         let old_group_name = self.group_name.clone();
 
-        let result = cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
+        let manager = CollectionManager::global(cx);
+        let result = manager.update(cx, |collection_manager, cx| {
             if let Some(old_name) = &old_group_name {
                 // Renaming existing group
                 if old_name == &group_name {
                     // Name hasn't changed, nothing to do
                     Ok(())
                 } else {
-                    collection_manager.rename_group(&collection_path, old_name, &group_name)
+                    collection_manager.rename_group(&collection_path, old_name, &group_name, cx)
                 }
             } else {
                 // Creating new group
-                collection_manager.create_group(&collection_path, &group_name)
+                collection_manager.create_group(&collection_path, &group_name, cx)
             }
         });
 
@@ -154,7 +155,7 @@ impl Render for GroupEditor {
                             .icon(IconName::Save)
                             .label("Save Group")
                             .children(vec![
-                                Kbd::new(gpui::Keystroke::parse("secondary-s").unwrap())
+                                Kbd::new(crate::ui::keybinding::parse_keystroke("secondary-s"))
                                     .into_any_element(),
                             ])
                             .on_click(

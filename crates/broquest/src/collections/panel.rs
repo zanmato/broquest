@@ -1,8 +1,8 @@
+use gpui::SharedString;
 use gpui::{
     App, AppContext, ClickEvent, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px,
 };
-use gpui::{BorrowAppContext, SharedString};
 use gpui_component::{
     ActiveTheme as _, Icon, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
@@ -370,11 +370,13 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
         };
 
         // Use CollectionManager to move the request
-        let result = cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
+        let manager = CollectionManager::global(cx);
+        let result = manager.update(cx, |collection_manager, cx| {
             collection_manager.move_request(
                 &collection_path,
                 &request_data,
                 target_group_path.as_deref(),
+                cx,
             )
         });
 
@@ -452,26 +454,32 @@ impl CollectionsPanel {
     }
 
     pub fn refresh_collections(&mut self, cx: &mut Context<Self>) {
-        // Load collections, this will cause the observe global to call Self::load_collections
-        cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-            if let Err(e) = collection_manager.load_saved(_cx) {
+        // Load collections; the manager emits CollectionsChanged, which the app
+        // subscription turns into a Self::load_collections refresh.
+        let manager = CollectionManager::global(cx);
+        manager.update(cx, |collection_manager, cx| {
+            if let Err(e) = collection_manager.load_saved(cx) {
                 tracing::error!("Failed to load collections from database: {}", e);
             }
         });
     }
 
     pub fn load_collections(&mut self, cx: &mut Context<Self>) {
-        // Get collections from the global CollectionManager after loading
-        let mut collection_infos = {
-            let collection_manager = CollectionManager::global(cx);
-            collection_manager.get_all_collections()
-        };
+        // Get collections from the global CollectionManager (owned clones so the
+        // manager borrow doesn't outlive the subsequent mutations).
+        let manager = CollectionManager::global(cx);
+        let mut collection_infos_owned: Vec<CollectionInfo> = manager
+            .read(cx)
+            .get_all_collections()
+            .into_iter()
+            .cloned()
+            .collect();
 
         // Sort collections alphabetically by name
-        collection_infos.sort_by(|a, b| a.data.name.cmp(&b.data.name));
+        collection_infos_owned.sort_by(|a, b| a.data.name.cmp(&b.data.name));
 
         // Convert CollectionInfo to CollectionData for the tree
-        self.collections = collection_infos
+        self.collections = collection_infos_owned
             .iter()
             .map(|info| info.data.clone())
             .collect();
@@ -480,10 +488,6 @@ impl CollectionsPanel {
             "Loaded {} collections from global manager",
             self.collections.len()
         );
-
-        // Clone the collection info to avoid borrow issues
-        let collection_infos_owned: Vec<CollectionInfo> =
-            collection_infos.iter().map(|&info| info.clone()).collect();
 
         // Build the complete tree with all collections and their requests
         self.build_tree_from_collections(&collection_infos_owned, cx);
@@ -657,15 +661,11 @@ impl CollectionsPanel {
     fn open_collection_tab(&mut self, collection_path: &str, cx: &mut Context<Self>) {
         tracing::info!("Opening collection tab for path: {}", collection_path);
 
-        let collection_manager = cx.try_global::<CollectionManager>();
-        let Some(collection_manager) = collection_manager else {
-            tracing::error!("Global CollectionManager not found");
-            return;
-        };
-
         // Use the in-memory cache (works for both native TOML and OpenCollection
         // collections, which have no collection.toml on disk). Fall back to
         // reading collection.toml only if the collection isn't cached yet.
+        let manager = CollectionManager::global(cx);
+        let collection_manager = manager.read(cx);
         let collection_data = collection_manager
             .get_collection_by_path(collection_path)
             .map(|info| info.toml.clone())
@@ -763,8 +763,9 @@ impl CollectionsPanel {
             .retain(|collection| collection.path != collection_path);
 
         // Update global CollectionManager to remove the collection
-        cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-            collection_manager.remove_collection(collection_path);
+        let manager = CollectionManager::global(cx);
+        manager.update(cx, |collection_manager, cx| {
+            collection_manager.remove_collection(collection_path, cx);
         });
 
         // Remove the collection from AppDatabase
@@ -816,10 +817,9 @@ impl CollectionsPanel {
         self.request_data_map.remove(request_id);
 
         // Use CollectionManager to delete the request
-        cx.update_global(
-            |collection_manager: &mut CollectionManager, _cx| match collection_manager
-                .delete_request(collection_path, &request_data)
-            {
+        let manager = CollectionManager::global(cx);
+        manager.update(cx, |collection_manager, cx| {
+            match collection_manager.delete_request(collection_path, &request_data, cx) {
                 Ok(_) => {
                     tracing::info!(
                         "Successfully deleted request '{}' from collection {}",
@@ -834,8 +834,8 @@ impl CollectionsPanel {
                         e
                     );
                 }
-            },
-        );
+            }
+        });
 
         // Reload collections to rebuild the tree
         self.load_collections(cx);
@@ -872,8 +872,9 @@ impl CollectionsPanel {
         );
 
         // Use CollectionManager to delete the group
-        let result = cx.update_global(|collection_manager: &mut CollectionManager, _cx| {
-            collection_manager.delete_group(collection_path, group_name)
+        let manager = CollectionManager::global(cx);
+        let result = manager.update(cx, |collection_manager, cx| {
+            collection_manager.delete_group(collection_path, group_name, cx)
         });
 
         match result {

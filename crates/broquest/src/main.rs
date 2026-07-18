@@ -129,23 +129,30 @@ fn main() {
 
         cx.set_global(db);
 
-        // Initialize global CollectionManager
-        let mut collection_manager = CollectionManager::new();
+        // Initialize global CollectionManager as an entity-backed global.
+        let collection_manager = cx.new(|_| CollectionManager::new());
 
         // Load collections from database and cache them
-        if let Err(e) = collection_manager.load_saved(cx) {
-            tracing::error!("Failed to load saved collections: {}", e);
-        }
+        collection_manager.update(cx, |manager, cx| {
+            if let Err(e) = manager.load_saved(cx) {
+                tracing::error!("Failed to load saved collections: {}", e);
+            }
+        });
 
-        cx.set_global(collection_manager);
+        CollectionManager::set_global(collection_manager, cx);
 
         // Initialize HTTP client
         let timeout = AppSettings::global(cx)
             .settings
             .connection
             .request_timeout_seconds;
-        let http_client = http::HttpClientService::new(timeout);
-        cx.set_global(http_client);
+        match http::HttpClientService::new(timeout) {
+            Ok(http_client) => cx.set_global(http_client),
+            Err(e) => {
+                tracing::error!("Failed to initialize HTTP client: {}", e);
+                return;
+            }
+        }
 
         // Initialize UpdateManager
         let update_manager = update_manager::UpdateManager::new(cx);

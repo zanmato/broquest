@@ -1,3 +1,4 @@
+use anyhow::{Context as _, Result};
 use gpui::Global;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -79,33 +80,41 @@ pub struct HttpClientService {
 impl Global for HttpClientService {}
 
 impl HttpClientService {
-    pub fn new(timeout_seconds: u32) -> Self {
+    pub fn new(timeout_seconds: u32) -> Result<Self> {
         let timeout_duration = Duration::from_secs(timeout_seconds as u64);
-        let client = reqwest::Client::builder()
-            .timeout(timeout_duration)
-            .user_agent(format!("broquest/{}", env!("CARGO_PKG_VERSION")))
-            .build()
-            .expect("Failed to create HTTP client");
-
+        let client = Self::build_client(timeout_duration)?;
         let script_execution_service =
-            ScriptExecutionService::new().expect("Failed to create script execution service");
+            ScriptExecutionService::new().context("Failed to create script execution service")?;
 
-        Self {
+        Ok(Self {
             client,
             timeout: timeout_duration,
             environment_resolver: EnvironmentResolver::new(),
             script_execution_service,
-        }
+        })
+    }
+
+    /// Build a reqwest client with the shared timeout and user-agent.
+    fn build_client(timeout: Duration) -> Result<reqwest::Client> {
+        reqwest::Client::builder()
+            .timeout(timeout)
+            .user_agent(format!("broquest/{}", env!("CARGO_PKG_VERSION")))
+            .build()
+            .context("Failed to create HTTP client")
     }
 
     pub fn set_timeout(&mut self, seconds: u32) {
         let timeout_duration = Duration::from_secs(seconds as u64);
-        self.client = reqwest::Client::builder()
-            .timeout(timeout_duration)
-            .user_agent(format!("broquest/{}", env!("CARGO_PKG_VERSION")))
-            .build()
-            .expect("Failed to create HTTP client");
-        self.timeout = timeout_duration;
+        // Keep the existing client if rebuilding fails rather than crashing.
+        match Self::build_client(timeout_duration) {
+            Ok(client) => {
+                self.client = client;
+                self.timeout = timeout_duration;
+            }
+            Err(e) => {
+                tracing::error!("Failed to rebuild HTTP client on timeout change: {}", e);
+            }
+        }
     }
 
     /// Get the global HTTP client instance

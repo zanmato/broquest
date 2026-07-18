@@ -16,7 +16,9 @@ use gpui_component::{
 use super::editor::{RequestEditor, RequestEditorEvent};
 use crate::app_events::AppEvent;
 use crate::app_settings::AppSettings;
-use crate::collections::{CollectionEditor, CollectionManager, CollectionToml, GroupEditor};
+use crate::collections::{
+    CollectionEditor, CollectionManager, CollectionManagerEvent, CollectionToml, GroupEditor,
+};
 use crate::domain::{HttpMethod, RequestData};
 use crate::settings::SettingsView;
 use crate::ui::icon::IconName;
@@ -102,13 +104,43 @@ impl EditorPanel {
             }
         });
 
+        // Keep open request tabs' environment dropdowns in sync when a
+        // collection's environments change elsewhere (e.g. the collection
+        // editor). Scoped by collection_path so unrelated collections don't
+        // trigger a refresh.
+        let manager = CollectionManager::global(cx);
+        let manager_subscription = cx.subscribe_in(
+            &manager,
+            window,
+            move |this, _manager, event: &CollectionManagerEvent, window, cx| {
+                if let CollectionManagerEvent::EnvironmentsChanged { collection_path } = event {
+                    let path = collection_path.to_string();
+                    let editors: Vec<Entity<RequestEditor>> = this
+                        .tabs
+                        .iter()
+                        .filter_map(|tab| match tab {
+                            TabType::Request(request_tab)
+                                if request_tab.collection_path == path =>
+                            {
+                                Some(request_tab.request_editor.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    for editor in editors {
+                        this.load_environments_for_request(Some(&path), &editor, window, cx);
+                    }
+                }
+            },
+        );
+
         Self {
             focus_handle: cx.focus_handle(),
             tabs: vec![],
             active_tab_ix: 0,
             sidebar_collapsed,
             tabbar_scroll_handle: ScrollHandle::default(),
-            _subscriptions: vec![settings_subscription],
+            _subscriptions: vec![settings_subscription, manager_subscription],
         }
     }
 
@@ -194,6 +226,7 @@ impl EditorPanel {
             collection_path
         );
         let collection_suffix = CollectionManager::global(cx)
+            .read(cx)
             .get_collection_by_path(&collection_path)
             .map_or_else(
                 || {
@@ -338,11 +371,11 @@ impl EditorPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some(collection_path) = collection_path {
-            // Get the global CollectionManager
-            let collection_manager = CollectionManager::global(cx);
-            if let Some(environments) =
-                collection_manager.get_collection_environments(collection_path)
-            {
+            // Read the current environments from the global CollectionManager.
+            let environments = CollectionManager::global(cx)
+                .read(cx)
+                .get_collection_environments(collection_path);
+            if let Some(environments) = environments {
                 tracing::info!(
                     "Loading {} environments for request editor",
                     environments.len()
