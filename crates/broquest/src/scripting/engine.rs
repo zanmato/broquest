@@ -865,3 +865,201 @@ impl ScriptExecutionService {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{Value, json};
+    use std::collections::HashMap;
+
+    fn service() -> ScriptExecutionService {
+        ScriptExecutionService::new().expect("create script service")
+    }
+
+    fn vars(pairs: &[(&str, Value)]) -> HashMap<String, Value> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn empty_script_is_a_noop() {
+        let svc = service();
+        let mut request = RequestData::default();
+        let store = VariableStore::new();
+        svc.execute_pre_request_script("   ", &mut request, &store)
+            .expect("empty pre-request script should succeed");
+        svc.execute_post_response_script("", &request, &ResponseData::default(), &store)
+            .expect("empty post-response script should succeed");
+    }
+
+    #[test]
+    fn pre_request_extracts_url_body_and_headers() {
+        let svc = service();
+        let mut request = RequestData {
+            url: "http://old.example".to_string(),
+            body: "old".to_string(),
+            ..Default::default()
+        };
+        let store = VariableStore::new();
+
+        svc.execute_pre_request_script(
+            r#"
+            req.setUrl('http://new.example/path');
+            req.setBody('hello world');
+            req.setHeader('X-Test', 'abc');
+            "#,
+            &mut request,
+            &store,
+        )
+        .expect("script should run");
+
+        assert_eq!(request.url, "http://new.example/path");
+        assert_eq!(request.body, "hello world");
+        assert!(
+            request
+                .headers
+                .iter()
+                .any(|h| h.key == "X-Test" && h.value == "abc"),
+            "the header set by the script should be extracted back into RequestData"
+        );
+    }
+
+    #[test]
+    fn bro_and_bru_var_apis_write_runtime_and_env_vars() {
+        let svc = service();
+        let mut request = RequestData::default();
+        let store = VariableStore::new();
+
+        svc.execute_pre_request_script(
+            r#"
+            bro.setVar('num', 42);
+            bru.setVar('str', 'two');
+            bro.setEnvVar('E', 'ev');
+            "#,
+            &mut request,
+            &store,
+        )
+        .expect("script should run");
+
+        // `bru` is aliased to `bro`, so both write into the same runtime store.
+        assert_eq!(store.get_var("num"), Some(json!(42)));
+        assert_eq!(store.get_var("str"), Some(json!("two")));
+        assert_eq!(store.get_env_var_str("E"), Some("ev".to_string()));
+    }
+
+    #[test]
+    fn read_only_collection_and_request_var_scopes() {
+        let svc = service();
+        let mut request = RequestData::default();
+        let store = VariableStore::new();
+        store.set_collection_vars(vars(&[("cv", json!("cval"))]));
+        store.set_request_vars(vars(&[("rv", json!("rval"))]));
+
+        svc.execute_pre_request_script(
+            r#"
+            bro.setVar('gotC', bro.getCollectionVar('cv'));
+            bro.setVar('gotR', bru.getRequestVar('rv'));
+            bro.setVar('hasC', bro.hasCollectionVar('cv'));
+            bro.setVar('missing', bro.getRequestVar('nope') === undefined);
+            "#,
+            &mut request,
+            &store,
+        )
+        .expect("script should run");
+
+        assert_eq!(store.get_var("gotC"), Some(json!("cval")));
+        assert_eq!(store.get_var("gotR"), Some(json!("rval")));
+        assert_eq!(store.get_var("hasC"), Some(json!(true)));
+        assert_eq!(store.get_var("missing"), Some(json!(true)));
+    }
+
+    #[test]
+    fn post_response_exposes_res_and_collects_passing_tests() {
+        let svc = service();
+        let request = RequestData::default();
+        let store = VariableStore::new();
+        let response = ResponseData {
+            status_code: Some(200),
+            body: r#"{"ok":true}"#.to_string(),
+            headers: vec![KeyValuePair {
+                key: "Content-Type".to_string(),
+                value: "application/json".to_string(),
+                enabled: true,
+            }],
+            ..Default::default()
+        };
+
+        svc.execute_post_response_script(
+            r#"
+            test('status is 200', function () { expect(res.getStatus()).to.equal(200); });
+            test('body parsed as json', function () { expect(res.body.ok).to.equal(true); });
+            bro.setVar('passed', __testResults.filter(function (t) { return t.status === 'pass'; }).length);
+            bro.setVar('failed', __testResults.filter(function (t) { return t.status === 'fail'; }).length);
+            "#,
+            &request,
+            &response,
+            &store,
+        )
+        .expect("script should run");
+
+        assert_eq!(store.get_var("passed"), Some(json!(2)));
+        assert_eq!(store.get_var("failed"), Some(json!(0)));
+    }
+
+    #[test]
+    fn failing_test_is_caught_and_recorded() {
+        let svc = service();
+        let request = RequestData::default();
+        let store = VariableStore::new();
+
+        // A failing expect inside test() is caught; the script itself still
+        // succeeds and the failure is recorded in __testResults.
+        svc.execute_post_response_script(
+            r#"
+            test('this fails', function () { expect(1).to.equal(2); });
+            bro.setVar('failed', __testResults.filter(function (t) { return t.status === 'fail'; }).length);
+            "#,
+            &request,
+            &ResponseData::default(),
+            &store,
+        )
+        .expect("script with a failing test should still succeed");
+
+        assert_eq!(store.get_var("failed"), Some(json!(1)));
+    }
+
+    #[test]
+    fn bare_failing_expect_propagates_as_error() {
+        let svc = service();
+        let mut request = RequestData::default();
+        let store = VariableStore::new();
+
+        // Outside test(), a failed expectation throws and surfaces as a script
+        // execution error.
+        let result = svc.execute_pre_request_script("expect(1).to.equal(2);", &mut request, &store);
+        assert!(result.is_err(), "a bare failing expect should error");
+    }
+
+    #[test]
+    fn syntax_error_surfaces_as_error() {
+        let svc = service();
+        let mut request = RequestData::default();
+        let store = VariableStore::new();
+
+        let result = svc.execute_pre_request_script("var x = ;", &mut request, &store);
+        assert!(result.is_err(), "a syntax error should fail execution");
+    }
+
+    #[test]
+    fn check_syntax_distinguishes_valid_and_invalid_scripts() {
+        assert!(
+            ScriptExecutionService::check_syntax("var x = 1 + 1;", ScriptContext::PreRequest)
+                .is_ok()
+        );
+        assert!(
+            ScriptExecutionService::check_syntax("var x = ;", ScriptContext::PreRequest).is_err()
+        );
+    }
+}
