@@ -12,6 +12,7 @@ use gpui_component::{
     kbd::Kbd,
     menu::AppMenuBar,
     notification::{Notification, NotificationType},
+    resizable::{h_resizable, resizable_panel},
     v_flex,
 };
 
@@ -99,6 +100,7 @@ impl BroquestApp {
                 if let AppEvent::CreateNewRequestTab {
                     request_data,
                     collection_path,
+                    group_path,
                 } = event
                 {
                     tracing::info!(
@@ -109,7 +111,7 @@ impl BroquestApp {
                         editor_panel.create_and_add_request_tab(
                             request_data.clone(),
                             collection_path.to_string(),
-                            None,
+                            group_path.as_ref().map(|gp| gp.to_string()),
                             window,
                             cx,
                         );
@@ -372,15 +374,17 @@ impl BroquestApp {
                         .requests
                         .values()
                         .find(|r| r.name == request_name)
-                        .cloned();
+                        .cloned()
+                        .map(|r| (r, None));
 
                     direct.or_else(|| {
-                        collection
-                            .groups
-                            .values()
-                            .flat_map(|g| g.requests.values())
-                            .find(|r| r.name == request_name)
-                            .cloned()
+                        collection.groups.values().find_map(|g| {
+                            g.requests
+                                .values()
+                                .find(|r| r.name == request_name)
+                                .cloned()
+                                .map(|r| (r, Some(g.path.clone())))
+                        })
                     })
                 });
 
@@ -397,7 +401,7 @@ impl BroquestApp {
             request_data
         };
 
-        let Some(request_data) = request_data else {
+        let Some((request_data, group_path)) = request_data else {
             window.push_notification(
                 (
                     NotificationType::Warning,
@@ -412,7 +416,7 @@ impl BroquestApp {
             editor_panel.create_and_add_request_tab(
                 request_data,
                 collection_path,
-                None,
+                group_path,
                 window,
                 cx,
             );
@@ -723,94 +727,114 @@ impl Render for BroquestApp {
                     .flex()
                     .flex_1()
                     .w_full()
+                    .min_h_0()
                     .overflow_hidden()
-                    .items_start()
-                    // Left side: sidebar with tab switcher
-                    .when(!self.sidebar_collapsed, |this| {
-                        this.child(
-                            div()
-                                .h_full()
-                                .w(px(256.))
-                                .overflow_hidden()
-                                .border_r_1()
-                                .border_color(cx.theme().border)
-                                .child(
-                                    v_flex()
-                                        .h_full()
-                                        .child(
-                                            // Sidebar tab switcher
-                                            h_flex()
-                                                .items_center()
-                                                .gap_1()
-                                                .pt(px(3.))
-                                                .pb(px(4.))
-                                                .px(px(4.))
-                                                .border_b_1()
-                                                .border_color(cx.theme().border)
-                                                .child(
-                                                    Button::new("tab-collections")
-                                                        .small()
-                                                        .ghost()
-                                                        .selected(
-                                                            self.sidebar_tab
-                                                                == SidebarTab::Collections,
-                                                        )
-                                                        .label("Collections")
-                                                        .flex_1()
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.sidebar_tab =
-                                                                SidebarTab::Collections;
-                                                            cx.notify();
-                                                        })),
-                                                )
-                                                .child(
-                                                    Button::new("tab-history")
-                                                        .small()
-                                                        .ghost()
-                                                        .selected(
-                                                            self.sidebar_tab == SidebarTab::History,
-                                                        )
-                                                        .label("History")
-                                                        .flex_1()
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.sidebar_tab = SidebarTab::History;
-                                                            if !this.history_panel.read(cx).loaded {
-                                                                this.history_panel.update(
-                                                                    cx,
-                                                                    |panel, cx| {
-                                                                        panel.load_history(cx);
-                                                                    },
-                                                                );
-                                                            }
-                                                            cx.notify();
-                                                        })),
-                                                ),
-                                        )
-                                        .child(match self.sidebar_tab {
-                                            SidebarTab::Collections => div()
-                                                .flex_1()
-                                                .min_h_0()
-                                                .child(self.collections_panel.clone()),
-                                            SidebarTab::History => div()
-                                                .flex_1()
-                                                .min_h_0()
-                                                .child(self.history_panel.clone()),
-                                        }),
-                                ),
-                        )
-                    })
-                    // Main panel
                     .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            // Allow this flex item to shrink below its content
-                            // width; without it the panel grows to fit the widest
-                            // tab/content and the tab bar never overflows to scroll.
-                            .min_w_0()
-                            .h_full()
-                            .overflow_hidden()
-                            .child(self.editor_panel.clone()),
+                        // Left side: sidebar with tab switcher, resizable
+                        // against the main panel. The group keeps its own
+                        // window-keyed state, so the chosen width survives
+                        // collapsing and re-opening the sidebar.
+                        h_resizable("main-layout")
+                            .child(
+                                resizable_panel()
+                                    .visible(!self.sidebar_collapsed)
+                                    .size(px(256.))
+                                    .size_range(px(180.)..px(600.))
+                                    .flex_none()
+                                    .border_r_1()
+                                    .border_color(cx.theme().border)
+                                    .child(
+                                        v_flex()
+                                            .size_full()
+                                            .overflow_hidden()
+                                            .child(
+                                                // Sidebar tab switcher
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .pt(px(3.))
+                                                    .pb(px(4.))
+                                                    .px(px(4.))
+                                                    .border_b_1()
+                                                    .border_color(cx.theme().border)
+                                                    .child(
+                                                        Button::new("tab-collections")
+                                                            .small()
+                                                            .ghost()
+                                                            .selected(
+                                                                self.sidebar_tab
+                                                                    == SidebarTab::Collections,
+                                                            )
+                                                            .label("Collections")
+                                                            .flex_1()
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.sidebar_tab =
+                                                                        SidebarTab::Collections;
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        Button::new("tab-history")
+                                                            .small()
+                                                            .ghost()
+                                                            .selected(
+                                                                self.sidebar_tab
+                                                                    == SidebarTab::History,
+                                                            )
+                                                            .label("History")
+                                                            .flex_1()
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.sidebar_tab =
+                                                                        SidebarTab::History;
+                                                                    if !this
+                                                                        .history_panel
+                                                                        .read(cx)
+                                                                        .loaded
+                                                                    {
+                                                                        this.history_panel.update(
+                                                                            cx,
+                                                                            |panel, cx| {
+                                                                                panel.load_history(
+                                                                                    cx,
+                                                                                );
+                                                                            },
+                                                                        );
+                                                                    }
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    ),
+                                            )
+                                            .child(match self.sidebar_tab {
+                                                SidebarTab::Collections => div()
+                                                    .flex_1()
+                                                    .min_h_0()
+                                                    .child(self.collections_panel.clone()),
+                                                SidebarTab::History => div()
+                                                    .flex_1()
+                                                    .min_h_0()
+                                                    .child(self.history_panel.clone()),
+                                            }),
+                                    ),
+                            )
+                            // Main panel
+                            .child(
+                                resizable_panel().child(
+                                    div()
+                                        .flex()
+                                        .flex_1()
+                                        // Allow this flex item to shrink below its content
+                                        // width; without it the panel grows to fit the widest
+                                        // tab/content and the tab bar never overflows to scroll.
+                                        .min_w_0()
+                                        .h_full()
+                                        .overflow_hidden()
+                                        .child(self.editor_panel.clone()),
+                                ),
+                            ),
                     ),
             )
             .children(sheet_layer)

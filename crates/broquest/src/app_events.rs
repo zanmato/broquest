@@ -44,6 +44,7 @@ pub enum AppEvent {
     CreateNewRequestTab {
         request_data: RequestData,
         collection_path: SharedString,
+        group_path: Option<SharedString>,
     },
     RequestCompleted {
         request_data: RequestData,

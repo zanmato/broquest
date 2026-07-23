@@ -147,6 +147,7 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                                                 .collection_path
                                                 .clone()
                                                 .into(),
+                                            group_path: metadata.group_path.clone().map(Into::into),
                                         });
                                     }
                                 }
@@ -584,7 +585,7 @@ impl CollectionsPanel {
                             color_fn: request.method.get_color_fn(),
                         },
                         collection_path: collection_data.path.clone(),
-                        group_path: Some(format!("{}/{}", collection_path, group_name)),
+                        group_path: Some(group_info.path.clone()),
                     };
 
                     self.tree_item_metadata
@@ -610,7 +611,7 @@ impl CollectionsPanel {
                         color_fn: |cx: &App| cx.theme().magenta,
                     },
                     collection_path: collection_data.path.clone(),
-                    group_path: Some(format!("{}/{}", collection_path, group_name)),
+                    group_path: Some(group_info.path.clone()),
                 };
 
                 self.tree_item_metadata.insert(group_id, group_metadata);
