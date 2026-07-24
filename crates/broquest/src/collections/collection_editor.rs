@@ -665,18 +665,22 @@ impl CollectionEditor {
                 tracing::info!("Collection saved successfully to: {}", current_path);
                 tracing::info!("Collection name: {}", collection_data.collection.name);
 
-                // Import from the selected spec source, if any.
+                // Import from the selected spec source, if any. The selection
+                // is reset afterwards so subsequent saves don't re-run the
+                // import (which would duplicate the imported environment).
                 match self.selected_import(cx) {
                     ImportKind::OpenApi => {
                         if let Some(spec_path_value) = self.openapi_spec_path.clone() {
                             self.import_from_openapi(&spec_path_value, &current_path, window, cx);
                         }
+                        self.reset_import_selection(window, cx);
                     }
                     ImportKind::Wsdl => {
                         let wsdl_url = self.wsdl_spec_input.read(cx).value().to_string();
                         if !wsdl_url.is_empty() {
                             self.import_from_wsdl_url(&wsdl_url, &current_path, window, cx);
                         }
+                        self.reset_import_selection(window, cx);
                     }
                     ImportKind::None => {}
                 }
@@ -702,6 +706,22 @@ impl CollectionEditor {
         } else {
             tracing::info!("Secrets saved successfully");
         }
+    }
+
+    /// Clear the import selection and spec inputs after an import has been
+    /// triggered, so saving the collection again doesn't re-run the import.
+    fn reset_import_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.openapi_spec_path = None;
+        self.openapi_spec_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+        });
+        self.wsdl_spec_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+        });
+        self.import_select.update(cx, |select, cx| {
+            select.set_selected_index(Some(IndexPath::default().row(0)), window, cx);
+        });
+        cx.notify();
     }
 
     fn handle_browse_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {

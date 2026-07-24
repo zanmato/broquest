@@ -778,7 +778,15 @@ impl CollectionManager {
             let Some(collection_info) = self.collections.get_mut(collection_path) else {
                 return Err(anyhow::anyhow!("Collection not found: {}", collection_path));
             };
-            collection_info.toml.environments.push(environment);
+            // Merge into an existing environment with the same name instead of
+            // pushing a duplicate.
+            let environments = &mut collection_info.toml.environments;
+            match environments.iter_mut().find(|e| e.name == environment.name) {
+                Some(existing) => {
+                    existing.variables.extend(environment.variables);
+                }
+                None => environments.push(environment),
+            }
             collection_info.toml.clone()
         };
         // save_collection emits EnvironmentsChanged + CollectionsChanged.
