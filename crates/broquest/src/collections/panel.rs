@@ -88,6 +88,9 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
             .px_3()
             .pl(px(12.) * depth as f32 + px(12.)) // Indent based on depth
             .my_0p5()
+            // `ListItem` copies its corner radii onto the selection highlight,
+            // so this rounds both the fill and its border.
+            .rounded(cx.theme().radius)
             .child(
                 h_flex()
                     .id(("tree-item", ix))
@@ -930,10 +933,12 @@ impl CollectionsPanel {
 
 impl Render for CollectionsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // No background of its own: the sidebar card in `BroquestApp::render`
+        // owns the surface colour so the rounded corners stay clean.
         v_flex()
             .size_full()
-            .bg(cx.theme().sidebar_primary_foreground)
-            .px(px(1.))
+            // Keeps the rounded row selection off the sidebar card's border.
+            .px(px(4.))
             .child(
                 div()
                     .flex_1()

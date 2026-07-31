@@ -1,3 +1,4 @@
+use crate::ui::resizable::{h_resizable, resizable_panel};
 use gpui::{
     Action, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Menu, MenuItem, ParentElement, Render, SharedString,
@@ -5,14 +6,13 @@ use gpui::{
     px, svg,
 };
 use gpui_component::{
-    ActiveTheme, Icon, Root, Selectable, Sizable as _, Theme, ThemeRegistry, TitleBar, WindowExt,
+    ActiveTheme, Icon, Root, Sizable as _, Theme, ThemeRegistry, TitleBar, WindowExt,
     button::{Button, ButtonVariants as _},
     global_state::GlobalState,
     h_flex,
     kbd::Kbd,
     menu::AppMenuBar,
     notification::{Notification, NotificationType},
-    resizable::{h_resizable, resizable_panel},
     v_flex,
 };
 
@@ -28,6 +28,10 @@ use crate::{
     result_ext::ResultExt,
     update_manager::UpdateManager,
 };
+
+/// Corner radius of the sidebar and editor cards. Matches the reference
+/// design; the theme's own `radius` (6px) is used for controls inside them.
+pub(crate) const PANEL_RADIUS: gpui::Pixels = px(8.);
 
 actions!(
     broquest_app,
@@ -83,7 +87,7 @@ impl BroquestApp {
 
         let history_panel = cx.new(|cx| HistoryPanel::new(window, cx));
 
-        let editor_panel = cx.new(|cx| EditorPanel::new(window, cx, false));
+        let editor_panel = cx.new(|cx| EditorPanel::new(window, cx));
         let command_palette =
             cx.new(|cx| crate::ui::command_palette::CommandPalette::new(window, cx));
         let app_menu_bar = AppMenuBar::new(cx);
@@ -212,20 +216,6 @@ impl BroquestApp {
                 }
             },
         );
-        subscriptions.push(subscription);
-
-        let subscription =
-            cx.subscribe_in(&editor_panel, window, move |app, panel, event, _, cx| {
-                if let AppEvent::ToggleSidebar = event {
-                    app.sidebar_collapsed = !app.sidebar_collapsed;
-                    tracing::info!("New sidebar_collapsed state: {}", app.sidebar_collapsed);
-
-                    // Update editor panel's sidebar state
-                    panel.update(cx, |panel, cx| {
-                        panel.set_sidebar_collapsed(app.sidebar_collapsed, cx);
-                    });
-                }
-            });
         subscriptions.push(subscription);
 
         // Subscribe to history events from request editors
@@ -596,6 +586,7 @@ impl BroquestApp {
             .gap_8()
             .h(px(26.))
             .w(px(420.))
+            .mt(px(2.))
             .px_3()
             .rounded_md()
             .bg(cx.theme().input_background())
@@ -617,6 +608,80 @@ impl BroquestApp {
                     .child("Search commands..."),
             )
             .when_some(shortcut, |this, kbd| this.child(kbd))
+    }
+
+    /// Collections / History switcher.
+    ///
+    /// Hand-rolled rather than a segmented `TabBar`, because `TabBar` wraps every
+    /// tab in a `flex_shrink_0` div, so its tabs size to their labels and can't
+    /// be made equal width. The styling deliberately mirrors
+    /// `TabVariant::Segmented` (same trough, surface, radius and shadow tokens)
+    /// so it stays in step with the tab bars elsewhere in the app.
+    fn render_sidebar_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let segment = |tab: SidebarTab, label: &'static str, id: &'static str| {
+            let selected = self.sidebar_tab == tab;
+            div()
+                .id(id)
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .py(px(2.))
+                .rounded(cx.theme().radius)
+                .text_sm()
+                .cursor_pointer()
+                .when(selected, |this| {
+                    this.bg(cx.theme().background)
+                        .shadow_xs()
+                        .text_color(cx.theme().tab_active_foreground)
+                })
+                .when(!selected, |this| this.text_color(cx.theme().tab_foreground))
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.sidebar_tab = tab;
+                    // History is loaded lazily the first time the tab is opened.
+                    if tab == SidebarTab::History && !this.history_panel.read(cx).loaded {
+                        this.history_panel.update(cx, |panel, cx| {
+                            panel.load_history(cx);
+                        });
+                    }
+                    cx.notify();
+                }))
+        };
+
+        // The trough is inset by the wrapper so it can't square off the sidebar
+        // card's top corners.
+        div().p(px(6.)).min_w_0().child(
+            h_flex()
+                .w_full()
+                .gap(px(2.))
+                .p(px(3.))
+                .rounded(cx.theme().radius)
+                .bg(cx.theme().tab_bar_segmented)
+                .child(segment(
+                    SidebarTab::Collections,
+                    "Collections",
+                    "tab-collections",
+                ))
+                .child(segment(SidebarTab::History, "History", "tab-history")),
+        )
+    }
+
+    /// Sidebar show/hide toggle. Lives in the title bar next to the window
+    /// controls, matching the reference design.
+    fn render_sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("toggle-sidebar")
+            .ghost()
+            .small()
+            .icon(if self.sidebar_collapsed {
+                Icon::new(crate::ui::icon::IconName::PanelLeftOpen).size_4()
+            } else {
+                Icon::new(crate::ui::icon::IconName::PanelLeftClose).size_4()
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.sidebar_collapsed = !this.sidebar_collapsed;
+                cx.notify();
+            }))
     }
 
     fn render_update_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -712,13 +777,22 @@ impl Render for BroquestApp {
                                     svg()
                                         .h(px(32.))
                                         .w(px(145.))
+                                        // Optically centre the wordmark, which
+                                        // sits high in its own viewBox.
+                                        .mt(px(2.))
                                         .text_color(window.text_style().color)
                                         .path("img/broquest.svg"),
                                 )
                                 .child(self.app_menu_bar.clone()),
                         )
                         .child(self.render_palette_trigger(window, cx))
-                        .child(self.render_update_button(cx)),
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(self.render_update_button(cx))
+                                .child(self.render_sidebar_toggle(cx)),
+                        ),
                 ),
             )
             // Main content area
@@ -729,110 +803,75 @@ impl Render for BroquestApp {
                     .w_full()
                     .min_h_0()
                     .overflow_hidden()
+                    // Inset the cards from the window edges. The top inset is
+                    // kept minimal so the cards sit close under the title bar.
+                    .px(px(6.))
+                    .pb(px(6.))
+                    .pt(px(1.))
                     .child(
                         // Left side: sidebar with tab switcher, resizable
                         // against the main panel. The group keeps its own
                         // window-keyed state, so the chosen width survives
                         // collapsing and re-opening the sidebar.
                         h_resizable("main-layout")
+                            // The cards draw their own borders, so the handle
+                            // only needs to stay draggable - see the vendored
+                            // `ui::resizable`.
+                            .invisible_handles()
                             .child(
                                 resizable_panel()
                                     .visible(!self.sidebar_collapsed)
                                     .size(px(256.))
                                     .size_range(px(180.)..px(600.))
                                     .flex_none()
-                                    .border_r_1()
-                                    .border_color(cx.theme().border)
                                     .child(
-                                        v_flex()
-                                            .size_full()
-                                            .overflow_hidden()
-                                            .child(
-                                                // Sidebar tab switcher
-                                                h_flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .pt(px(3.))
-                                                    .pb(px(4.))
-                                                    .px(px(4.))
-                                                    .border_b_1()
-                                                    .border_color(cx.theme().border)
-                                                    .child(
-                                                        Button::new("tab-collections")
-                                                            .small()
-                                                            .ghost()
-                                                            .selected(
-                                                                self.sidebar_tab
-                                                                    == SidebarTab::Collections,
-                                                            )
-                                                            .label("Collections")
-                                                            .flex_1()
-                                                            .on_click(cx.listener(
-                                                                |this, _, _, cx| {
-                                                                    this.sidebar_tab =
-                                                                        SidebarTab::Collections;
-                                                                    cx.notify();
-                                                                },
-                                                            )),
-                                                    )
-                                                    .child(
-                                                        Button::new("tab-history")
-                                                            .small()
-                                                            .ghost()
-                                                            .selected(
-                                                                self.sidebar_tab
-                                                                    == SidebarTab::History,
-                                                            )
-                                                            .label("History")
-                                                            .flex_1()
-                                                            .on_click(cx.listener(
-                                                                |this, _, _, cx| {
-                                                                    this.sidebar_tab =
-                                                                        SidebarTab::History;
-                                                                    if !this
-                                                                        .history_panel
-                                                                        .read(cx)
-                                                                        .loaded
-                                                                    {
-                                                                        this.history_panel.update(
-                                                                            cx,
-                                                                            |panel, cx| {
-                                                                                panel.load_history(
-                                                                                    cx,
-                                                                                );
-                                                                            },
-                                                                        );
-                                                                    }
-                                                                    cx.notify();
-                                                                },
-                                                            )),
-                                                    ),
-                                            )
-                                            .child(match self.sidebar_tab {
-                                                SidebarTab::Collections => div()
-                                                    .flex_1()
-                                                    .min_h_0()
-                                                    .child(self.collections_panel.clone()),
-                                                SidebarTab::History => div()
-                                                    .flex_1()
-                                                    .min_h_0()
-                                                    .child(self.history_panel.clone()),
-                                            }),
+                                        div().size_full().pr(px(3.)).child(
+                                            v_flex()
+                                                .size_full()
+                                                .overflow_hidden()
+                                                .bg(cx.theme().sidebar)
+                                                .rounded(PANEL_RADIUS)
+                                                .border_1()
+                                                .border_color(cx.theme().border)
+                                                .child(self.render_sidebar_tabs(cx))
+                                                .child(match self.sidebar_tab {
+                                                    SidebarTab::Collections => div()
+                                                        .flex_1()
+                                                        .min_h_0()
+                                                        .child(self.collections_panel.clone()),
+                                                    SidebarTab::History => div()
+                                                        .flex_1()
+                                                        .min_h_0()
+                                                        .child(self.history_panel.clone()),
+                                                }),
+                                        ),
                                     ),
                             )
                             // Main panel
                             .child(
                                 resizable_panel().child(
                                     div()
-                                        .flex()
-                                        .flex_1()
-                                        // Allow this flex item to shrink below its content
-                                        // width; without it the panel grows to fit the widest
-                                        // tab/content and the tab bar never overflows to scroll.
-                                        .min_w_0()
-                                        .h_full()
-                                        .overflow_hidden()
-                                        .child(self.editor_panel.clone()),
+                                        .size_full()
+                                        .when(!self.sidebar_collapsed, |this| this.pl(px(3.)))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_1()
+                                                // Allow this flex item to shrink below its content
+                                                // width; without it the panel grows to fit the widest
+                                                // tab/content and the tab bar never overflows to scroll.
+                                                .min_w_0()
+                                                .h_full()
+                                                .overflow_hidden()
+                                                .bg(cx.theme().background)
+                                                .rounded(PANEL_RADIUS)
+                                                // The editor card shares the shell colour (as in
+                                                // the reference), so the 1px border is what makes
+                                                // its rounded outline readable.
+                                                .border_1()
+                                                .border_color(cx.theme().border)
+                                                .child(self.editor_panel.clone()),
+                                        ),
                                 ),
                             ),
                     ),

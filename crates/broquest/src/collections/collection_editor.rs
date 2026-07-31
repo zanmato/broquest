@@ -1,3 +1,4 @@
+use crate::ui::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString, Subscription, Window,
     actions, div, prelude::*, px,
@@ -9,7 +10,6 @@ use gpui_component::{
     input::{Input, InputState},
     kbd::Kbd,
     notification::NotificationType,
-    resizable::{ResizableState, h_resizable, resizable_panel},
     scroll::ScrollableElement,
     select::{Select, SelectItem, SelectState},
     switch::Switch,
@@ -542,18 +542,21 @@ impl CollectionEditor {
     }
 
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        TabBar::new("collection-tabs")
-            .left(px(-1.)) // Avoid double border
-            .selected_index(self.active_tab)
-            .on_click(cx.listener(|this, _ix: &usize, _window, cx| {
-                this.set_active_tab(*_ix, cx);
-            }))
-            .children(vec![
-                Tab::new().label("Collection"),
-                Tab::new().label("Environments"),
-                Tab::new().label("Vars"),
-                Tab::new().label("Auth"),
-            ])
+        // The segmented trough is full-bleed, so inset it with a wrapper.
+        div().p(px(6.)).min_w_0().child(
+            TabBar::new("collection-tabs")
+                .segmented()
+                .selected_index(self.active_tab)
+                .on_click(cx.listener(|this, _ix: &usize, _window, cx| {
+                    this.set_active_tab(*_ix, cx);
+                }))
+                .children(vec![
+                    Tab::new().label("Collection"),
+                    Tab::new().label("Environments"),
+                    Tab::new().label("Vars"),
+                    Tab::new().label("Auth"),
+                ]),
+        )
     }
 
     fn render_tab_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -693,7 +696,6 @@ impl CollectionEditor {
             }
             Err(e) => {
                 tracing::error!("Failed to save collection: {}", e);
-                // TODO: Show error to user
 
                 window
                     .push_notification((NotificationType::Error, "Failed to save collection."), cx);

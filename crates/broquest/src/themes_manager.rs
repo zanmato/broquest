@@ -23,7 +23,7 @@ impl ThemesManager {
                 let theme_path = themes_dir.join(theme_file.as_ref());
 
                 // Only copy if the theme doesn't already exist or needs updating
-                match Self::should_copy_theme(&theme_path, embedded_file.data.len()) {
+                match Self::should_copy_theme(&theme_path, &embedded_file.data) {
                     Ok(true) => {
                         std::fs::write(&theme_path, embedded_file.data)?;
                         println!("Installed theme: {}", theme_file);
@@ -52,15 +52,19 @@ impl ThemesManager {
         path
     }
 
-    /// Check if a theme should be copied (doesn't exist or is different size)
-    fn should_copy_theme(theme_path: &PathBuf, embedded_size: usize) -> Result<bool> {
+    /// Check if a theme should be copied (doesn't exist or differs from the
+    /// embedded copy).
+    ///
+    /// Compares contents rather than file size: a theme edit that swaps one
+    /// colour for another of the same length leaves the size unchanged, and a
+    /// size check would silently skip installing it.
+    fn should_copy_theme(theme_path: &PathBuf, embedded: &[u8]) -> Result<bool> {
         if !theme_path.exists() {
             return Ok(true);
         }
 
-        // Check file sizes to detect updates
-        let current_size = std::fs::metadata(theme_path)?.len() as usize;
-        Ok(current_size != embedded_size)
+        let current = std::fs::read(theme_path)?;
+        Ok(current != embedded)
     }
 
     /// Get the themes directory path (public)

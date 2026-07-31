@@ -10,9 +10,6 @@ use gpui::SharedString;
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppEvent {
     /// UI events
-    ToggleSidebar,
-
-    /// UI events
     ThemeChanged(gpui_component::ThemeMode),
     SidebarToggled {
         collapsed: bool,

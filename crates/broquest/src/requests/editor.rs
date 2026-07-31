@@ -1,3 +1,4 @@
+use crate::ui::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
     InteractiveElement as _, IntoElement, KeyBinding, ObjectFit, ParentElement as _, Render,
@@ -11,7 +12,6 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     kbd::Kbd,
     notification::NotificationType,
-    resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
     scroll::ScrollableElement,
     select::{Select, SelectEvent, SelectItem, SelectState},
     tab::{Tab, TabBar},
@@ -1368,55 +1368,58 @@ impl RequestEditor {
             .request_vars_editor
             .read_with(cx, |editor, cx| editor.count(cx));
 
-        TabBar::new("request-tabs")
-            .left(px(-1.)) // Avoid double border with container
-            .selected_index(match self.active_tab {
-                RequestTab::Query => 0,
-                RequestTab::Body => 1,
-                RequestTab::Headers => 2,
-                RequestTab::Auth => 3,
-                RequestTab::Path => 4,
-                RequestTab::Vars => 5,
-                RequestTab::Scripts => 6,
-            })
-            .on_click(cx.listener(|this, &index, _, cx| {
-                this.active_tab = match index {
-                    0 => RequestTab::Query,
-                    1 => RequestTab::Body,
-                    2 => RequestTab::Headers,
-                    3 => RequestTab::Auth,
-                    4 => RequestTab::Path,
-                    5 => RequestTab::Vars,
-                    6 => RequestTab::Scripts,
-                    _ => RequestTab::Query,
-                };
-                cx.notify();
-            }))
-            .child(Tab::new().label("Query").when(query_count > 0, |tab| {
-                tab.pr_2().suffix(TabBadge::new().count(query_count))
-            }))
-            .child(
-                Tab::new()
-                    .label("Body")
-                    .when(has_body, |tab| tab.pr_2().suffix(TabBadge::new().count(1))),
-            )
-            .child(Tab::new().label("Headers").when(headers_count > 0, |tab| {
-                tab.pr_2().suffix(TabBadge::new().count(headers_count))
-            }))
-            .child(
-                Tab::new()
-                    .label("Auth")
-                    .when(has_auth, |tab| tab.pr_2().suffix(TabBadge::new().count(1))),
-            )
-            .child(Tab::new().label("Path").when(path_count > 0, |tab| {
-                tab.pr_2().suffix(TabBadge::new().count(path_count))
-            }))
-            .child(Tab::new().label("Vars").when(vars_count > 0, |tab| {
-                tab.pr_2().suffix(TabBadge::new().count(vars_count))
-            }))
-            .child(Tab::new().label("Scripts").when(scripts_count > 0, |tab| {
-                tab.pr_2().suffix(TabBadge::new().count(scripts_count))
-            }))
+        // The segmented trough is full-bleed, so inset it with a wrapper.
+        div().p(px(6.)).min_w_0().child(
+            TabBar::new("request-tabs")
+                .segmented()
+                .selected_index(match self.active_tab {
+                    RequestTab::Query => 0,
+                    RequestTab::Body => 1,
+                    RequestTab::Headers => 2,
+                    RequestTab::Auth => 3,
+                    RequestTab::Path => 4,
+                    RequestTab::Vars => 5,
+                    RequestTab::Scripts => 6,
+                })
+                .on_click(cx.listener(|this, &index, _, cx| {
+                    this.active_tab = match index {
+                        0 => RequestTab::Query,
+                        1 => RequestTab::Body,
+                        2 => RequestTab::Headers,
+                        3 => RequestTab::Auth,
+                        4 => RequestTab::Path,
+                        5 => RequestTab::Vars,
+                        6 => RequestTab::Scripts,
+                        _ => RequestTab::Query,
+                    };
+                    cx.notify();
+                }))
+                .child(Tab::new().label("Query").when(query_count > 0, |tab| {
+                    tab.pr_2().suffix(TabBadge::new().count(query_count))
+                }))
+                .child(
+                    Tab::new()
+                        .label("Body")
+                        .when(has_body, |tab| tab.pr_2().suffix(TabBadge::new().count(1))),
+                )
+                .child(Tab::new().label("Headers").when(headers_count > 0, |tab| {
+                    tab.pr_2().suffix(TabBadge::new().count(headers_count))
+                }))
+                .child(
+                    Tab::new()
+                        .label("Auth")
+                        .when(has_auth, |tab| tab.pr_2().suffix(TabBadge::new().count(1))),
+                )
+                .child(Tab::new().label("Path").when(path_count > 0, |tab| {
+                    tab.pr_2().suffix(TabBadge::new().count(path_count))
+                }))
+                .child(Tab::new().label("Vars").when(vars_count > 0, |tab| {
+                    tab.pr_2().suffix(TabBadge::new().count(vars_count))
+                }))
+                .child(Tab::new().label("Scripts").when(scripts_count > 0, |tab| {
+                    tab.pr_2().suffix(TabBadge::new().count(scripts_count))
+                })),
+        )
     }
 
     fn render_tab_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1523,6 +1526,10 @@ impl RequestEditor {
             .border_t_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().background)
+            // The status bar paints the bottom of the editor card, so it has to
+            // carry the card radius itself: GPUI's content mask is rectangular
+            // and won't clip a child's background to rounded corners.
+            .rounded_b(crate::app::PANEL_RADIUS)
             .child(
                 h_flex()
                     .font_family(cx.theme().mono_font_family.clone())
@@ -1579,32 +1586,37 @@ impl RequestEditor {
     ) -> impl IntoElement {
         div()
             .flex_1()
-            .border_t_1()
-            .border_color(cx.theme().border)
+            .h_full()
             .bg(cx.theme().background)
+            .border_color(cx.theme().border)
+            // Stacked: a divider separates the response from the request pane
+            // above. Side-by-side: the resize handle already draws its own 1px
+            // line down the split, so any border here just doubles up.
+            .when(layout == EditorLayout::Vertical, |this| this.border_t_1())
             .child(
                 v_flex()
                     .size_full()
                     .child(
-                        // Response tabs
-                        TabBar::new("response-tabs")
-                            .when(layout == EditorLayout::Vertical, |this| {
-                                this.left(px(-1.)) // Avoid double border with container
-                            })
-                            .selected_index(match self.active_response_tab {
-                                ResponseTab::Response => 0,
-                                ResponseTab::Raw => 1,
-                            })
-                            .on_click(cx.listener(|this, &index, _, cx| {
-                                this.active_response_tab = match index {
-                                    0 => ResponseTab::Response,
-                                    1 => ResponseTab::Raw,
-                                    _ => ResponseTab::Response,
-                                };
-                                cx.notify();
-                            }))
-                            .child(Tab::new().label("Response"))
-                            .child(Tab::new().label("Raw")),
+                        // Response tabs. The segmented trough is full-bleed, so
+                        // inset it with a wrapper.
+                        div().p(px(6.)).min_w_0().child(
+                            TabBar::new("response-tabs")
+                                .segmented()
+                                .selected_index(match self.active_response_tab {
+                                    ResponseTab::Response => 0,
+                                    ResponseTab::Raw => 1,
+                                })
+                                .on_click(cx.listener(|this, &index, _, cx| {
+                                    this.active_response_tab = match index {
+                                        0 => ResponseTab::Response,
+                                        1 => ResponseTab::Raw,
+                                        _ => ResponseTab::Response,
+                                    };
+                                    cx.notify();
+                                }))
+                                .child(Tab::new().label("Response"))
+                                .child(Tab::new().label("Raw")),
+                        ),
                     )
                     .child(
                         // Response content
@@ -2200,7 +2212,8 @@ impl RequestEditor {
             .size_full()
             .child(
                 div()
-                    .p_3()
+                    .py_3()
+                    .px(px(6.))
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(self.render_url_bar(cx)),
@@ -2209,6 +2222,9 @@ impl RequestEditor {
             .child(
                 div().flex_1().min_h_0().child(
                     v_resizable("request-response")
+                        // The response area draws its own top border, so the
+                        // handle would only double it up.
+                        .invisible_handles()
                         .with_state(&self.request_response_state)
                         .child(
                             resizable_panel()
@@ -2246,7 +2262,9 @@ impl RequestEditor {
                                         .size_full()
                                         .child(
                                             div()
-                                                .p_3()
+                                                .pb_3()
+                                                .pt(px(6.))
+                                                .px(px(6.))
                                                 .border_b_1()
                                                 .border_color(cx.theme().border)
                                                 .child(self.render_url_bar(cx)),
@@ -2289,8 +2307,10 @@ impl Render for RequestEditor {
             .on_action(cx.listener(|this: &mut RequestEditor, &Send, window, cx| {
                 this.send_request(window, cx);
             }))
+            // No background: the editor card in `BroquestApp::render` owns the
+            // surface so this square-cornered div can't paint over the card's
+            // rounded border.
             .size_full()
-            .bg(cx.theme().background)
             .child(content)
     }
 }
