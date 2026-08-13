@@ -184,6 +184,7 @@ fn main() {
             tabbing_identifier: None,
             display_id: None,
             window_background: gpui::WindowBackgroundAppearance::Opaque,
+            app_owns_titlebar_drag: false,
             app_id: Some("broquest".into()),
             icon: None,
         };

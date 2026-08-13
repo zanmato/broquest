@@ -9,7 +9,7 @@ use gpui_component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{Editor, EditorState, Input, InputBaseState, InputEvent, InputState},
     kbd::Kbd,
     notification::NotificationType,
     scroll::ScrollableElement,
@@ -146,10 +146,12 @@ pub struct RequestEditor {
     environment_select: Entity<SelectState<Vec<EnvironmentOption>>>,
     content_type_select: Entity<SelectState<Vec<ContentType>>>,
     name_input: Entity<InputState>,
-    url_input: Entity<InputState>,
-    body_input: Entity<InputState>,
-    response_input: Entity<InputState>,
-    raw_response_input: Entity<InputState>,
+    // A highlighted single-line editor. The public EditorState facade is
+    // multi-line only, so use the shared input engine for this combination.
+    url_input: Entity<InputBaseState>,
+    body_input: Entity<EditorState>,
+    response_input: Entity<EditorState>,
+    raw_response_input: Entity<EditorState>,
     path_param_editor: Entity<KeyValueEditor>,
     query_param_editor: Entity<KeyValueEditor>,
     header_editor: Entity<KeyValueEditor>,
@@ -212,7 +214,7 @@ impl RequestEditor {
         });
 
         let url_input = cx.new(|cx| {
-            InputState::new(window, cx)
+            InputBaseState::new(window, cx)
                 .placeholder("Enter request URL")
                 .code_editor("url")
                 .folding(false)
@@ -228,27 +230,33 @@ impl RequestEditor {
         let editor_settings = AppSettings::global(cx).settings.editor.clone();
 
         let body_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("json")
+            let editor = EditorState::new("json", window, cx)
                 .folding(editor_settings.folding)
-                .show_whitespaces(editor_settings.show_whitespace)
-                .soft_wrap(editor_settings.soft_wrap)
+                .show_whitespaces(editor_settings.show_whitespace);
+            editor.base_state().update(cx, |state, cx| {
+                state.set_soft_wrap(editor_settings.soft_wrap, window, cx);
+            });
+            editor
         });
 
         let response_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("text")
+            let editor = EditorState::new("text", window, cx)
                 .folding(editor_settings.folding)
-                .show_whitespaces(editor_settings.show_whitespace)
-                .soft_wrap(editor_settings.soft_wrap)
+                .show_whitespaces(editor_settings.show_whitespace);
+            editor.base_state().update(cx, |state, cx| {
+                state.set_soft_wrap(editor_settings.soft_wrap, window, cx);
+            });
+            editor
         });
 
         let raw_response_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("text")
+            let editor = EditorState::new("text", window, cx)
                 .folding(editor_settings.folding)
-                .show_whitespaces(editor_settings.show_whitespace)
-                .soft_wrap(editor_settings.soft_wrap)
+                .show_whitespaces(editor_settings.show_whitespace);
+            editor.base_state().update(cx, |state, cx| {
+                state.set_soft_wrap(editor_settings.soft_wrap, window, cx);
+            });
+            editor
         });
 
         let path_param_editor = cx.new(|cx| {
@@ -304,11 +312,8 @@ impl RequestEditor {
 
         let auth_editor = cx.new(|cx| AuthEditor::new(window, cx));
 
-        let jsonpath_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("$.store.book[*].author")
-                .multi_line(false)
-        });
+        let jsonpath_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("$.store.book[*].author"));
 
         let request_response_state = cx.new(|_cx| ResizableState::default());
 
@@ -395,9 +400,11 @@ impl RequestEditor {
             &self.raw_response_input,
         ] {
             input.update(cx, |state, cx| {
-                state.set_show_whitespaces(settings.show_whitespace, window, cx);
-                state.set_soft_wrap(settings.soft_wrap, window, cx);
-                state.set_folding(settings.folding, window, cx);
+                state.base_state().update(cx, |state, cx| {
+                    state.set_show_whitespaces(settings.show_whitespace, window, cx);
+                    state.set_soft_wrap(settings.soft_wrap, window, cx);
+                    state.set_folding(settings.folding, window, cx);
+                });
             });
         }
         self.script_editor.update(cx, |editor, cx| {
@@ -792,7 +799,9 @@ impl RequestEditor {
             // Update body input syntax highlighting
             let language = content_type.language();
             self.body_input.update(cx, |input_state, cx| {
-                input_state.set_highlighter(language, cx);
+                input_state
+                    .base_state()
+                    .update(cx, |state, cx| state.set_highlighter(language, cx));
                 cx.notify();
             });
 
@@ -1077,7 +1086,9 @@ impl RequestEditor {
 
                         // Update the response input with the correct language and formatted content
                         response_input.update(cx, |input_state, cx| {
-                            input_state.set_highlighter(language, cx);
+                            input_state
+                                .base_state()
+                                .update(cx, |state, cx| state.set_highlighter(language, cx));
                             input_state.set_value(&formatted_content, window, cx);
                             cx.notify();
                         });
@@ -1312,7 +1323,7 @@ impl RequestEditor {
                     .min_w(px(300.))
                     .child(
                         div().flex_1().child(
-                            Input::new(&self.url_input)
+                            Input::from_base(&self.url_input)
                                 .cleanable(true)
                                 .font_family(cx.theme().mono_font_family.clone())
                                 .text_sm(),
@@ -1457,7 +1468,7 @@ impl RequestEditor {
                                 .size_full()
                                 .child(self.form_editor.clone())
                                 .into_any_element(),
-                            _ => Input::new(&self.body_input)
+                            _ => Editor::new(&self.body_input)
                                 .font_family(cx.theme().mono_font_family.clone())
                                 .text_size(px(12.))
                                 .h_full()
@@ -1671,7 +1682,7 @@ impl RequestEditor {
                                         .h_full()
                                         .child(
                                             div().flex_1().child(
-                                                Input::new(&self.response_input)
+                                                Editor::new(&self.response_input)
                                                     .font_family(
                                                         cx.theme().mono_font_family.clone(),
                                                     )
@@ -1679,8 +1690,7 @@ impl RequestEditor {
                                                     .h_full()
                                                     .py_3()
                                                     .bordered(false)
-                                                    .rounded_none()
-                                                    .cleanable(true),
+                                                    .rounded_none(),
                                             ),
                                         )
                                         .when(is_json, |this| {
@@ -1718,14 +1728,13 @@ impl RequestEditor {
                             ResponseTab::Raw => div()
                                 .h_full()
                                 .child(
-                                    Input::new(&self.raw_response_input)
+                                    Editor::new(&self.raw_response_input)
                                         .font_family(cx.theme().mono_font_family.clone())
                                         .text_size(px(12.))
                                         .h_full()
                                         .py_3()
                                         .bordered(false)
-                                        .rounded_none()
-                                        .cleanable(true),
+                                        .rounded_none(),
                                 )
                                 .into_any_element(),
                         }),

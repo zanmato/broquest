@@ -1,25 +1,31 @@
 //! Draggable tree component with drag and drop support.
 //!
-//! This is an alternative to the `tree` module that replaces the virtualized
-//! `uniform_list` with a regular scroll container to enable proper drag and
-//! drop event handling.
+//! This is an alternative to the `tree` module that adds drag and drop on top
+//! of the same virtualized `uniform_list` rendering. Drag handlers are attached
+//! to the rows the list materializes for the visible range, which is sufficient
+//! because only visible rows can be under the pointer.
+//!
+//! Because rows go through `uniform_list`, they must all have the same height.
+//! Drop feedback therefore has to be drawn within a row (a background tint or an
+//! inset border), never as an element inserted between rows.
 
 #![allow(dead_code)]
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use gpui::{
     App, AppContext, Context, DragMoveEvent, ElementId, Entity, FocusHandle,
-    InteractiveElement as _, IntoElement, KeyBinding, MouseButton, ParentElement, Pixels, Point,
-    Render, RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Task,
-    Window, div, prelude::FluentBuilder, px,
+    InteractiveElement as _, IntoElement, KeyBinding, ListSizingBehavior, MouseButton,
+    ParentElement, Pixels, Point, Render, RenderOnce, ScrollStrategy, SharedString,
+    StatefulInteractiveElement, StyleRefinement, Styled, Task, UniformListScrollHandle, Window,
+    div, prelude::FluentBuilder, px, uniform_list,
 };
 
 use gpui_component::{
     ActiveTheme, StyledExt, h_flex,
     list::ListItem,
     menu::{ContextMenuExt, PopupMenu},
-    scroll::ScrollableElement,
+    scroll::Scrollbar,
 };
 
 use crate::ui::actions::{Confirm, SelectDown, SelectLeft, SelectRight, SelectUp};
@@ -36,7 +42,9 @@ struct TreeItemState {
 pub struct TreeItem {
     pub id: SharedString,
     pub label: SharedString,
-    pub children: Vec<TreeItem>,
+    /// Shared so cloning a `TreeItem` (which happens for every entry on each
+    /// rebuild) does not deep-copy the subtree.
+    pub children: Rc<Vec<TreeItem>>,
     state: Rc<RefCell<TreeItemState>>,
 }
 
@@ -104,7 +112,7 @@ impl TreeItem {
         Self {
             id: id.into(),
             label: label.into(),
-            children: Vec::new(),
+            children: Rc::new(Vec::new()),
             state: Rc::new(RefCell::new(TreeItemState {
                 expanded: false,
                 disabled: false,
@@ -114,13 +122,13 @@ impl TreeItem {
 
     /// Add a child item to this tree item.
     pub fn child(mut self, child: TreeItem) -> Self {
-        self.children.push(child);
+        Rc::make_mut(&mut self.children).push(child);
         self
     }
 
     /// Add multiple child items to this tree item.
     pub fn children(mut self, children: impl IntoIterator<Item = TreeItem>) -> Self {
-        self.children.extend(children);
+        Rc::make_mut(&mut self.children).extend(children);
         self
     }
 
@@ -208,7 +216,7 @@ enum DragTarget {
 
 /// Where to insert the dragged item relative to a target entry
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum InsertPosition {
+pub enum InsertPosition {
     /// Insert before the entry (show border above)
     Before,
     /// Insert after the entry (show border below)
@@ -216,6 +224,15 @@ enum InsertPosition {
     /// Insert into the entry (for folders highlight the whole entry)
     Inside,
 }
+
+/// The fraction of a folder row's height, at its top and bottom edge, that
+/// reorders around the folder rather than dropping into it. Without these
+/// bands a folder row would be entirely `Inside` and could never be reordered
+/// against its siblings.
+const REORDER_EDGE_FRACTION: f32 = 0.25;
+
+/// Thickness of the line marking where a reordered item will land.
+const INSERT_INDICATOR_HEIGHT: Pixels = px(2.);
 
 /// A delegate trait for providing tree data and rendering with drag and drop support.
 pub trait DraggableTreeDelegate: Sized + 'static {
@@ -277,10 +294,15 @@ pub trait DraggableTreeDelegate: Sized + 'static {
     ///
     /// Return true to allow the drop.
     /// Default implementation returns false.
+    /// `position` says whether the pointer is over the target's leading edge,
+    /// trailing edge, or body, so a delegate can accept reordering
+    /// (`Before`/`After`) next to items it would refuse to nest into
+    /// (`Inside`).
     fn can_drop_on(
         &self,
         _dragged_item: &DraggedTreeItem,
         _target_entry: &TreeEntry,
+        _position: InsertPosition,
         _cx: &App,
     ) -> bool {
         false
@@ -296,10 +318,14 @@ pub trait DraggableTreeDelegate: Sized + 'static {
     /// Handle the drop operation.
     ///
     /// This is where you would update your data model, save to disk, etc.
+    ///
+    /// A drop on the empty background passes `None` as the target with
+    /// `InsertPosition::Inside`, meaning "append at the root level".
     fn on_drop(
         &mut self,
         _dragged_item: &DraggedTreeItem,
         _target_entry_id: Option<&str>,
+        _position: InsertPosition,
         _window: &mut Window,
         _cx: &mut App,
     ) {
@@ -316,6 +342,7 @@ pub trait DraggableTreeDelegate: Sized + 'static {
 pub struct DraggableTreeState<D: DraggableTreeDelegate> {
     focus_handle: FocusHandle,
     entries: Vec<TreeEntry>,
+    scroll_handle: UniformListScrollHandle,
     selected_ix: Option<usize>,
     right_clicked_index: Option<usize>,
     delegate: D,
@@ -334,6 +361,7 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
             right_clicked_index: None,
             focus_handle: cx.focus_handle(),
             entries: Vec::new(),
+            scroll_handle: UniformListScrollHandle::default(),
             delegate,
             drag_target_entry: None,
             hover_scroll_task: None,
@@ -380,7 +408,7 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
     fn add_entry(&mut self, item: TreeItem, depth: usize) {
         self.entries.push(TreeEntry::new(item.clone(), depth));
         if item.is_expanded() {
-            for child in &item.children {
+            for child in item.children.iter() {
                 self.add_entry(child.clone(), depth + 1);
             }
         }
@@ -453,6 +481,8 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
         }
 
         self.selected_ix = Some(selected_ix);
+        self.scroll_handle
+            .scroll_to_item(selected_ix, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -465,12 +495,160 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
         }
 
         self.selected_ix = Some(selected_ix);
+        self.scroll_handle
+            .scroll_to_item(selected_ix, ScrollStrategy::Bottom);
         cx.notify();
     }
 
     fn on_entry_click(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
         self.selected_ix = Some(ix);
         self.toggle_expand(ix);
+        cx.notify();
+    }
+
+    /// Handle drag movement over the empty background, toggling the root-level
+    /// (`Background`) drop target on or off. We can't read per-entry hit bounds
+    /// from here, so we rely on `drag_target_entry`, which the per-entry drag
+    /// handlers set while the pointer is over them.
+    fn on_background_drag_move(&mut self, cx: &mut Context<Self>) {
+        let is_over_entry = matches!(self.drag_target_entry, Some(DragTarget::Entry { .. }));
+
+        if !is_over_entry {
+            if !matches!(self.drag_target_entry, Some(DragTarget::Background)) {
+                self.drag_target_entry = Some(DragTarget::Background);
+                cx.notify();
+            }
+        } else if matches!(self.drag_target_entry, Some(DragTarget::Background)) {
+            self.drag_target_entry = None;
+            cx.notify();
+        }
+    }
+
+    /// Handle a drop onto the empty background (root-level drop).
+    fn on_background_drop(
+        &mut self,
+        dropped_item: &DraggedTreeItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.drag_target_entry = None;
+        self.hover_scroll_task.take();
+
+        if self.delegate.can_drop_on_root(dropped_item) {
+            self.delegate
+                .on_drop(dropped_item, None, InsertPosition::Inside, window, cx);
+        }
+
+        cx.notify();
+    }
+
+    /// Handle drag movement over a specific entry, computing the insert position
+    /// (before/after/inside) and updating `drag_target_entry` accordingly.
+    fn on_entry_drag_move(
+        &mut self,
+        item_id: &SharedString,
+        entry: &TreeEntry,
+        is_folder: bool,
+        event: &DragMoveEvent<DraggedTreeItem>,
+        cx: &mut Context<Self>,
+    ) {
+        let dragged_item = event.drag(cx);
+        let cx_app = &**cx;
+
+        // Clear highlight if mouse left this element's bounds.
+        if !event.bounds.contains(&event.event.position) {
+            let is_current_target = match &self.drag_target_entry {
+                Some(DragTarget::Entry { entry_id, .. }) => entry_id.as_ref() == item_id.as_ref(),
+                _ => false,
+            };
+            if is_current_target {
+                self.drag_target_entry = None;
+                self.hover_scroll_task.take();
+                self.hover_expand_task.take();
+                cx.notify();
+            }
+            return;
+        }
+
+        // Calculate position based on cursor location. Folders reserve their
+        // middle for dropping inside, leaving only their edges for reordering;
+        // leaves split in half.
+        let relative_y = event.event.position.y - event.bounds.origin.y;
+        let height = event.bounds.size.height;
+        let position = if is_folder {
+            let edge = height * REORDER_EDGE_FRACTION;
+            if relative_y < edge {
+                InsertPosition::Before
+            } else if relative_y > height - edge {
+                InsertPosition::After
+            } else {
+                InsertPosition::Inside
+            }
+        } else if relative_y < height / 2.0 {
+            InsertPosition::Before
+        } else {
+            InsertPosition::After
+        };
+
+        // The position can change while the pointer stays within one row, so
+        // compare it too rather than only the target entry.
+        let is_current_target = match &self.drag_target_entry {
+            Some(DragTarget::Entry {
+                entry_id,
+                position: current_position,
+                ..
+            }) => entry_id.as_ref() == item_id.as_ref() && *current_position == position,
+            _ => false,
+        };
+        if is_current_target {
+            return;
+        }
+
+        if self
+            .delegate
+            .can_drop_on(dragged_item, entry, position, cx_app)
+        {
+            self.drag_target_entry = Some(DragTarget::Entry {
+                entry_id: item_id.clone(),
+                highlight_entry_id: item_id.clone(),
+                position,
+            });
+
+            cx.notify();
+        } else if matches!(self.drag_target_entry, Some(DragTarget::Entry { .. })) {
+            // The pointer moved into a part of the row that refuses the drop,
+            // so the previous indicator is now stale.
+            self.drag_target_entry = None;
+            cx.notify();
+        }
+    }
+
+    /// Handle a drop onto a specific entry.
+    fn on_entry_drop(
+        &mut self,
+        item_id: &SharedString,
+        entry: &TreeEntry,
+        dropped_item: &DraggedTreeItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The drop lands where the indicator said it would, so take the
+        // position computed on the last drag move rather than recomputing it
+        // from the mouse-up coordinates.
+        let position = self.get_insert_position(item_id.as_ref());
+
+        // Clear all drag state.
+        self.drag_target_entry = None;
+        self.hover_scroll_task.take();
+        self.hover_expand_task.take();
+
+        if let Some(position) = position
+            && self.delegate.can_drop_on(dropped_item, entry, position, cx)
+        {
+            self.delegate
+                .on_drop(dropped_item, Some(item_id.as_ref()), position, window, cx);
+        }
+
         cx.notify();
     }
 
@@ -556,7 +734,7 @@ impl Render for DraggedRequestView {
 }
 
 impl<D: DraggableTreeDelegate> Render for DraggableTreeState<D> {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("draggable-tree-state")
             .size_full()
@@ -582,184 +760,175 @@ impl<D: DraggableTreeDelegate> Render for DraggableTreeState<D> {
                     .flex()
                     .flex_col()
                     .size_full()
-                    .overflow_y_scrollbar()
-                    // Background drop zone for root-level drops
+                    // Background drop zone for root-level drops, receives drag events when hovering empty space
                     .on_drag_move::<DraggedTreeItem>(cx.listener(
                         |this, _event: &DragMoveEvent<DraggedTreeItem>, _, cx| {
-                            // Check if we're hovering in empty space (not over any entry)
-                            let is_over_entry = this.entries.iter().any(|_entry| {
-                                // TODO: check actual bounds
-                                // This is a simplified check, we use the drag_target_entry state to determine if we're over an entry
-                                matches!(this.drag_target_entry, Some(DragTarget::Entry { .. }))
-                            });
-
-                            if !is_over_entry {
-                                if !matches!(this.drag_target_entry, Some(DragTarget::Background)) {
-                                    this.drag_target_entry = Some(DragTarget::Background);
-                                    cx.notify();
-                                }
-                            } else if matches!(this.drag_target_entry, Some(DragTarget::Background))
-                            {
-                                this.drag_target_entry = None;
-                                cx.notify();
-                            }
+                            this.on_background_drag_move(cx);
                         },
                     ))
                     .on_drop::<DraggedTreeItem>(cx.listener(|this, dropped_item, window, cx| {
-                        this.drag_target_entry = None;
-                        this.hover_scroll_task.take();
-
-                        if this.delegate.can_drop_on_root(dropped_item) {
-                            this.delegate.on_drop(dropped_item, None, window, cx);
-                        }
-
-                        cx.notify();
+                        this.on_background_drop(dropped_item, window, cx);
                     }))
-                    .children(self.entries.iter().enumerate().map(|(ix, entry)| {
-                        let item = entry.item();
-                        let selected = Some(ix) == self.selected_ix;
-                        let cx_app = &**cx; // Convert &mut Context<Self> to &App
+                    .child(
+                        uniform_list(
+                            "entries",
+                            self.entries.len(),
+                            cx.processor(|this, visible_range: Range<usize>, window, cx| {
+                                let mut items = Vec::with_capacity(visible_range.len());
+                                for ix in visible_range {
+                                    let Some(entry) = this.entries.get(ix) else {
+                                        continue;
+                                    };
+                                    let entry = entry.clone();
+                                    let item_id = entry.item().id.clone();
+                                    let selected = Some(ix) == this.selected_ix;
+                                    let cx_app = &**cx; // Convert &mut Context<Self> to &App
 
-                        // Check if this item can be dragged and create drag data
-                        let can_drag = self.delegate.can_drag(item.id.as_ref(), entry, cx_app);
-                        let drag_data = if can_drag {
-                            self.delegate
-                                .create_drag_data(item.id.as_ref(), entry, cx_app)
-                        } else {
-                            None
-                        };
-
-                        div()
-                            .id(("entry", ix))
-                            .when(self.is_drag_highlighted(item.id.as_ref()), |this| {
-                                this.bg(cx.theme().muted_foreground.opacity(0.2))
-                            })
-                            .child(
-                                self.delegate
-                                    .render_item(ix, entry, selected, window, cx)
-                                    .disabled(entry.item().is_disabled())
-                                    .selected(selected),
-                            )
-                            .when(!entry.item().is_disabled(), |this| {
-                                this.on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _, window, cx| {
-                                        this.on_entry_click(ix, window, cx);
-                                    }),
-                                )
-                                .on_mouse_down(
-                                    MouseButton::Right,
-                                    cx.listener(move |this, _, _, cx| {
-                                        this.right_clicked_index = Some(ix);
-                                        cx.notify();
-                                    }),
-                                )
-                            })
-                            // === DRAG AND DROP HANDLERS ===
-                            .when_some(drag_data, |this, data| {
-                                // Start drag
-                                this.on_drag(
-                                    data,
-                                    |dragged_data: &DraggedTreeItem, click_offset, _window, cx| {
-                                        cx.new(|_| DraggedRequestView {
-                                            dragged_item: dragged_data.clone(),
-                                            click_offset,
-                                        })
-                                    },
-                                )
-                            })
-                            .on_drag_move::<DraggedTreeItem>(cx.listener({
-                                let item_id = item.id.clone();
-                                let item_for_delegate = entry.clone();
-                                let is_folder = entry.is_folder();
-                                move |this, event: &DragMoveEvent<DraggedTreeItem>, _window, cx| {
-                                    let dragged_item = event.drag(cx);
-                                    let cx_app = &**cx; // Convert to &App
-
-                                    // Check if this is the current target (prevent duplicate handling)
-                                    let is_current_target = match &this.drag_target_entry {
-                                        Some(DragTarget::Entry { entry_id, .. }) => {
-                                            entry_id.as_ref() == item_id.as_ref()
-                                        }
-                                        _ => false,
+                                    // Check if this item can be dragged and create drag data
+                                    let can_drag =
+                                        this.delegate.can_drag(item_id.as_ref(), &entry, cx_app);
+                                    let drag_data = if can_drag {
+                                        this.delegate.create_drag_data(
+                                            item_id.as_ref(),
+                                            &entry,
+                                            cx_app,
+                                        )
+                                    } else {
+                                        None
                                     };
 
-                                    // Clear highlight if mouse left this element's bounds
-                                    if !event.bounds.contains(&event.event.position) {
-                                        if is_current_target {
-                                            this.drag_target_entry = None;
-                                            this.hover_scroll_task.take();
-                                            this.hover_expand_task.take();
-                                            cx.notify();
-                                        }
-                                        return;
-                                    }
+                                    let insert_position =
+                                        this.get_insert_position(item_id.as_ref());
+                                    let el = div()
+                                        .id(("entry", ix))
+                                        .relative()
+                                        .when(
+                                            insert_position == Some(InsertPosition::Inside)
+                                                && this.is_drag_highlighted(item_id.as_ref()),
+                                            |this| {
+                                                this.bg(cx.theme().muted_foreground.opacity(0.2))
+                                            },
+                                        )
+                                        // Reorder indicator. Rows are uniform
+                                        // height, so it overlays the row edge
+                                        // instead of taking up space.
+                                        .when_some(
+                                            insert_position.filter(|position| {
+                                                *position != InsertPosition::Inside
+                                            }),
+                                            |this, position| {
+                                                this.child(
+                                                    div()
+                                                        .absolute()
+                                                        .left_0()
+                                                        .right_0()
+                                                        .h(INSERT_INDICATOR_HEIGHT)
+                                                        .bg(cx.theme().primary)
+                                                        // Straddle the row edge
+                                                        // so one gap looks the
+                                                        // same whether it is
+                                                        // reached as the row
+                                                        // above's `After` or
+                                                        // the row below's
+                                                        // `Before`.
+                                                        .map(|indicator| {
+                                                            let overhang =
+                                                                -INSERT_INDICATOR_HEIGHT / 2.;
+                                                            if position == InsertPosition::Before {
+                                                                indicator.top(overhang)
+                                                            } else {
+                                                                indicator.bottom(overhang)
+                                                            }
+                                                        }),
+                                                )
+                                            },
+                                        )
+                                        .child(
+                                            this.delegate
+                                                .render_item(ix, &entry, selected, window, cx)
+                                                .disabled(entry.item().is_disabled())
+                                                .selected(selected),
+                                        )
+                                        .when(!entry.item().is_disabled(), |this| {
+                                            this.on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.on_entry_click(ix, window, cx);
+                                                }),
+                                            )
+                                            .on_mouse_down(
+                                                MouseButton::Right,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.right_clicked_index = Some(ix);
+                                                    cx.notify();
+                                                }),
+                                            )
+                                        })
+                                        // === DRAG AND DROP HANDLERS ===
+                                        .when_some(drag_data, |this, data| {
+                                            // Start drag, creates drag visual
+                                            this.on_drag(
+                                                data,
+                                                |dragged_data: &DraggedTreeItem,
+                                                 click_offset,
+                                                 _window,
+                                                 cx| {
+                                                    cx.new(|_| DraggedRequestView {
+                                                        dragged_item: dragged_data.clone(),
+                                                        click_offset,
+                                                    })
+                                                },
+                                            )
+                                        })
+                                        .on_drag_move::<DraggedTreeItem>(cx.listener({
+                                            let item_id = item_id.clone();
+                                            let entry = entry.clone();
+                                            let is_folder = entry.is_folder();
+                                            move |this,
+                                                  event: &DragMoveEvent<DraggedTreeItem>,
+                                                  _window,
+                                                  cx| {
+                                                this.on_entry_drag_move(
+                                                    &item_id, &entry, is_folder, event, cx,
+                                                );
+                                            }
+                                        }))
+                                        .on_drop::<DraggedTreeItem>(cx.listener({
+                                            move |this,
+                                                  dropped_item: &DraggedTreeItem,
+                                                  window,
+                                                  cx| {
+                                                this.on_entry_drop(
+                                                    &item_id,
+                                                    &entry,
+                                                    dropped_item,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        }));
 
-                                    // Check if we can drop on this entry
-                                    let can_drop = this.delegate.can_drop_on(
-                                        dragged_item,
-                                        &item_for_delegate,
-                                        cx_app,
-                                    );
-
-                                    if can_drop && !is_current_target {
-                                        // Calculate position based on cursor location
-                                        let relative_y =
-                                            event.event.position.y - event.bounds.origin.y;
-                                        let height = event.bounds.size.height;
-                                        let position = if is_folder {
-                                            // For folders, always insert inside
-                                            InsertPosition::Inside
-                                        } else if relative_y < height / 2.0 {
-                                            // Top half of non-folder entry
-                                            InsertPosition::Before
-                                        } else {
-                                            // Bottom half of non-folder entry
-                                            InsertPosition::After
-                                        };
-
-                                        this.drag_target_entry = Some(DragTarget::Entry {
-                                            entry_id: item_id.clone(),
-                                            highlight_entry_id: item_id.clone(),
-                                            position,
-                                        });
-
-                                        cx.notify();
-                                    }
+                                    items.push(el);
                                 }
-                            }))
-                            .on_drop::<DraggedTreeItem>(cx.listener({
-                                let item_id = item.id.clone();
-                                let item_for_delegate = entry.clone();
-                                move |this, dropped_item: &DraggedTreeItem, window, cx| {
-                                    let cx_app = &**cx; // Convert to &App
 
-                                    // Clear all drag state
-                                    this.drag_target_entry = None;
-                                    this.hover_scroll_task.take();
-                                    this.hover_expand_task.take();
-
-                                    // Check if we can drop on this target
-                                    let can_drop = this.delegate.can_drop_on(
-                                        dropped_item,
-                                        &item_for_delegate,
-                                        cx_app,
-                                    );
-
-                                    if can_drop {
-                                        // Notify delegate to handle the drop
-                                        this.delegate.on_drop(
-                                            dropped_item,
-                                            Some(item_id.as_ref()),
-                                            window,
-                                            cx,
-                                        );
-                                    }
-
-                                    cx.notify();
-                                }
-                            }))
-                    })),
+                                items
+                            }),
+                        )
+                        .flex_grow(1.)
+                        .size_full()
+                        .track_scroll(&self.scroll_handle)
+                        .with_sizing_behavior(ListSizingBehavior::Auto)
+                        .into_any_element(),
+                    ),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .bottom_0()
+                    .w(px(4. * 2. + 8.))
+                    .child(Scrollbar::vertical(&self.scroll_handle)),
             )
     }
 }

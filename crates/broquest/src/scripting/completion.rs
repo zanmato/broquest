@@ -305,7 +305,7 @@ impl CompletionProvider for ScriptCompletionProvider {
         offset: usize,
         _: lsp_types::CompletionContext,
         _: &mut Window,
-        _cx: &mut Context<gpui_component::input::InputState>,
+        _cx: &mut Context<gpui_component::input::InputBaseState>,
     ) -> Task<Result<CompletionResponse>> {
         // The dot is always at offset-1 since is_completion_trigger only returns true for "."
         let dot_pos = offset - 1;
@@ -344,7 +344,7 @@ impl CompletionProvider for ScriptCompletionProvider {
         &self,
         _offset: usize,
         new_text: &str,
-        _: &mut Context<gpui_component::input::InputState>,
+        _: &mut Context<gpui_component::input::InputBaseState>,
     ) -> bool {
         // Trigger on dot notation
         new_text == "."

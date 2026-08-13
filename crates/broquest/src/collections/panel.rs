@@ -22,8 +22,8 @@ use crate::ui::icon::IconName;
 
 use super::manager::{CollectionInfo, CollectionManager};
 use crate::ui::draggable_tree::{
-    DragIcon, DraggableTree, DraggableTreeDelegate, DraggableTreeState, DraggedTreeItem, TreeEntry,
-    TreeItem,
+    DragIcon, DraggableTree, DraggableTreeDelegate, DraggableTreeState, DraggedTreeItem,
+    InsertPosition, TreeEntry, TreeItem,
 };
 
 /// Icon and color combination for tree items
@@ -316,6 +316,7 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
         &self,
         dragged_item: &DraggedTreeItem,
         target_entry: &TreeEntry,
+        position: InsertPosition,
         cx: &App,
     ) -> bool {
         let panel = self.parent.read(cx);
@@ -332,8 +333,19 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
             return false;
         }
 
-        // Can drop on Groups (to add request to group), Collection (for root level), or Requests (to insert between)
-        true
+        // Can drop on Groups (to add request to group), Collection (for root
+        // level), or Requests (to join that request's group).
+        //
+        // Requests carry no order of their own, so the edge bands on a group
+        // row would promise a reordering that cannot be honoured. Only accept
+        // them on requests, where they are the only positions available and
+        // still mean "move into this request's group".
+        match position {
+            InsertPosition::Inside => true,
+            InsertPosition::Before | InsertPosition::After => {
+                target_metadata.kind == TreeItemKind::Request
+            }
+        }
     }
 
     fn can_drop_on_root(&self, _dragged_item: &DraggedTreeItem) -> bool {
@@ -346,6 +358,7 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
         &mut self,
         dragged_item: &DraggedTreeItem,
         target_entry_id: Option<&str>,
+        _position: InsertPosition,
         window: &mut Window,
         cx: &mut App,
     ) {

@@ -7,7 +7,7 @@ use gpui_component::{
     ActiveTheme, Icon, IndexPath, Sizable as _, StyledExt, WindowExt,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputState},
+    input::{Editor, EditorState, Input, InputState},
     kbd::Kbd,
     notification::NotificationType,
     scroll::ScrollableElement,
@@ -81,7 +81,7 @@ pub struct CollectionEditor {
     /// Read-only runtime variable inspector for this collection.
     vars_view: Entity<super::VarsView>,
     /// Markdown docs editor (code editor mode).
-    docs_input: Entity<InputState>,
+    docs_input: Entity<EditorState>,
     /// Whether the docs pane shows the editor (true) or the rendered preview.
     docs_editing: bool,
     /// Split state between the collection form and the docs pane.
@@ -184,8 +184,7 @@ impl CollectionEditor {
         // Markdown docs editor, seeded from the collection's docs.
         let docs_seed = collection_data.collection.docs.clone().unwrap_or_default();
         let docs_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("markdown")
+            EditorState::new("markdown", window, cx)
                 .placeholder("Write collection docs in Markdown...")
                 .default_value(docs_seed)
         });
@@ -479,11 +478,10 @@ impl CollectionEditor {
                 .flex_1()
                 .min_h_0()
                 .child(
-                    Input::new(&self.docs_input)
+                    Editor::new(&self.docs_input)
                         .h_full()
                         .p_0()
                         .border_0()
-                        .focus_bordered(false)
                         .rounded_none(),
                 )
                 .into_any_element()
