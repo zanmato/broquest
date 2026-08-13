@@ -3,6 +3,7 @@
 mod completion;
 mod editor;
 mod engine;
+mod recipes;
 mod variable_store;
 
 pub use editor::*;

@@ -4,10 +4,11 @@ use crate::app_settings::AppSettings;
 use crate::result_ext::ResultExt;
 use crate::ui::icon::IconName;
 use gpui::{
-    App, Context, Entity, EventEmitter, Focusable, Subscription, Task, Window, div, prelude::*, px,
+    App, AppContext, Context, Entity, EventEmitter, Focusable, Subscription, Task, Window, div,
+    prelude::*, px,
 };
 use gpui_component::{
-    ActiveTheme, Sizable, StyledExt,
+    ActiveTheme, Sizable, StyledExt, WindowExt,
     button::Button,
     h_flex,
     highlighter::{Diagnostic, DiagnosticSeverity},
@@ -17,6 +18,7 @@ use gpui_component::{
 
 use super::completion::{ScriptCompletionProvider, ScriptContext};
 use super::engine::ScriptExecutionService;
+use super::recipes::RecipePicker;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScriptEditorEvent {
@@ -206,10 +208,47 @@ impl ScriptEditor {
         }
     }
 
+    pub(crate) fn insert_recipe(
+        &mut self,
+        input: Entity<EditorState>,
+        selection: std::ops::Range<usize>,
+        code: &str,
+        context: ScriptContext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let base = input.read(cx).base_state().clone();
+        base.update(cx, |state, cx| {
+            state.set_selected_range(selection, cx);
+            state.replace(code, window, cx);
+        });
+        self.lint_script(input, context, cx);
+        cx.emit(ScriptEditorEvent::ScriptChanged);
+    }
+
+    fn open_recipes(
+        &self,
+        input: Entity<EditorState>,
+        context: ScriptContext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let base = input.read(cx).base_state().clone();
+        let selection = base.read(cx).selected_range();
+        let script_editor = cx.entity().downgrade();
+        let picker =
+            cx.new(|cx| RecipePicker::new(context, input, selection, script_editor, window, cx));
+
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog.w(px(820.)).p_4().footer(div()).child(picker.clone())
+        });
+    }
+
     fn render_script_section(
         &self,
         title: &str,
         input: &Entity<EditorState>,
+        context: ScriptContext,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let title_owned = title.to_string();
@@ -236,20 +275,39 @@ impl ScriptEditor {
                             .child(title_owned.clone()),
                     )
                     .child(
-                        Button::new(button_id)
-                            .small()
-                            .outline()
-                            .icon(IconName::Trash)
-                            .label("Clear")
-                            .on_click(cx.listener({
-                                let input = input.clone();
-                                move |_this, _event, window, cx| {
-                                    input.update(cx, |input, cx| {
-                                        input.set_value("", window, cx);
-                                    });
-                                    cx.emit(ScriptEditorEvent::ScriptChanged);
-                                }
-                            })),
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new(gpui::SharedString::from(format!(
+                                    "{button_id}-recipes"
+                                )))
+                                .small()
+                                .outline()
+                                .icon(IconName::Sparkles)
+                                .label("Recipes")
+                                .on_click(cx.listener({
+                                    let input = input.clone();
+                                    move |this, _event, window, cx| {
+                                        this.open_recipes(input.clone(), context, window, cx);
+                                    }
+                                })),
+                            )
+                            .child(
+                                Button::new(button_id)
+                                    .small()
+                                    .outline()
+                                    .icon(IconName::Trash)
+                                    .label("Clear")
+                                    .on_click(cx.listener({
+                                        let input = input.clone();
+                                        move |_this, _event, window, cx| {
+                                            input.update(cx, |input, cx| {
+                                                input.set_value("", window, cx);
+                                            });
+                                            cx.emit(ScriptEditorEvent::ScriptChanged);
+                                        }
+                                    })),
+                            ),
                     ),
             )
             .child(
@@ -270,11 +328,17 @@ impl Render for ScriptEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .child(self.render_script_section("Pre-request Script", &self.pre_request_input, cx))
+            .child(self.render_script_section(
+                "Pre-request Script",
+                &self.pre_request_input,
+                ScriptContext::PreRequest,
+                cx,
+            ))
             .child(div().h_px().bg(cx.theme().border))
             .child(self.render_script_section(
                 "Post-response Script",
                 &self.post_response_input,
+                ScriptContext::PostResponse,
                 cx,
             ))
     }
