@@ -4,18 +4,50 @@ pub use view::SettingsView;
 
 use crate::app_settings::AppSettings;
 use gpui::{App, SharedString};
-use gpui_component::Theme;
+use gpui_component::{Theme, ThemeConfig, ThemeRegistry};
 use serde::{Deserialize, Serialize};
+use std::rc::Rc;
+
+/// Apply a theme config together with the user's font overrides.
+pub fn apply_theme_config(theme_config: &Rc<ThemeConfig>, cx: &mut App) {
+    let appearance = AppSettings::global(cx).settings.appearance.clone();
+
+    // The font overrides are folded into the config rather than assigned to
+    // the theme afterwards, because `Theme::change` re-applies the config and
+    // would put the theme's own fonts back over them.
+    let mut config = (**theme_config).clone();
+    if !appearance.font_family.is_empty() {
+        config.font_family = Some(SharedString::from(appearance.font_family));
+    }
+    if !appearance.mono_font_family.is_empty() {
+        config.mono_font_family = Some(SharedString::from(appearance.mono_font_family));
+    }
+
+    let mode = config.mode;
+    Theme::global_mut(cx).apply_config(&Rc::new(config));
+    Theme::change(mode, None, cx);
+    cx.refresh_windows();
+}
 
 /// Apply user font settings on top of the current theme.
 pub fn apply_font_settings(cx: &mut App) {
     let appearance = AppSettings::global(cx).settings.appearance.clone();
+    let theme_name = SharedString::from(appearance.theme.clone());
+
+    if let Some(theme_config) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
+        apply_theme_config(&theme_config, cx);
+        return;
+    }
+
+    // The saved theme is not registered (a renamed or deleted theme file), so
+    // there is no config to fold the fonts into.
     if !appearance.font_family.is_empty() {
         Theme::global_mut(cx).font_family = SharedString::from(appearance.font_family);
     }
     if !appearance.mono_font_family.is_empty() {
         Theme::global_mut(cx).mono_font_family = SharedString::from(appearance.mono_font_family);
     }
+    cx.refresh_windows();
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -6,7 +6,7 @@ use gpui::{
     px, svg,
 };
 use gpui_component::{
-    ActiveTheme, Icon, Root, Sizable as _, Theme, ThemeRegistry, TitleBar, WindowExt,
+    ActiveTheme, Icon, Root, Sizable as _, ThemeRegistry, TitleBar, WindowExt,
     button::{Button, ButtonVariants as _},
     global_state::GlobalState,
     h_flex,
@@ -541,8 +541,7 @@ impl BroquestApp {
     ) {
         let theme_name = switch.0.clone();
         if let Some(theme_config) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
-            Theme::global_mut(cx).apply_config(&theme_config);
-            crate::settings::apply_font_settings(cx);
+            crate::settings::apply_theme_config(&theme_config, cx);
         }
 
         let app_database = AppDatabase::global(cx).clone();

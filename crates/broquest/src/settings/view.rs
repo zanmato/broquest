@@ -8,7 +8,7 @@ use gpui::{
 };
 use gpui_component::ThemeRegistry;
 use gpui_component::{
-    ActiveTheme, Sizable, Theme,
+    ActiveTheme, Sizable,
     group_box::GroupBoxVariant,
     select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState},
     setting::{
@@ -381,8 +381,7 @@ impl SettingsView {
                                     if let Some(theme_config) =
                                         ThemeRegistry::global(cx).themes().get(&val).cloned()
                                     {
-                                        Theme::global_mut(cx).apply_config(&theme_config);
-                                        crate::settings::apply_font_settings(cx);
+                                        crate::settings::apply_theme_config(&theme_config, cx);
                                     }
 
                                     let key = "appearance.theme".to_string();
@@ -409,7 +408,7 @@ impl SettingsView {
                                 let theme_font = cx.theme().font_family.to_string();
                                 if let Some(state) = &ui_font_select {
                                     Select::new(state)
-                                        .with_size(options.size)
+                                        .with_size(options.size())
                                         .placeholder(format!("{theme_font} (theme default)"))
                                         .search_placeholder("Search fonts...")
                                         .cleanable(true)
@@ -431,7 +430,7 @@ impl SettingsView {
                                 let theme_font = cx.theme().mono_font_family.to_string();
                                 if let Some(state) = &mono_font_select {
                                     Select::new(state)
-                                        .with_size(options.size)
+                                        .with_size(options.size())
                                         .placeholder(format!("{theme_font} (theme default)"))
                                         .search_placeholder("Search fonts...")
                                         .cleanable(true)

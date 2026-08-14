@@ -18,10 +18,10 @@ description = "Desktop API Client"
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui-macros = "0.2.2"
 # longbridge/gpui-component
-gpui-component = { git = "https://github.com/longbridge/gpui-component/", rev = "7edde45f4eeb2838d0f30ba94042f76af09ed02f", features = [
+gpui-component = { git = "https://github.com/longbridge/gpui-component/", rev = "f3ba893bd6a996ab0699266ba774b5bbb7f0ca1c", features = [
     "tree-sitter-languages",
 ] }
-gpui-component-macros = { git = "https://github.com/longbridge/gpui-component/", rev = "7edde45f4eeb2838d0f30ba94042f76af09ed02f" }
+gpui-component-macros = { git = "https://github.com/longbridge/gpui-component/", rev = "f3ba893bd6a996ab0699266ba774b5bbb7f0ca1c" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
     "font-kit",
     "x11",

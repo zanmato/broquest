@@ -97,6 +97,7 @@ impl SelectItem for AuthTypeOption {
 }
 
 pub struct AuthEditor {
+    focus_handle: FocusHandle,
     auth_type_options: Vec<AuthTypeOption>,
     auth_type_select: Entity<SelectState<Vec<AuthTypeOption>>>,
     username_input: Entity<InputState>,
@@ -239,6 +240,7 @@ impl AuthEditor {
         subscriptions.push(subscribe_to_input(&jwt_expiry_field_input, cx));
 
         Self {
+            focus_handle: cx.focus_handle(),
             auth_type_options,
             auth_type_select,
             username_input,
@@ -547,6 +549,7 @@ impl Render for AuthEditor {
             .unwrap_or(AuthTypeOption::None);
 
         v_flex()
+            .track_focus(&self.focus_handle)
             .h_full()
             .child(
                 h_flex()
@@ -579,7 +582,7 @@ impl Render for AuthEditor {
 }
 
 impl Focusable for AuthEditor {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        cx.focus_handle()
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }

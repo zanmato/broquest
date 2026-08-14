@@ -26,7 +26,7 @@ mod update_manager;
 use assets::Assets;
 use collections::CollectionManager;
 use gpui::{AppContext, SharedString, WindowBounds, WindowOptions, px, size};
-use gpui_component::{Theme, ThemeRegistry};
+use gpui_component::ThemeRegistry;
 use gpui_platform::application;
 
 use app_settings::AppSettings;
@@ -118,8 +118,7 @@ fn main() {
         if let Err(err) =
             ThemeRegistry::watch_dir(ThemesManager::themes_directory(), cx, move |cx| {
                 if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
-                    Theme::global_mut(cx).apply_config(&theme);
-                    settings::apply_font_settings(cx);
+                    settings::apply_theme_config(&theme, cx);
                     tracing::info!("Applying theme {}", theme_name);
                 }
             })
