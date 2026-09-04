@@ -13,7 +13,7 @@ use gpui_component::{
     v_flex,
 };
 use smol::Timer;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::app_database::{AppDatabase, CollectionData};
 use crate::app_events::AppEvent;
@@ -237,15 +237,35 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                             },
                         )),
                     ),
-                TreeItemKind::Request => menu.item(PopupMenuItem::new("Delete Request").on_click(
-                    window.listener_for(&self.parent, {
-                        let collection_path = metadata.collection_path.clone();
-                        let request_id_for_deletion = item.id.clone();
-                        move |this, _, _, cx| {
-                            this.delete_request(&request_id_for_deletion, &collection_path, cx);
-                        }
-                    }),
-                )),
+                TreeItemKind::Request => menu
+                    .item(
+                        PopupMenuItem::new("Duplicate").on_click(window.listener_for(
+                            &self.parent,
+                            {
+                                let request_id_to_duplicate = item.id.clone();
+                                move |this, _, _, cx| {
+                                    this.duplicate_request(&request_id_to_duplicate, cx);
+                                }
+                            },
+                        )),
+                    )
+                    .separator()
+                    .item(
+                        PopupMenuItem::new("Delete Request").on_click(window.listener_for(
+                            &self.parent,
+                            {
+                                let collection_path = metadata.collection_path.clone();
+                                let request_id_for_deletion = item.id.clone();
+                                move |this, _, _, cx| {
+                                    this.delete_request(
+                                        &request_id_for_deletion,
+                                        &collection_path,
+                                        cx,
+                                    );
+                                }
+                            },
+                        )),
+                    ),
                 TreeItemKind::Group => {
                     let group_name = metadata.name.clone();
                     menu.item(
@@ -761,6 +781,56 @@ impl CollectionsPanel {
             collection_path: collection_path.to_string().into(),
             group_path: Some(group_path.to_string().into()),
         });
+    }
+
+    /// Open an unsaved copy of a request in a new tab. Nothing is written to
+    /// disk until the tab is saved.
+    fn duplicate_request(&mut self, request_id: &str, cx: &mut Context<Self>) {
+        let Some(metadata) = self.get_tree_item_metadata(request_id).cloned() else {
+            tracing::error!("Could not find metadata for ID: {}", request_id);
+            return;
+        };
+        let Some(mut request_data) = self.request_data_map.get(request_id).cloned() else {
+            tracing::error!("Could not find request data for ID: {}", request_id);
+            return;
+        };
+
+        // Requests are stored as `<name>.toml`, so the copy needs a name of its
+        // own or the first save would overwrite the original.
+        request_data.name = self.unique_request_name(&request_data.name, &metadata);
+
+        tracing::info!("Duplicating request as: {}", request_data.name);
+
+        cx.emit(AppEvent::CreateNewRequestTab {
+            request_data,
+            collection_path: metadata.collection_path.clone().into(),
+            group_path: metadata.group_path.clone().map(Into::into),
+        });
+    }
+
+    /// Build a request name that no sibling request in the same collection and
+    /// group is using yet.
+    fn unique_request_name(&self, base: &str, metadata: &TreeItemMetadata) -> String {
+        let taken: HashSet<&str> = self
+            .tree_item_metadata
+            .values()
+            .filter(|other| {
+                other.kind == TreeItemKind::Request
+                    && other.collection_path == metadata.collection_path
+                    && other.group_path == metadata.group_path
+            })
+            .map(|other| other.name.as_str())
+            .collect();
+
+        let candidate = format!("{} copy", base);
+        if !taken.contains(candidate.as_str()) {
+            return candidate;
+        }
+
+        (2..)
+            .map(|n| format!("{} copy {}", base, n))
+            .find(|candidate| !taken.contains(candidate.as_str()))
+            .expect("an unused name always exists")
     }
 
     /// Delete a collection from CollectionManager and AppDatabase

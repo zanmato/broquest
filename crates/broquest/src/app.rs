@@ -33,6 +33,14 @@ use crate::{
 /// design; the theme's own `radius` (6px) is used for controls inside them.
 pub(crate) const PANEL_RADIUS: gpui::Pixels = px(8.);
 
+/// Gap between the window edge and the cards, and between the cards. Each side
+/// of a split contributes half so the two cards end up `PANEL_GAP` apart.
+pub(crate) const PANEL_GAP: gpui::Pixels = px(6.);
+
+/// Width of the icon rail on the left edge of the sidebar card. It is the
+/// only part of the sidebar that stays visible while collapsed.
+pub(crate) const SIDEBAR_RAIL_WIDTH: gpui::Pixels = px(48.);
+
 actions!(
     broquest_app,
     [
@@ -56,10 +64,30 @@ pub(crate) struct OpenRequestFromPalette {
     pub(crate) request_name: SharedString,
 }
 
+/// Which view is active in the sidebar, selected from the icon rail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarTab {
     Collections,
     History,
+}
+
+impl SidebarTab {
+    /// Rail order, top to bottom.
+    const ALL: [SidebarTab; 2] = [Self::Collections, Self::History];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Collections => "Collections",
+            Self::History => "History",
+        }
+    }
+
+    fn icon(self) -> crate::ui::icon::IconName {
+        match self {
+            Self::Collections => crate::ui::icon::IconName::Folder,
+            Self::History => crate::ui::icon::IconName::History,
+        }
+    }
 }
 
 pub struct BroquestApp {
@@ -609,61 +637,87 @@ impl BroquestApp {
             .when_some(shortcut, |this, kbd| this.child(kbd))
     }
 
-    /// Collections / History switcher.
-    ///
-    /// Hand-rolled rather than a segmented `TabBar`, because `TabBar` wraps every
-    /// tab in a `flex_shrink_0` div, so its tabs size to their labels and can't
-    /// be made equal width. The styling deliberately mirrors
-    /// `TabVariant::Segmented` (same trough, surface, radius and shadow tokens)
-    /// so it stays in step with the tab bars elsewhere in the app.
-    fn render_sidebar_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let segment = |tab: SidebarTab, label: &'static str, id: &'static str| {
-            let selected = self.sidebar_tab == tab;
-            div()
-                .id(id)
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .py(px(2.))
-                .rounded(cx.theme().radius)
-                .text_sm()
-                .cursor_pointer()
-                .when(selected, |this| {
-                    this.bg(cx.theme().background)
-                        .shadow_xs()
-                        .text_color(cx.theme().tab_active_foreground)
-                })
-                .when(!selected, |this| this.text_color(cx.theme().tab_foreground))
-                .child(label)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.sidebar_tab = tab;
-                    // History is loaded lazily the first time the tab is opened.
-                    if tab == SidebarTab::History && !this.history_panel.read(cx).loaded {
-                        this.history_panel.update(cx, |panel, cx| {
-                            panel.load_history(cx);
-                        });
-                    }
-                    cx.notify();
-                }))
-        };
+    /// The icon rail on the left edge of the sidebar: one button per
+    /// [`SidebarTab`] at the top and a settings shortcut pinned to the bottom.
+    /// It sits outside the resizable group so that collapsing the sidebar
+    /// leaves the rail in place without disturbing the panel's stored width.
+    fn render_sidebar_rail(&self, cx: &Context<Self>) -> impl IntoElement {
+        let collapsed = self.sidebar_collapsed;
+        // The rail is the activity bar, so its resting icons take the inactive
+        // tab colour (overlay0 in Catppuccin, what VS Code uses for
+        // `activityBar.inactiveForeground`) rather than `muted_foreground`,
+        // which is tuned for secondary text and reads far too bright on icons.
+        let inactive = cx.theme().tab_foreground;
+        let active = cx.theme().foreground;
+        v_flex()
+            .flex_none()
+            .w(SIDEBAR_RAIL_WIDTH)
+            .h_full()
+            .items_center()
+            .py(PANEL_GAP)
+            .gap_1()
+            // The rail supplies the whole gap to whichever card follows it,
+            // mirroring the shell's inset on its left, so the icons sit
+            // centred between the window edge and the card border.
+            .mr(PANEL_GAP)
+            .children(SidebarTab::ALL.into_iter().enumerate().map(|(ix, tab)| {
+                let is_active = !collapsed && tab == self.sidebar_tab;
+                Button::new(("sidebar-rail", ix))
+                    .ghost()
+                    // `Button::icon` scales the icon from the button size, and
+                    // a child-bearing button only derives padding from
+                    // `Sizable::size`, so the box is sized explicitly to get a
+                    // 24px glyph in a 36px hit target.
+                    .w(px(36.))
+                    .h(px(36.))
+                    .px_0()
+                    .justify_center()
+                    .child(Icon::new(tab.icon()).size_6().text_color(if is_active {
+                        active
+                    } else {
+                        inactive
+                    }))
+                    .tooltip(tab.label())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_sidebar_tab(tab, cx);
+                    }))
+            }))
+            .child(div().flex_1())
+            .child(
+                Button::new("sidebar-rail-settings")
+                    .ghost()
+                    .w(px(36.))
+                    .h(px(36.))
+                    .px_0()
+                    .justify_center()
+                    .child(
+                        Icon::new(crate::ui::icon::IconName::Settings)
+                            .size_6()
+                            .text_color(inactive),
+                    )
+                    .tooltip("Settings")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(OpenSettings), cx);
+                    }),
+            )
+    }
 
-        // The trough is inset by the wrapper so it can't square off the sidebar
-        // card's top corners.
-        div().p(px(6.)).min_w_0().child(
-            h_flex()
-                .w_full()
-                .gap(px(2.))
-                .p(px(3.))
-                .rounded(cx.theme().radius)
-                .bg(cx.theme().tab_bar_segmented)
-                .child(segment(
-                    SidebarTab::Collections,
-                    "Collections",
-                    "tab-collections",
-                ))
-                .child(segment(SidebarTab::History, "History", "tab-history")),
-        )
+    /// Rail click: switch to `tab` and make sure the sidebar is open, or
+    /// collapse it when the already visible section is clicked again.
+    fn select_sidebar_tab(&mut self, tab: SidebarTab, cx: &mut Context<Self>) {
+        if tab == self.sidebar_tab && !self.sidebar_collapsed {
+            self.sidebar_collapsed = true;
+        } else {
+            self.sidebar_tab = tab;
+            self.sidebar_collapsed = false;
+            // History is loaded lazily the first time the tab is opened.
+            if tab == SidebarTab::History && !self.history_panel.read(cx).loaded {
+                self.history_panel.update(cx, |panel, cx| {
+                    panel.load_history(cx);
+                });
+            }
+        }
+        cx.notify();
     }
 
     /// Sidebar show/hide toggle. Lives in the title bar next to the window
@@ -804,75 +858,84 @@ impl Render for BroquestApp {
                     .overflow_hidden()
                     // Inset the cards from the window edges. The top inset is
                     // kept minimal so the cards sit close under the title bar.
-                    .px(px(6.))
-                    .pb(px(6.))
+                    .px(PANEL_GAP)
+                    .pb(PANEL_GAP)
                     .pt(px(1.))
+                    .child(self.render_sidebar_rail(cx))
                     .child(
-                        // Left side: sidebar with tab switcher, resizable
-                        // against the main panel. The group keeps its own
-                        // window-keyed state, so the chosen width survives
-                        // collapsing and re-opening the sidebar.
-                        h_resizable("main-layout")
-                            // The cards draw their own borders, so the handle
-                            // only needs to stay draggable - see the vendored
-                            // `ui::resizable`.
-                            .invisible_handles()
-                            .child(
-                                resizable_panel()
-                                    .visible(!self.sidebar_collapsed)
-                                    .size(px(256.))
-                                    .size_range(px(180.)..px(600.))
-                                    .flex_none()
-                                    .child(
-                                        div().size_full().pr(px(3.)).child(
-                                            v_flex()
-                                                .size_full()
-                                                .overflow_hidden()
-                                                .bg(cx.theme().sidebar)
-                                                .rounded(PANEL_RADIUS)
-                                                .border_1()
-                                                .border_color(cx.theme().border)
-                                                .child(self.render_sidebar_tabs(cx))
-                                                .child(match self.sidebar_tab {
-                                                    SidebarTab::Collections => div()
-                                                        .flex_1()
-                                                        .min_h_0()
-                                                        .child(self.collections_panel.clone()),
-                                                    SidebarTab::History => div()
-                                                        .flex_1()
-                                                        .min_h_0()
-                                                        .child(self.history_panel.clone()),
-                                                }),
-                                        ),
-                                    ),
-                            )
-                            // Main panel
-                            .child(
-                                resizable_panel().child(
-                                    div()
-                                        .size_full()
-                                        .when(!self.sidebar_collapsed, |this| this.pl(px(3.)))
+                        // Left side: the sidebar body next to the rail,
+                        // resizable against the main panel. The group keeps
+                        // its own window-keyed state, so the chosen width
+                        // survives collapsing and re-opening the sidebar.
+                        div().flex_1().min_w_0().h_full().child(
+                            h_resizable("main-layout")
+                                // The cards draw their own borders, so the handle
+                                // only needs to stay draggable - see the vendored
+                                // `ui::resizable`.
+                                .invisible_handles()
+                                .child(
+                                    resizable_panel()
+                                        .visible(!self.sidebar_collapsed)
+                                        .size(px(256.))
+                                        .size_range(px(180.)..px(600.))
+                                        .flex_none()
                                         .child(
-                                            div()
-                                                .flex()
-                                                .flex_1()
-                                                // Allow this flex item to shrink below its content
-                                                // width; without it the panel grows to fit the widest
-                                                // tab/content and the tab bar never overflows to scroll.
-                                                .min_w_0()
-                                                .h_full()
-                                                .overflow_hidden()
-                                                .bg(cx.theme().background)
-                                                .rounded(PANEL_RADIUS)
-                                                // The editor card shares the shell colour (as in
-                                                // the reference), so the 1px border is what makes
-                                                // its rounded outline readable.
-                                                .border_1()
-                                                .border_color(cx.theme().border)
-                                                .child(self.editor_panel.clone()),
+                                            div().size_full().pr(PANEL_GAP / 2.).child(
+                                                v_flex()
+                                                    .size_full()
+                                                    .overflow_hidden()
+                                                    .bg(cx.theme().sidebar)
+                                                    .rounded(PANEL_RADIUS)
+                                                    .border_1()
+                                                    .border_color(cx.theme().border)
+                                                    .child(match self.sidebar_tab {
+                                                        SidebarTab::Collections => {
+                                                            div().flex_1().min_h_0().pt_2().child(
+                                                                self.collections_panel.clone(),
+                                                            )
+                                                        }
+                                                        SidebarTab::History => div()
+                                                            .flex_1()
+                                                            .min_h_0()
+                                                            .pt_2()
+                                                            .child(self.history_panel.clone()),
+                                                    }),
+                                            ),
                                         ),
+                                )
+                                // Main panel
+                                .child(
+                                    resizable_panel().child(
+                                        div()
+                                            .size_full()
+                                            // The other half of the gap comes from
+                                            // the sidebar body. While collapsed
+                                            // the rail's margin is the whole gap.
+                                            .when(!self.sidebar_collapsed, |this| {
+                                                this.pl(PANEL_GAP / 2.)
+                                            })
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_1()
+                                                    // Allow this flex item to shrink below its content
+                                                    // width; without it the panel grows to fit the widest
+                                                    // tab/content and the tab bar never overflows to scroll.
+                                                    .min_w_0()
+                                                    .h_full()
+                                                    .overflow_hidden()
+                                                    // The shell is the darkest surface (crust); this
+                                                    // card holds the editor, so it takes the content
+                                                    // surface the active tab is painted with.
+                                                    .bg(cx.theme().tab_active)
+                                                    .rounded(PANEL_RADIUS)
+                                                    .border_1()
+                                                    .border_color(cx.theme().border)
+                                                    .child(self.editor_panel.clone()),
+                                            ),
+                                    ),
                                 ),
-                            ),
+                        ),
                     ),
             )
             .children(sheet_layer)

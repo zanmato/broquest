@@ -1598,7 +1598,7 @@ impl RequestEditor {
         div()
             .flex_1()
             .h_full()
-            .bg(cx.theme().background)
+            .bg(cx.theme().tab_active)
             .border_color(cx.theme().border)
             // Stacked: a divider separates the response from the request pane
             // above. Side-by-side: the resize handle already draws its own 1px
