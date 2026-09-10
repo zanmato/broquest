@@ -4,7 +4,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, Subscription, WeakFocusHandle, Window, actions,
     anchored, deferred, div, point, prelude::FluentBuilder, px,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, IndexPath, Selectable,
     input::{Input, InputEvent, InputState},
     list::{List, ListDelegate, ListEvent, ListState},
@@ -196,7 +196,7 @@ impl CommandPalette {
         if let Some(handle) = self.previous_focus.take().and_then(|h| h.upgrade()) {
             window.focus(&handle, cx);
         } else {
-            window.blur();
+            window.blur(cx);
         }
         cx.notify();
     }
@@ -303,8 +303,11 @@ impl Render for CommandPalette {
     }
 }
 
-fn keybinding_for_command(cmd: &CommandType, window: &Window) -> Option<gpui_component::kbd::Kbd> {
-    use gpui_component::kbd::Kbd;
+fn keybinding_for_command(
+    cmd: &CommandType,
+    window: &Window,
+) -> Option<gpui_kit::component::kbd::Kbd> {
+    use gpui_kit::component::kbd::Kbd;
     let action: Box<dyn gpui::Action> = match cmd {
         CommandType::SendRequest => Box::new(crate::requests::Send),
         CommandType::SaveRequest => Box::new(crate::requests::Save),
@@ -577,7 +580,7 @@ pub struct CommandPaletteItemElement {
     muted_color: gpui::Hsla,
     selected_bg: gpui::Hsla,
     selected_fg: gpui::Hsla,
-    keybinding: Option<gpui_component::kbd::Kbd>,
+    keybinding: Option<gpui_kit::component::kbd::Kbd>,
 }
 
 impl CommandPaletteItemElement {
@@ -588,7 +591,7 @@ impl CommandPaletteItemElement {
         muted_color: gpui::Hsla,
         selected_bg: gpui::Hsla,
         selected_fg: gpui::Hsla,
-        keybinding: Option<gpui_component::kbd::Kbd>,
+        keybinding: Option<gpui_kit::component::kbd::Kbd>,
     ) -> Self {
         Self {
             ix,

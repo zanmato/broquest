@@ -2,7 +2,7 @@ use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, SharedString, Window,
     div, prelude::*, px,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, h_flex,
     input::{Input, InputEvent, InputState},
     scroll::ScrollableElement,
@@ -147,7 +147,7 @@ impl AuthEditor {
         let auth_type_select = cx.new(|cx| {
             SelectState::new(
                 options,
-                Some(gpui_component::IndexPath::default().row(0)),
+                Some(gpui_kit::component::IndexPath::default().row(0)),
                 window,
                 cx,
             )
@@ -279,7 +279,7 @@ impl AuthEditor {
         {
             self.auth_type_select.update(cx, |state, cx| {
                 state.set_selected_index(
-                    Some(gpui_component::IndexPath::default().row(index)),
+                    Some(gpui_kit::component::IndexPath::default().row(index)),
                     window,
                     cx,
                 );

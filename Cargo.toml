@@ -14,19 +14,20 @@ description = "Desktop API Client"
 
 [workspace.dependencies]
 # Core GPUI dependencies
-# Keep GPUI on the same source as gpui-component so Cargo resolves one version.
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui-macros = "0.2.2"
-# longbridge/gpui-component
-gpui-component = { git = "https://github.com/longbridge/gpui-component/", rev = "f3ba893bd6a996ab0699266ba774b5bbb7f0ca1c", features = [
-    "tree-sitter-languages",
-] }
-gpui-component-macros = { git = "https://github.com/longbridge/gpui-component/", rev = "f3ba893bd6a996ab0699266ba774b5bbb7f0ca1c" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
+# GPUI is published on crates.io as the `gpui-pre-*` family by the gpui-kit
+# project, so no git pins are needed.
+gpui = { package = "gpui-pre", version = "0.3" }
+gpui_platform = { package = "gpui-pre-platform", version = "0.3", features = [
     "font-kit",
     "x11",
     "wayland",
     "runtime_shaders",
+] }
+# zanmato/gpui-component, the `blanco` branch of longbridge/gpui-kit, which
+# carries the single-line editor used by the URL bar. The umbrella crate puts
+# the component library at `gpui_kit::component`.
+gpui-kit = { git = "https://github.com/zanmato/gpui-component.git", branch = "blanco", features = [
+    "tree-sitter-languages",
 ] }
 
 # Database dependencies

@@ -9,7 +9,7 @@
 use gpui::{
     App, Context, Entity, EventEmitter, Focusable, SharedString, Window, div, prelude::*, px,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
     h_flex,

@@ -26,7 +26,7 @@ mod update_manager;
 use assets::Assets;
 use collections::CollectionManager;
 use gpui::{AppContext, SharedString, WindowBounds, WindowOptions, px, size};
-use gpui_component::ThemeRegistry;
+use gpui_kit::component::ThemeRegistry;
 use gpui_platform::application;
 
 use app_settings::AppSettings;
@@ -42,7 +42,7 @@ fn main() {
         .with_assets(Assets);
 
     app.run(move |cx| {
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
         ui::draggable_tree::init(cx);
         ui::command_palette::CommandPalette::init(cx);
         requests::RequestEditor::init(cx);
@@ -186,12 +186,13 @@ fn main() {
             app_owns_titlebar_drag: false,
             app_id: Some("broquest".into()),
             icon: None,
+            ..Default::default()
         };
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, |window, cx| {
                 let broquest_app = cx.new(|cx| app::BroquestApp::new(window, cx));
-                cx.new(|cx| gpui_component::Root::new(broquest_app, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(broquest_app, window, cx))
             })?;
 
             Ok::<_, anyhow::Error>(())

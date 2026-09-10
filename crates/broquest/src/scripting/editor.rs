@@ -7,7 +7,7 @@ use gpui::{
     App, AppContext, Context, Entity, EventEmitter, Focusable, Subscription, Task, Window, div,
     prelude::*, px,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Sizable, StyledExt, WindowExt,
     button::Button,
     h_flex,
@@ -40,26 +40,24 @@ impl ScriptEditor {
         let editor_settings = AppSettings::global(cx).settings.editor.clone();
 
         let pre_request_input = cx.new(|cx| {
-            let editor = EditorState::new("javascript", window, cx)
+            let mut editor = EditorState::new(window, cx)
+                .language("javascript")
                 .folding(editor_settings.folding)
                 .show_whitespaces(editor_settings.show_whitespace);
-            editor.base_state().update(cx, |state, cx| {
-                state.set_soft_wrap(editor_settings.soft_wrap, window, cx);
-                state.lsp.completion_provider =
-                    Some(ScriptCompletionProvider::new(ScriptContext::PreRequest));
-            });
+            editor.set_soft_wrap(editor_settings.soft_wrap, window, cx);
+            editor.lsp_mut().completion_provider =
+                Some(ScriptCompletionProvider::new(ScriptContext::PreRequest));
             editor
         });
 
         let post_response_input = cx.new(|cx| {
-            let editor = EditorState::new("javascript", window, cx)
+            let mut editor = EditorState::new(window, cx)
+                .language("javascript")
                 .folding(editor_settings.folding)
                 .show_whitespaces(editor_settings.show_whitespace);
-            editor.base_state().update(cx, |state, cx| {
-                state.set_soft_wrap(editor_settings.soft_wrap, window, cx);
-                state.lsp.completion_provider =
-                    Some(ScriptCompletionProvider::new(ScriptContext::PostResponse));
-            });
+            editor.set_soft_wrap(editor_settings.soft_wrap, window, cx);
+            editor.lsp_mut().completion_provider =
+                Some(ScriptCompletionProvider::new(ScriptContext::PostResponse));
             editor
         });
 
@@ -125,27 +123,25 @@ impl ScriptEditor {
             // Update diagnostics on main thread
             let _ = this
                 .update(cx, |_this, cx| {
-                    input.update(cx, |input, cx| {
-                        input.base_state().update(cx, |input, _cx| {
-                            if let Some(diagnostics) = input.diagnostics_mut() {
-                                diagnostics.clear();
-                                if let Err(err) = result {
-                                    let severity = if err.is_warning {
-                                        DiagnosticSeverity::Warning
-                                    } else {
-                                        DiagnosticSeverity::Error
-                                    };
-                                    diagnostics.push(
-                                        Diagnostic::new(
-                                            Position::new(err.line, err.column)
-                                                ..Position::new(err.line, err.column + 1),
-                                            err.message,
-                                        )
-                                        .with_severity(severity),
-                                    );
-                                }
+                    input.update(cx, |input, _cx| {
+                        if let Some(diagnostics) = input.diagnostics_mut() {
+                            diagnostics.clear();
+                            if let Err(err) = result {
+                                let severity = if err.is_warning {
+                                    DiagnosticSeverity::Warning
+                                } else {
+                                    DiagnosticSeverity::Error
+                                };
+                                diagnostics.push(
+                                    Diagnostic::new(
+                                        Position::new(err.line, err.column)
+                                            ..Position::new(err.line, err.column + 1),
+                                        err.message,
+                                    )
+                                    .with_severity(severity),
+                                );
                             }
-                        });
+                        }
                     });
                     cx.notify();
                 })
@@ -157,11 +153,9 @@ impl ScriptEditor {
         let settings = AppSettings::global(cx).settings.editor.clone();
         for input in [&self.pre_request_input, &self.post_response_input] {
             input.update(cx, |state, cx| {
-                state.base_state().update(cx, |state, cx| {
-                    state.set_show_whitespaces(settings.show_whitespace, window, cx);
-                    state.set_soft_wrap(settings.soft_wrap, window, cx);
-                    state.set_folding(settings.folding, window, cx);
-                });
+                state.set_show_whitespaces(settings.show_whitespace, window, cx);
+                state.set_soft_wrap(settings.soft_wrap, window, cx);
+                state.set_folding(settings.folding, window, cx);
             });
         }
     }
@@ -217,9 +211,8 @@ impl ScriptEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let base = input.read(cx).base_state().clone();
-        base.update(cx, |state, cx| {
-            state.set_selected_range(selection, cx);
+        input.update(cx, |state, cx| {
+            state.set_selected_range(selection, window, cx);
             state.replace(code, window, cx);
         });
         self.lint_script(input, context, cx);
@@ -233,8 +226,7 @@ impl ScriptEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let base = input.read(cx).base_state().clone();
-        let selection = base.read(cx).selected_range();
+        let selection = input.read(cx).selected_range();
         let script_editor = cx.entity().downgrade();
         let picker =
             cx.new(|cx| RecipePicker::new(context, input, selection, script_editor, window, cx));

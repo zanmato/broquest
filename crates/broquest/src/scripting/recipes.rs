@@ -5,7 +5,7 @@ use gpui::{
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, StyledText,
     Subscription, WeakEntity, Window, div, prelude::FluentBuilder, px,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Disableable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
@@ -150,7 +150,7 @@ pub(crate) struct RecipePicker {
     previews: Vec<RecipePreview>,
     query_input: Entity<InputState>,
     selected_id: Option<&'static str>,
-    target_input: Entity<gpui_component::input::EditorState>,
+    target_input: Entity<gpui_kit::component::input::EditorState>,
     target_selection: Range<usize>,
     script_editor: WeakEntity<ScriptEditor>,
     _query_subscription: Subscription,
@@ -159,7 +159,7 @@ pub(crate) struct RecipePicker {
 impl RecipePicker {
     pub(crate) fn new(
         context: ScriptContext,
-        target_input: Entity<gpui_component::input::EditorState>,
+        target_input: Entity<gpui_kit::component::input::EditorState>,
         target_selection: Range<usize>,
         script_editor: WeakEntity<ScriptEditor>,
         window: &mut Window,

@@ -1,6 +1,6 @@
 use gpui::{App, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px};
 
-use gpui_component::{ActiveTheme, StyledExt};
+use gpui_kit::component::{ActiveTheme, StyledExt};
 
 #[allow(unused)]
 #[derive(IntoElement)]

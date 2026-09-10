@@ -10,7 +10,7 @@ use gpui::SharedString;
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppEvent {
     /// UI events
-    ThemeChanged(gpui_component::ThemeMode),
+    ThemeChanged(gpui_kit::component::ThemeMode),
     SidebarToggled {
         collapsed: bool,
     },

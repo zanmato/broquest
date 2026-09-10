@@ -5,7 +5,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Window, actions, div, prelude::FluentBuilder,
     px, svg,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Icon, Root, Sizable as _, ThemeRegistry, TitleBar, WindowExt,
     button::{Button, ButtonVariants as _},
     global_state::GlobalState,
@@ -39,7 +39,7 @@ pub(crate) const PANEL_GAP: gpui::Pixels = px(6.);
 
 /// Width of the icon rail on the left edge of the sidebar card. It is the
 /// only part of the sidebar that stays visible while collapsed.
-pub(crate) const SIDEBAR_RAIL_WIDTH: gpui::Pixels = px(48.);
+pub(crate) const SIDEBAR_RAIL_WIDTH: gpui::Pixels = px(42.);
 
 actions!(
     broquest_app,
@@ -984,14 +984,14 @@ fn build_menu() -> Vec<Menu> {
         Menu {
             name: "Edit".into(),
             items: vec![
-                MenuItem::action("Undo", gpui_component::input::Undo),
-                MenuItem::action("Redo", gpui_component::input::Redo),
+                MenuItem::action("Undo", gpui_kit::component::input::Undo),
+                MenuItem::action("Redo", gpui_kit::component::input::Redo),
                 MenuItem::separator(),
-                MenuItem::action("Cut", gpui_component::input::Cut),
-                MenuItem::action("Copy", gpui_component::input::Copy),
-                MenuItem::action("Paste", gpui_component::input::Paste),
+                MenuItem::action("Cut", gpui_kit::component::input::Cut),
+                MenuItem::action("Copy", gpui_kit::component::input::Copy),
+                MenuItem::action("Paste", gpui_kit::component::input::Paste),
                 MenuItem::separator(),
-                MenuItem::action("Select All", gpui_component::input::SelectAll),
+                MenuItem::action("Select All", gpui_kit::component::input::SelectAll),
             ],
             disabled: false,
         },

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use gpui::{Context, Task, Window};
-use gpui_component::{RopeExt, input::CompletionProvider};
+use gpui::{App, Task, Window};
+use gpui_kit::component::{RopeExt, input::CompletionProvider};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit, TextEdit,
 };
@@ -305,7 +305,7 @@ impl CompletionProvider for ScriptCompletionProvider {
         offset: usize,
         _: lsp_types::CompletionContext,
         _: &mut Window,
-        _cx: &mut Context<gpui_component::input::InputBaseState>,
+        _cx: &mut App,
     ) -> Task<Result<CompletionResponse>> {
         // The dot is always at offset-1 since is_completion_trigger only returns true for "."
         let dot_pos = offset - 1;
@@ -340,12 +340,7 @@ impl CompletionProvider for ScriptCompletionProvider {
         Task::ready(Ok(CompletionResponse::Array(completions)))
     }
 
-    fn is_completion_trigger(
-        &self,
-        _offset: usize,
-        new_text: &str,
-        _: &mut Context<gpui_component::input::InputBaseState>,
-    ) -> bool {
+    fn is_completion_trigger(&self, _offset: usize, new_text: &str, _: &mut App) -> bool {
         // Trigger on dot notation
         new_text == "."
     }

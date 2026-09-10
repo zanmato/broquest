@@ -2,7 +2,7 @@ use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     KeyBinding, ParentElement, Render, Styled, Window, actions, div, prelude::*,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme as _, StyledExt, WindowExt,
     button::{Button, ButtonVariants as _},
     h_flex,

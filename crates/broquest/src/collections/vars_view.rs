@@ -16,7 +16,7 @@ use gpui::{
     App, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, Styled, Window, div,
 };
-use gpui_component::{ActiveTheme, h_flex, scroll::ScrollableElement, v_flex};
+use gpui_kit::component::{ActiveTheme, h_flex, scroll::ScrollableElement, v_flex};
 
 use crate::collections::manager::{CollectionManager, CollectionManagerEvent};
 

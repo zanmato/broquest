@@ -3,7 +3,7 @@ use gpui::{
     App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString, Subscription, Window,
     actions, div, prelude::*, px,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Icon, IndexPath, Sizable as _, StyledExt, WindowExt,
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -184,7 +184,8 @@ impl CollectionEditor {
         // Markdown docs editor, seeded from the collection's docs.
         let docs_seed = collection_data.collection.docs.clone().unwrap_or_default();
         let docs_input = cx.new(|cx| {
-            EditorState::new("markdown", window, cx)
+            EditorState::new(window, cx)
+                .language("markdown")
                 .placeholder("Write collection docs in Markdown...")
                 .default_value(docs_seed)
         });

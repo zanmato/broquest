@@ -1,4 +1,4 @@
-use gpui_component::IconNamed;
+use gpui_kit::component::IconNamed;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]

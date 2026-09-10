@@ -3,7 +3,7 @@ use gpui::{
     IntoElement, KeyBinding, MouseButton, ParentElement, Render, ScrollHandle, Styled, Window,
     actions, div, prelude::FluentBuilder, px,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,

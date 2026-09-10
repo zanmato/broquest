@@ -3,7 +3,7 @@ use gpui::{
     App, AppContext, ClickEvent, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
@@ -177,10 +177,10 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
         &self,
         _ix: usize,
         entry: &TreeEntry,
-        menu: gpui_component::menu::PopupMenu,
+        menu: gpui_kit::component::menu::PopupMenu,
         window: &mut Window,
         cx: &mut App,
-    ) -> gpui_component::menu::PopupMenu {
+    ) -> gpui_kit::component::menu::PopupMenu {
         let item = entry.item().clone();
         let collections_panel = self.parent.read(cx);
         let metadata = collections_panel.get_tree_item_metadata(&item.id).cloned();

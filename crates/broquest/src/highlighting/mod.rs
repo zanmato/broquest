@@ -1,5 +1,5 @@
 use gpui::App;
-use gpui_component::highlighter::{LanguageConfig, LanguageRegistry};
+use gpui_kit::component::highlighter::{LanguageConfig, LanguageRegistry};
 
 /// Register syntax highlighting for the application
 pub fn register_highlighting(_cx: &mut App) {

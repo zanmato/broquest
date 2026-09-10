@@ -6,8 +6,8 @@ use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, Styled, Window, div, px, rems,
 };
-use gpui_component::ThemeRegistry;
-use gpui_component::{
+use gpui_kit::component::ThemeRegistry;
+use gpui_kit::component::{
     ActiveTheme, Sizable,
     group_box::GroupBoxVariant,
     select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState},
@@ -92,7 +92,7 @@ impl SettingsView {
         let ui_font_select = cx.new(|cx| {
             SelectState::new(
                 ui_items,
-                ui_index.map(|i| gpui_component::IndexPath::default().row(i)),
+                ui_index.map(|i| gpui_kit::component::IndexPath::default().row(i)),
                 window,
                 cx,
             )
@@ -102,7 +102,7 @@ impl SettingsView {
         let mono_font_select = cx.new(|cx| {
             SelectState::new(
                 mono_items,
-                mono_index.map(|i| gpui_component::IndexPath::default().row(i)),
+                mono_index.map(|i| gpui_kit::component::IndexPath::default().row(i)),
                 window,
                 cx,
             )

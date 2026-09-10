@@ -17,7 +17,7 @@ use gpui::{
     prelude::FluentBuilder,
 };
 
-use gpui_component::{AxisExt, ElementExt, StyledExt as _, h_flex, v_flex};
+use gpui_kit::component::{AxisExt, ElementExt, StyledExt as _, h_flex, v_flex};
 
 use super::{PANEL_MIN_SIZE, ResizableState, resizable_panel, resize_handle};
 

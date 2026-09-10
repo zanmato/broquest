@@ -21,7 +21,7 @@ use gpui::{
     div, prelude::FluentBuilder, px, uniform_list,
 };
 
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, StyledExt, h_flex,
     list::ListItem,
     menu::{ContextMenuExt, PopupMenu},

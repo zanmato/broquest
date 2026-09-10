@@ -6,7 +6,7 @@ use gpui::{
     StatefulInteractiveElement, Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 
-use gpui_component::{ActiveTheme as _, AxisExt as _};
+use gpui_kit::component::{ActiveTheme as _, AxisExt as _};
 
 pub(crate) const HANDLE_PADDING: Pixels = px(4.);
 pub(crate) const HANDLE_SIZE: Pixels = px(1.);

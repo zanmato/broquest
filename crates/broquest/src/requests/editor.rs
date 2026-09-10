@@ -5,11 +5,11 @@ use gpui::{
     SharedString, StyleRefinement, Styled as _, StyledImage as _, Subscription, Task, Window,
     actions, div, img, prelude::FluentBuilder, px,
 };
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
-    input::{Editor, EditorState, Input, InputBaseState, InputEvent, InputState},
+    input::{Editor, EditorState, Input, InputEvent, InputState},
     kbd::Kbd,
     notification::NotificationType,
     scroll::ScrollableElement,
@@ -146,9 +146,8 @@ pub struct RequestEditor {
     environment_select: Entity<SelectState<Vec<EnvironmentOption>>>,
     content_type_select: Entity<SelectState<Vec<ContentType>>>,
     name_input: Entity<InputState>,
-    // A highlighted single-line editor. The public EditorState facade is
-    // multi-line only, so use the shared input engine for this combination.
-    url_input: Entity<InputBaseState>,
+    /// A URL bar with tree-sitter highlighting: a code editor laid out as one line.
+    url_input: Entity<EditorState>,
     body_input: Entity<EditorState>,
     response_input: Entity<EditorState>,
     raw_response_input: Entity<EditorState>,
@@ -214,11 +213,10 @@ impl RequestEditor {
         });
 
         let url_input = cx.new(|cx| {
-            InputBaseState::new(window, cx)
+            EditorState::new(window, cx)
+                .language("url")
+                .single_line(true)
                 .placeholder("Enter request URL")
-                .code_editor("url")
-                .folding(false)
-                .multi_line(false)
         });
 
         let name_input = cx.new(|cx| {
@@ -230,32 +228,29 @@ impl RequestEditor {
         let editor_settings = AppSettings::global(cx).settings.editor.clone();
 
         let body_input = cx.new(|cx| {
-            let editor = EditorState::new("json", window, cx)
+            let mut editor = EditorState::new(window, cx)
+                .language("json")
                 .folding(editor_settings.folding)
                 .show_whitespaces(editor_settings.show_whitespace);
-            editor.base_state().update(cx, |state, cx| {
-                state.set_soft_wrap(editor_settings.soft_wrap, window, cx);
-            });
+            editor.set_soft_wrap(editor_settings.soft_wrap, window, cx);
             editor
         });
 
         let response_input = cx.new(|cx| {
-            let editor = EditorState::new("text", window, cx)
+            let mut editor = EditorState::new(window, cx)
+                .language("text")
                 .folding(editor_settings.folding)
                 .show_whitespaces(editor_settings.show_whitespace);
-            editor.base_state().update(cx, |state, cx| {
-                state.set_soft_wrap(editor_settings.soft_wrap, window, cx);
-            });
+            editor.set_soft_wrap(editor_settings.soft_wrap, window, cx);
             editor
         });
 
         let raw_response_input = cx.new(|cx| {
-            let editor = EditorState::new("text", window, cx)
+            let mut editor = EditorState::new(window, cx)
+                .language("text")
                 .folding(editor_settings.folding)
                 .show_whitespaces(editor_settings.show_whitespace);
-            editor.base_state().update(cx, |state, cx| {
-                state.set_soft_wrap(editor_settings.soft_wrap, window, cx);
-            });
+            editor.set_soft_wrap(editor_settings.soft_wrap, window, cx);
             editor
         });
 
@@ -400,11 +395,9 @@ impl RequestEditor {
             &self.raw_response_input,
         ] {
             input.update(cx, |state, cx| {
-                state.base_state().update(cx, |state, cx| {
-                    state.set_show_whitespaces(settings.show_whitespace, window, cx);
-                    state.set_soft_wrap(settings.soft_wrap, window, cx);
-                    state.set_folding(settings.folding, window, cx);
-                });
+                state.set_show_whitespaces(settings.show_whitespace, window, cx);
+                state.set_soft_wrap(settings.soft_wrap, window, cx);
+                state.set_folding(settings.folding, window, cx);
             });
         }
         self.script_editor.update(cx, |editor, cx| {
@@ -799,9 +792,7 @@ impl RequestEditor {
             // Update body input syntax highlighting
             let language = content_type.language();
             self.body_input.update(cx, |input_state, cx| {
-                input_state
-                    .base_state()
-                    .update(cx, |state, cx| state.set_highlighter(language, cx));
+                input_state.set_highlighter(language, cx);
                 cx.notify();
             });
 
@@ -1086,9 +1077,7 @@ impl RequestEditor {
 
                         // Update the response input with the correct language and formatted content
                         response_input.update(cx, |input_state, cx| {
-                            input_state
-                                .base_state()
-                                .update(cx, |state, cx| state.set_highlighter(language, cx));
+                            input_state.set_highlighter(language, cx);
                             input_state.set_value(&formatted_content, window, cx);
                             cx.notify();
                         });
@@ -1323,8 +1312,7 @@ impl RequestEditor {
                     .min_w(px(300.))
                     .child(
                         div().flex_1().child(
-                            Input::from_base(&self.url_input)
-                                .cleanable(true)
+                            Editor::new(&self.url_input)
                                 .font_family(cx.theme().mono_font_family.clone())
                                 .text_sm(),
                         ),
