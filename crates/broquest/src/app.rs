@@ -98,7 +98,7 @@ pub struct BroquestApp {
     history_panel: Entity<HistoryPanel>,
     editor_panel: Entity<EditorPanel>,
     command_palette: Entity<crate::ui::command_palette::CommandPalette>,
-    app_menu_bar: Entity<AppMenuBar>,
+    app_menu_bar: Option<Entity<AppMenuBar>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -118,7 +118,7 @@ impl BroquestApp {
         let editor_panel = cx.new(|cx| EditorPanel::new(window, cx));
         let command_palette =
             cx.new(|cx| crate::ui::command_palette::CommandPalette::new(window, cx));
-        let app_menu_bar = AppMenuBar::new(cx);
+        let app_menu_bar = (!cfg!(target_os = "macos")).then(|| AppMenuBar::new(cx));
 
         let mut subscriptions = Vec::new();
 
@@ -611,7 +611,7 @@ impl BroquestApp {
             .items_center()
             .justify_between()
             .gap_8()
-            .h(px(26.))
+            .h(PALETTE_TRIGGER_HEIGHT)
             .w(px(420.))
             .mt(px(2.))
             .px_3()
@@ -772,6 +772,12 @@ impl Render for BroquestApp {
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
 
+        let logo_height = if cfg!(target_os = "macos") {
+            PALETTE_TRIGGER_HEIGHT
+        } else {
+            px(32.)
+        };
+
         div()
             .track_focus(&self.focus_handle)
             .key_context("BroquestApp")
@@ -821,6 +827,7 @@ impl Render for BroquestApp {
                         .items_center()
                         .justify_between()
                         .w_full()
+                        .when(cfg!(target_os = "macos"), |this| this.pr(PANEL_GAP))
                         .child(
                             div()
                                 .flex()
@@ -828,15 +835,15 @@ impl Render for BroquestApp {
                                 .gap_4()
                                 .child(
                                     svg()
-                                        .h(px(32.))
-                                        .w(px(145.))
+                                        .h(logo_height)
+                                        .w(logo_height * LOGO_ASPECT_RATIO)
                                         // Optically centre the wordmark, which
                                         // sits high in its own viewBox.
                                         .mt(px(2.))
                                         .text_color(window.text_style().color)
                                         .path("img/broquest.svg"),
                                 )
-                                .child(self.app_menu_bar.clone()),
+                                .children(self.app_menu_bar.clone()),
                         )
                         .child(self.render_palette_trigger(window, cx))
                         .child(
@@ -945,6 +952,11 @@ impl Render for BroquestApp {
     }
 }
 
+/// Width over height of `img/broquest.svg`
+const LOGO_ASPECT_RATIO: f32 = 4.75;
+
+const PALETTE_TRIGGER_HEIGHT: gpui::Pixels = px(26.);
+
 fn init_menus(cx: &mut App) {
     cx.bind_keys([
         #[cfg(target_os = "macos")]
@@ -963,22 +975,42 @@ fn init_menus(cx: &mut App) {
 
     cx.set_menus(build_menu());
 
-    let menu = build_menu().into_iter().map(|menu| menu.owned()).collect();
-    GlobalState::global_mut(cx).set_app_menus(menu);
+    if !cfg!(target_os = "macos") {
+        let menu = build_menu().into_iter().map(|menu| menu.owned()).collect();
+        GlobalState::global_mut(cx).set_app_menus(menu);
+    }
 }
 
 fn build_menu() -> Vec<Menu> {
-    vec![
+    // macOS always shows the first menu as the application menu, titled with
+    // the app's name, and that is where Settings and Quit belong there.
+    let mut file_items = vec![
+        MenuItem::action("New Collection", OpenNewCollectionTab),
+        MenuItem::action("Open Collection", OpenCollection),
+    ];
+    let mut menus = Vec::new();
+    if cfg!(target_os = "macos") {
+        menus.push(Menu {
+            name: "Broquest".into(),
+            items: vec![
+                MenuItem::action("Settings…", OpenSettings),
+                MenuItem::separator(),
+                MenuItem::action("Quit Broquest", Quit),
+            ],
+            disabled: false,
+        });
+    } else {
+        file_items.extend([
+            MenuItem::separator(),
+            MenuItem::action("Settings", OpenSettings),
+            MenuItem::separator(),
+            MenuItem::action("Quit", Quit),
+        ]);
+    }
+    menus.extend([
         Menu {
             name: "File".into(),
-            items: vec![
-                MenuItem::action("New Collection", OpenNewCollectionTab),
-                MenuItem::action("Open Collection", OpenCollection),
-                MenuItem::Separator,
-                MenuItem::action("Settings", OpenSettings),
-                MenuItem::Separator,
-                MenuItem::action("Quit", Quit),
-            ],
+            items: file_items,
             disabled: false,
         },
         Menu {
@@ -995,5 +1027,6 @@ fn build_menu() -> Vec<Menu> {
             ],
             disabled: false,
         },
-    ]
+    ]);
+    menus
 }
