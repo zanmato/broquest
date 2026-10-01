@@ -71,8 +71,11 @@ impl EnvironmentEditor {
             let mut variables = Vec::new();
             let mut secrets = Vec::new();
 
-            // Load variables and secrets from the unified variables map
-            for (key, env_var) in &env_toml.variables {
+            // Load variables and secrets from the unified variables map, by
+            // name so the rows keep their order between loads.
+            let mut entries: Vec<_> = env_toml.variables.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (key, env_var) in entries {
                 if env_var.secret {
                     let value = EnvironmentVariable::read_credential(
                         &self.collection_name,
