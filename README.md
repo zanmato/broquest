@@ -21,7 +21,13 @@ A modern, desktop API client built with [GPUI](https://www.gpui.rs) and [gpui-co
 
 ## macOS
 
-**IMPORTANT:** After downloading you have to run `xattr -r -d com.apple.quarantine Broquest.app` in the folder of the app since the app isn't notarized.
+Install with [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask zanmato/tap/broquest
+```
+
+**IMPORTANT:** If you download the release manually you have to run `xattr -r -d com.apple.quarantine Broquest.app` in the folder of the app since the app isn't notarized.
 
 ## Scripting
 
