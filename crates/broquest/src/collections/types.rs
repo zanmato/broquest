@@ -124,12 +124,31 @@ pub struct EnvironmentToml {
     pub variables: HashMap<String, EnvironmentVariable>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct EnvironmentVariable {
     pub value: String,
     pub secret: bool,
-    #[serde(default, skip_serializing_if = "is_true")]
+    #[serde(default)]
     pub temporary: bool,
+}
+
+/// A secret's value lives in the OS keychain, so the collection file only
+/// records that the variable exists. Its value is written empty rather than
+/// left out, so versions that require the field can still read the file.
+impl Serialize for EnvironmentVariable {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct as _;
+
+        let mut state = serializer.serialize_struct("EnvironmentVariable", 3)?;
+        state.serialize_field("value", if self.secret { "" } else { &self.value })?;
+        state.serialize_field("secret", &self.secret)?;
+        if is_true(&self.temporary) {
+            state.skip_field("temporary")?;
+        } else {
+            state.serialize_field("temporary", &self.temporary)?;
+        }
+        state.end()
+    }
 }
 
 impl EnvironmentVariable {
@@ -554,6 +573,40 @@ pub fn create_empty_collection() -> CollectionToml {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secret_values_stay_out_of_the_collection_file() {
+        let environment = EnvironmentToml {
+            name: "Staging".to_string(),
+            variables: HashMap::from([
+                (
+                    "API_KEY".to_string(),
+                    EnvironmentVariable {
+                        value: "sk_live_123".to_string(),
+                        secret: true,
+                        temporary: false,
+                    },
+                ),
+                (
+                    "BASE_URL".to_string(),
+                    EnvironmentVariable {
+                        value: "https://staging.example.com".to_string(),
+                        secret: false,
+                        temporary: false,
+                    },
+                ),
+            ]),
+        };
+
+        let toml_string = toml::to_string(&environment).expect("serialize");
+        assert!(!toml_string.contains("sk_live_123"), "{toml_string}");
+        assert!(toml_string.contains("https://staging.example.com"));
+
+        let loaded: EnvironmentToml = toml::from_str(&toml_string).expect("deserialize");
+        let api_key = &loaded.variables["API_KEY"];
+        assert!(api_key.secret);
+        assert_eq!(api_key.value, "");
+    }
 
     #[test]
     fn test_serialize_empty_environments() {
