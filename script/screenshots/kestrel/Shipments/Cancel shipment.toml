@@ -1,0 +1,17 @@
+[meta]
+name = "Cancel shipment"
+type = "http"
+seq = "4"
+
+[http]
+method = "DELETE"
+url = "{{baseUrl}}/v1/shipments/:id"
+auth = "none"
+
+[[headers]]
+key = "Authorization"
+value = "Bearer {{token}}"
+enabled = true
+
+[params.path]
+id = "KS-48213"

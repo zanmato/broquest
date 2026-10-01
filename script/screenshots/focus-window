@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Give input focus to the first mapped top-level window on $DISPLAY, and park
+the pointer in the bottom right corner of the screen.
+
+Xvfb runs without a window manager, so nothing focuses Broquest's window and
+GPUI treats it as inactive, which hides selections and the caret. Xvfb also
+starts the pointer in the middle of the screen, where it would hover whatever
+the scene put there. Waits up to the given number of seconds (default 30) for
+a window to appear. Uses libX11 through ctypes, so it needs nothing beyond the
+library Xvfb brings.
+"""
+
+import ctypes
+import ctypes.util
+import sys
+import time
+
+IS_VIEWABLE = 2
+REVERT_TO_PARENT = 2
+CURRENT_TIME = 0
+
+
+class XWindowAttributes(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_int),
+        ("y", ctypes.c_int),
+        ("width", ctypes.c_int),
+        ("height", ctypes.c_int),
+        ("border_width", ctypes.c_int),
+        ("depth", ctypes.c_int),
+        ("visual", ctypes.c_void_p),
+        ("root", ctypes.c_ulong),
+        ("class", ctypes.c_int),
+        ("bit_gravity", ctypes.c_int),
+        ("win_gravity", ctypes.c_int),
+        ("backing_store", ctypes.c_int),
+        ("backing_planes", ctypes.c_ulong),
+        ("backing_pixel", ctypes.c_ulong),
+        ("save_under", ctypes.c_int),
+        ("colormap", ctypes.c_ulong),
+        ("map_installed", ctypes.c_int),
+        ("map_state", ctypes.c_int),
+        ("all_event_masks", ctypes.c_long),
+        ("your_event_mask", ctypes.c_long),
+        ("do_not_propagate_mask", ctypes.c_long),
+        ("override_redirect", ctypes.c_int),
+        ("screen", ctypes.c_void_p),
+    ]
+
+
+def main() -> int:
+    timeout = float(sys.argv[1]) if len(sys.argv) > 1 else 30.0
+    x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XDefaultRootWindow.restype = ctypes.c_ulong
+    x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+    x11.XQueryTree.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_ulong),
+        ctypes.POINTER(ctypes.c_ulong),
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_ulong)),
+        ctypes.POINTER(ctypes.c_uint),
+    ]
+    x11.XGetWindowAttributes.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(XWindowAttributes),
+    ]
+    x11.XSetInputFocus.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    x11.XFree.argtypes = [ctypes.c_void_p]
+    x11.XWarpPointer.argtypes = [
+        ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
+        ctypes.c_int, ctypes.c_int, ctypes.c_uint, ctypes.c_uint, ctypes.c_int, ctypes.c_int,
+    ]
+
+    display = x11.XOpenDisplay(None)
+    if not display:
+        print("focus-window: cannot open the display", file=sys.stderr)
+        return 1
+    root = x11.XDefaultRootWindow(display)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        root_return = ctypes.c_ulong()
+        parent = ctypes.c_ulong()
+        children = ctypes.POINTER(ctypes.c_ulong)()
+        count = ctypes.c_uint()
+        if x11.XQueryTree(
+            display, root, ctypes.byref(root_return), ctypes.byref(parent),
+            ctypes.byref(children), ctypes.byref(count),
+        ):
+            windows = [children[i] for i in range(count.value)]
+            if children:
+                x11.XFree(children)
+            for window in windows:
+                attributes = XWindowAttributes()
+                x11.XGetWindowAttributes(display, window, ctypes.byref(attributes))
+                if attributes.map_state == IS_VIEWABLE and not attributes.override_redirect:
+                    x11.XSetInputFocus(display, window, REVERT_TO_PARENT, CURRENT_TIME)
+                    x11.XWarpPointer(
+                        display, 0, root, 0, 0, 0, 0,
+                        attributes.x + attributes.width - 1,
+                        attributes.y + attributes.height - 1,
+                    )
+                    x11.XSync(display, 0)
+                    return 0
+        time.sleep(0.1)
+
+    print("focus-window: no window appeared", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

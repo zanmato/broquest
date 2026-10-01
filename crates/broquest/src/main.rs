@@ -17,6 +17,8 @@ mod history;
 mod http;
 mod requests;
 mod result_ext;
+#[cfg(feature = "screenshots")]
+mod screenshots;
 mod scripting;
 mod settings;
 mod themes_manager;
@@ -73,7 +75,13 @@ fn main() {
                 }
             }
         }) {
-            Ok(db) => db,
+            Ok(db) => {
+                #[cfg(feature = "screenshots")]
+                if let Some(scene) = screenshots::Scene::from_env() {
+                    screenshots::seed(scene, &db);
+                }
+                db
+            }
             Err(e) => {
                 tracing::error!("Fatal error: {}. Application will exit.", e);
                 std::process::exit(1);
@@ -160,7 +168,10 @@ fn main() {
         // Start polling for updates
         update_manager::UpdateManager::start_polling(cx);
 
-        let window_bounds = gpui::Bounds::centered(None, size(px(1280.), px(900.)), cx);
+        let window_size = size(px(1280.), px(900.));
+        #[cfg(feature = "screenshots")]
+        let window_size = screenshots::window_size().unwrap_or(window_size);
+        let window_bounds = gpui::Bounds::centered(None, window_size, cx);
 
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(window_bounds)),
@@ -192,6 +203,10 @@ fn main() {
         cx.spawn(async move |cx| {
             cx.open_window(window_options, |window, cx| {
                 let broquest_app = cx.new(|cx| app::BroquestApp::new(window, cx));
+                #[cfg(feature = "screenshots")]
+                if let Some(scene) = screenshots::Scene::from_env() {
+                    screenshots::stage(scene, broquest_app.clone(), window, cx);
+                }
                 cx.new(|cx| gpui_kit::component::Root::new(broquest_app, window, cx))
             })?;
 

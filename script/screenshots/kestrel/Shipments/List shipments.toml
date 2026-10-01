@@ -1,0 +1,39 @@
+[meta]
+name = "List shipments"
+type = "http"
+seq = "1"
+
+[http]
+method = "GET"
+url = "{{baseUrl}}/v1/shipments"
+auth = "none"
+
+[[headers]]
+key = "Authorization"
+value = "Bearer {{token}}"
+enabled = true
+
+[[headers]]
+key = "Kestrel-Version"
+value = "{{apiVersion}}"
+enabled = true
+
+[[headers]]
+key = "Accept"
+value = "application/json"
+enabled = true
+
+[[query]]
+key = "status"
+value = "in_transit"
+enabled = true
+
+[[query]]
+key = "destination_country"
+value = "SE"
+enabled = true
+
+[[query]]
+key = "limit"
+value = "4"
+enabled = true

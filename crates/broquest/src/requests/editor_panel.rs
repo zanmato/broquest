@@ -190,6 +190,24 @@ impl EditorPanel {
         }
     }
 
+    /// The editor of the active tab, when it is a request.
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn active_request_editor(&self) -> Option<Entity<RequestEditor>> {
+        match self.tabs.get(self.active_tab_ix)? {
+            TabType::Request(tab) => Some(tab.request_editor.clone()),
+            _ => None,
+        }
+    }
+
+    /// The editor of the active tab, when it is a collection.
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn active_collection_editor(&self) -> Option<Entity<CollectionEditor>> {
+        match self.tabs.get(self.active_tab_ix)? {
+            TabType::Collection(tab) => Some(tab.collection_editor.clone()),
+            _ => None,
+        }
+    }
+
     fn next_tab_id(&self) -> usize {
         self.tabs
             .iter()

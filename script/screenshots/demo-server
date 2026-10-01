@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Serve the Kestrel Shipping demo API on localhost for the website
+screenshots, so every capture shows the same responses.
+
+Usage: demo-server <port>
+
+Answers the requests in script/screenshots/kestrel with canned JSON and a
+short fixed delay, so the latency in the status bar reads like a real API.
+Unknown paths get a 404.
+"""
+
+import json
+import re
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+DELAY_SECONDS = 0.04
+
+TOKEN = {
+    "access_token": "kst_dev_V3nq8ZtP1aYw6Rk0",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "scope": "shipments:read shipments:write rates:read",
+}
+
+SHIPMENTS = [
+    {
+        "id": "KS-48213",
+        "status": "in_transit",
+        "carrier": "postnord",
+        "service": "express",
+        "reference": "ORDER-20871",
+        "origin": {"city": "Göteborg", "country": "SE"},
+        "destination": {"city": "Umeå", "country": "SE"},
+        "weight_kg": 2.4,
+        "estimated_delivery": "2026-10-02",
+    },
+    {
+        "id": "KS-48197",
+        "status": "in_transit",
+        "carrier": "dhl",
+        "service": "standard",
+        "reference": "ORDER-20864",
+        "origin": {"city": "Hamburg", "country": "DE"},
+        "destination": {"city": "Malmö", "country": "SE"},
+        "weight_kg": 11.75,
+        "estimated_delivery": "2026-10-03",
+    },
+    {
+        "id": "KS-48160",
+        "status": "in_transit",
+        "carrier": "bring",
+        "service": "economy",
+        "reference": "ORDER-20839",
+        "origin": {"city": "Oslo", "country": "NO"},
+        "destination": {"city": "Uppsala", "country": "SE"},
+        "weight_kg": 0.6,
+        "estimated_delivery": "2026-10-05",
+    },
+    {
+        "id": "KS-48102",
+        "status": "in_transit",
+        "carrier": "ups",
+        "service": "express",
+        "reference": "ORDER-20790",
+        "origin": {"city": "Rotterdam", "country": "NL"},
+        "destination": {"city": "Linköping", "country": "SE"},
+        "weight_kg": 34.0,
+        "estimated_delivery": "2026-10-02",
+    },
+]
+
+SHIPMENT_DETAIL = {
+    **SHIPMENTS[0],
+    "tracking_url": "https://track.kestrel.example/KS-48213",
+    "parcels": [{"weight_kg": 2.4, "length_cm": 40, "width_cm": 30, "height_cm": 12}],
+    "events": [
+        {"at": "2026-09-29T08:12:00Z", "status": "label_created", "location": "Göteborg"},
+        {"at": "2026-09-29T16:40:00Z", "status": "picked_up", "location": "Göteborg"},
+        {"at": "2026-09-30T03:05:00Z", "status": "at_hub", "location": "Jönköping"},
+        {"at": "2026-09-30T21:48:00Z", "status": "at_hub", "location": "Sundsvall"},
+        {"at": "2026-10-01T06:20:00Z", "status": "out_for_delivery", "location": "Umeå"},
+    ],
+}
+
+RATES = {
+    "currency": "EUR",
+    "rates": [
+        {"carrier": "dhl", "service": "express", "price": 38.9, "days": 1},
+        {"carrier": "ups", "service": "standard", "price": 24.5, "days": 3},
+        {"carrier": "postnord", "service": "economy", "price": 17.25, "days": 5},
+    ],
+}
+
+WEBHOOKS = {
+    "data": [
+        {
+            "name": "tracking-updates",
+            "url": "https://hooks.example.com/kestrel",
+            "events": ["shipment.in_transit", "shipment.delivered"],
+        }
+    ]
+}
+
+
+def route(method, path):
+    """Return (status, body) for a request, body None for an empty reply."""
+    if method == "GET" and path == "/health":
+        return 200, {"status": "ok", "version": "2026.9.4"}
+    if method == "POST" and path == "/v1/auth/token":
+        return 200, TOKEN
+    if method == "GET" and path == "/v1/shipments":
+        return 200, {"data": SHIPMENTS, "has_more": True, "next_cursor": "c_48102"}
+    match = re.fullmatch(r"/v1/shipments/(KS-\d+)", path)
+    if match and method == "GET":
+        return 200, SHIPMENT_DETAIL
+    if match and method == "DELETE":
+        return 204, None
+    if method == "POST" and path == "/v1/shipments":
+        return 201, {**SHIPMENT_DETAIL, "id": "KS-48231", "status": "label_created", "events": []}
+    if method == "POST" and path == "/v1/rates/quote":
+        return 200, RATES
+    if method == "GET" and path == "/v1/webhooks":
+        return 200, WEBHOOKS
+    if method == "PUT" and path.startswith("/v1/webhooks/"):
+        return 200, WEBHOOKS["data"][0]
+    return 404, {"error": "not_found", "message": f"No route for {method} {path}"}
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "kestrel-gateway/2.4"
+    sys_version = ""
+    protocol_version = "HTTP/1.1"
+
+    def handle_any(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(length)
+        time.sleep(DELAY_SECONDS)
+        status, body = route(self.command, self.path.split("?", 1)[0])
+        payload = b"" if body is None else json.dumps(body, ensure_ascii=False).encode()
+        self.send_response(status)
+        if body is not None:
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("X-Request-Id", "req_01J9KX4M2B7Q")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = handle_any
+
+    def date_time_string(self, timestamp=None):
+        return "Thu, 01 Oct 2026 09:41:00 GMT"
+
+    def log_message(self, format, *args):
+        pass
+
+
+def main():
+    port = int(sys.argv[1])
+    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

@@ -426,6 +426,23 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
         self.rebuild_entries();
     }
 
+    /// Expand every folder, so the whole tree shows.
+    #[cfg(feature = "screenshots")]
+    pub fn expand_all(&mut self, cx: &mut Context<Self>) {
+        fn expand(item: &TreeItem) {
+            if item.is_folder() {
+                item.state.borrow_mut().expanded = true;
+                item.children.iter().for_each(expand);
+            }
+        }
+        self.entries
+            .iter()
+            .filter(|entry| entry.is_root())
+            .for_each(|entry| expand(entry.item()));
+        self.rebuild_entries();
+        cx.notify();
+    }
+
     fn rebuild_entries(&mut self) {
         let root_items: Vec<TreeItem> = self
             .entries

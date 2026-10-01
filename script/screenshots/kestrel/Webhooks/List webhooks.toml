@@ -1,0 +1,14 @@
+[meta]
+name = "List webhooks"
+type = "http"
+seq = "1"
+
+[http]
+method = "GET"
+url = "{{baseUrl}}/v1/webhooks"
+auth = "none"
+
+[[headers]]
+key = "Authorization"
+value = "Bearer {{token}}"
+enabled = true

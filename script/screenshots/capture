@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# Takes the website screenshots: runs Broquest on a virtual X display against
+# a throwaway data directory and a local demo API, once per scene and theme.
+#
+# Usage: script/screenshots/capture [scene...]
+#
+# Scenes: request scripting environments filter (default: all).
+# Writes docs/images/screenshots/<scene>-<theme>.webp.
+#
+# Needs Xvfb, ImageMagick, python3, dbus-run-session and Mesa's lavapipe
+# Vulkan driver. The demo API listens on localhost:4010, which must be free.
+# Set BROQUEST_BIN to capture with an existing build of
+# `cargo build --release -p broquest --features screenshots`.
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+root="$(pwd)"
+
+width=1600
+height=1000
+port=4010
+out="$root/docs/images/screenshots"
+
+scenes=("$@")
+if [[ ${#scenes[@]} -eq 0 ]]; then
+  scenes=(request scripting environments filter)
+fi
+
+# The light and dark pair every scene gets.
+themes=("latte:Catppuccin Latte" "mocha:Catppuccin Mocha")
+
+if [[ -z "${BROQUEST_BIN:-}" ]]; then
+  cargo build --release -p broquest --features screenshots
+  BROQUEST_BIN="$root/target/release/broquest"
+fi
+
+work="$(mktemp -d)"
+xvfb_pid=""
+server_pid=""
+app_pid=""
+# Anything the app starts in a session of its own (a browser or viewer it
+# hands a link or file to) outlives its process group. Everything a run
+# starts inherits its throwaway HOME, which finds them.
+# stop_run <home>
+stop_run() {
+  local pid
+  for pid in $(pgrep -u "$(id -u)"); do
+    # A process can exit between the listing and the read.
+    if { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -qxF "HOME=$1"; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
+cleanup() {
+  [[ -n "$app_pid" ]] && kill -- "-$app_pid" 2>/dev/null || true
+  [[ -n "${run_home:-}" ]] && stop_run "$run_home"
+  [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null || true
+  [[ -n "$xvfb_pid" ]] && kill "$xvfb_pid" 2>/dev/null || true
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+# The demo API the collection's Local environment points at, so every
+# capture shows the same responses.
+if python3 -c "import socket, sys; sys.exit(socket.socket().connect_ex(('127.0.0.1', $port)) != 0)"; then
+  echo "Port $port is in use, the demo API needs it" >&2
+  exit 1
+fi
+python3 "$root/script/screenshots/demo-server" "$port" &
+server_pid=$!
+
+display=":$((90 + RANDOM % 100))"
+Xvfb "$display" -screen 0 "${width}x${height}x24" -nolisten tcp >/dev/null 2>&1 &
+xvfb_pid=$!
+for _ in $(seq 50); do
+  DISPLAY="$display" xdpyinfo >/dev/null 2>&1 && break
+  sleep 0.1
+done
+
+# A session bus that cannot activate services: no portals, gvfs or keyring
+# start, so nothing mounts into the runtime directory and secrets are never
+# read from or written to the real keyring. The demo environment that is sent
+# has no secrets.
+cat > "$work/dbus.conf" <<'EOF'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+
+lavapipe=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -n1 || true)
+mkdir -p "$out"
+
+# capture <scene> <slug> <theme name>
+capture() {
+  local scene="$1" slug="$2" theme="$3"
+  local run="$work/$scene-$slug"
+  run_home="$run/home"
+  # The data directories live in the throwaway home where they would on a
+  # real system. The collection is a fresh copy, since sending a request can
+  # write its environments back.
+  mkdir -p "$run"/{runtime,home/.local/share,home/.local/state,home/.config,home/.cache,home/src}
+  chmod 700 "$run/runtime"
+  cp -r "$root/script/screenshots/kestrel" "$run/home/src/kestrel"
+
+  echo "Capturing $scene in $theme"
+  # Its own process group, so stopping it takes down the bus and the app.
+  setsid env -i \
+    PATH="$PATH" \
+    HOME="$run/home" \
+    LANG=en_US.UTF-8 \
+    DISPLAY="$display" \
+    XDG_DATA_HOME="$run/home/.local/share" \
+    XDG_STATE_HOME="$run/home/.local/state" \
+    XDG_CONFIG_HOME="$run/home/.config" \
+    XDG_CACHE_HOME="$run/home/.cache" \
+    XDG_RUNTIME_DIR="$run/runtime" \
+    ${lavapipe:+VK_ICD_FILENAMES="$lavapipe"} \
+    BROQUEST_SCENE="$scene" \
+    BROQUEST_THEME="$theme" \
+    BROQUEST_DEMO_COLLECTION="$run/home/src/kestrel" \
+    BROQUEST_SCENE_READY="$run/ready" \
+    dbus-run-session --config-file="$work/dbus.conf" -- "$BROQUEST_BIN" >"$run/app.log" 2>&1 &
+  app_pid=$!
+  DISPLAY="$display" "$root/script/screenshots/focus-window" 60
+
+  local waited=0
+  until [[ -f "$run/ready" ]]; do
+    if ! kill -0 "$app_pid" 2>/dev/null || (( waited > 600 )); then
+      echo "Broquest did not stage $scene, its log follows:" >&2
+      cat "$run/app.log" >&2
+      exit 1
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  # One more frame for anything the last update scheduled.
+  sleep 0.5
+
+  DISPLAY="$display" import -window root "$run/shot.png"
+  kill -- "-$app_pid" 2>/dev/null || true
+  wait "$app_pid" 2>/dev/null || true
+  stop_run "$run_home"
+  app_pid=""
+
+  magick "$run/shot.png" \
+    \( +clone -alpha extract -draw "fill black polygon 0,0 0,10 10,0 fill white circle 10,10 10,0" \
+       \( +clone -flip \) -compose Multiply -composite \
+       \( +clone -flop \) -compose Multiply -composite \) \
+    -alpha off -compose CopyOpacity -composite \
+    -define webp:lossless=false -quality 90 "$out/$scene-$slug.webp"
+}
+
+for scene in "${scenes[@]}"; do
+  for theme in "${themes[@]}"; do
+    capture "$scene" "${theme%%:*}" "${theme#*:}"
+  done
+done
+
+echo "Wrote $out"

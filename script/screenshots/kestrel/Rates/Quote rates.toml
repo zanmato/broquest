@@ -1,0 +1,28 @@
+[meta]
+name = "Quote rates"
+type = "http"
+seq = "1"
+
+[http]
+method = "POST"
+url = "{{baseUrl}}/v1/rates/quote"
+auth = "none"
+
+[[headers]]
+key = "Authorization"
+value = "Bearer {{token}}"
+enabled = true
+
+[[headers]]
+key = "Content-Type"
+value = "application/json"
+enabled = true
+
+[body]
+json = '''
+{
+  "from": { "postal_code": "41104", "country": "SE" },
+  "to": { "postal_code": "10115", "country": "DE" },
+  "parcels": [{ "weight_kg": 6.8 }]
+}
+'''

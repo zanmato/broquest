@@ -374,6 +374,80 @@ impl RequestEditor {
         }
     }
 
+    /// Select the environment named `name` in the toolbar.
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn select_environment(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Row 0 is "No environment", the collection's environments follow.
+        let row = self
+            .collection_path
+            .as_deref()
+            .and_then(|path| {
+                CollectionManager::global(cx)
+                    .read(cx)
+                    .get_collection_environments(path)
+            })
+            .and_then(|environments| environments.iter().position(|env| env.name == name))
+            .map(|index| index + 1);
+        if let Some(row) = row {
+            self.environment_select.update(cx, |state, cx| {
+                state.set_selected_index(Some(IndexPath::default().row(row)), window, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    /// Show the request tab labelled `label`.
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn show_request_tab(&mut self, label: &str, cx: &mut Context<Self>) {
+        self.active_tab = match label {
+            "Path" => RequestTab::Path,
+            "Body" => RequestTab::Body,
+            "Headers" => RequestTab::Headers,
+            "Auth" => RequestTab::Auth,
+            "Scripts" => RequestTab::Scripts,
+            "Vars" => RequestTab::Vars,
+            _ => RequestTab::Query,
+        };
+        cx.notify();
+    }
+
+    /// Resize the request pane, above the response or beside it.
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn resize_request_pane(
+        &mut self,
+        size: gpui::Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_response_state.update(cx, |state, cx| {
+            state.resize_panel(0, size, window, cx);
+        });
+    }
+
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn is_loading(&self) -> bool {
+        self.is_loading
+    }
+
+    /// Type `query` into the JSONPath filter under the response.
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn filter_response(
+        &mut self,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.jsonpath_input.update(cx, |input, cx| {
+            input.set_value(query.to_string(), window, cx);
+        });
+        self.handle_jsonpath_input_change(window, cx);
+    }
+
     pub fn set_collection_path(&mut self, collection_path: Option<String>, cx: &mut Context<Self>) {
         self.collection_path = collection_path.clone();
         // Scope the read-only Vars view to this collection so it shows the right

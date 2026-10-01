@@ -694,6 +694,19 @@ impl CollectionsPanel {
         });
     }
 
+    /// Expand the whole tree and select the request named `name`.
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn reveal_request(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.tree_state.update(cx, |state, cx| {
+            state.expand_all(cx);
+            let ix = state
+                .entries()
+                .iter()
+                .position(|entry| !entry.is_folder() && entry.item().label.as_ref() == name);
+            state.set_selected_index(ix, cx);
+        });
+    }
+
     /// Open a collection in a new tab
     fn open_collection_tab(&mut self, collection_path: &str, cx: &mut Context<Self>) {
         tracing::info!("Opening collection tab for path: {}", collection_path);

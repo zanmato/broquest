@@ -1,0 +1,50 @@
+[meta]
+name = "Log in"
+type = "http"
+seq = "1"
+
+[http]
+method = "POST"
+url = "{{baseUrl}}/v1/auth/token"
+auth = "none"
+
+[script]
+pre-request = '''
+// Sign the body with the client secret, the gateway rejects
+// unsigned token requests.
+const timestamp = Date.now().toString();
+const signature = crypto
+  .createHmac("sha256", bro.getEnvVar("clientSecret"))
+  .update(timestamp + req.body)
+  .digest("hex");
+
+req.headers["X-Kestrel-Timestamp"] = timestamp;
+req.headers["X-Kestrel-Signature"] = signature;
+req.headers["X-Request-Id"] = crypto.randomUUID();
+'''
+post-response = '''
+// Keep the token for the other requests in this environment.
+if (res.status === 200) {
+  bro.setEnvVar("token", res.body.access_token);
+  bro.setVar("scopes", res.body.scope.split(" "));
+}
+'''
+
+[[headers]]
+key = "Content-Type"
+value = "application/json"
+enabled = true
+
+[[headers]]
+key = "Kestrel-Version"
+value = "{{apiVersion}}"
+enabled = true
+
+[body]
+json = '''
+{
+  "grant_type": "client_credentials",
+  "client_id": "{{clientId}}",
+  "scope": "shipments:read shipments:write rates:read"
+}
+'''

@@ -1,0 +1,9 @@
+[meta]
+name = "Health check"
+type = "http"
+seq = "1"
+
+[http]
+method = "GET"
+url = "{{baseUrl}}/health"
+auth = "none"

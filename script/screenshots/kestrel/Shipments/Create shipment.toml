@@ -1,0 +1,30 @@
+[meta]
+name = "Create shipment"
+type = "http"
+seq = "3"
+
+[http]
+method = "POST"
+url = "{{baseUrl}}/v1/shipments"
+auth = "none"
+
+[[headers]]
+key = "Authorization"
+value = "Bearer {{token}}"
+enabled = true
+
+[[headers]]
+key = "Content-Type"
+value = "application/json"
+enabled = true
+
+[body]
+json = '''
+{
+  "service": "express",
+  "reference": "ORDER-20931",
+  "from": { "postal_code": "41104", "country": "SE" },
+  "to": { "postal_code": "0150", "country": "NO" },
+  "parcels": [{ "weight_kg": 2.4, "length_cm": 40, "width_cm": 30, "height_cm": 12 }]
+}
+'''

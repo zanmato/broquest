@@ -1,0 +1,90 @@
+[collection]
+name = "Kestrel Shipping"
+version = "1.0.0"
+type = "collection"
+docs = """
+# Kestrel Shipping API
+
+Book parcels, compare carrier rates and follow shipments until delivery.
+
+Run **Auth / Log in** first. Its post-response script stores the access token
+in the `token` variable, which the other requests send as a bearer token.
+"""
+ignore = []
+
+[[environment]]
+name = "Local"
+
+[environment.variables.baseUrl]
+value = "http://localhost:4010"
+secret = false
+
+[environment.variables.apiVersion]
+value = "2026-09-01"
+secret = false
+
+[environment.variables.clientId]
+value = "kestrel-dev"
+secret = false
+
+[environment.variables.clientSecret]
+value = "local-signing-key"
+secret = false
+
+[environment.variables.token]
+value = "kst_dev_7Qm2xR9vLc4PwT8n"
+secret = false
+
+[[environment]]
+name = "Staging"
+
+[environment.variables.baseUrl]
+value = "https://api.staging.kestrel.example"
+secret = false
+
+[environment.variables.apiVersion]
+value = "2026-09-01"
+secret = false
+
+[environment.variables.clientId]
+value = "kestrel-web-staging"
+secret = false
+
+[environment.variables.clientSecret]
+value = ""
+secret = true
+
+[environment.variables.token]
+value = "kst_stg_2Hc7Lp0Qw5Ye9Ub3"
+secret = false
+
+[environment.variables.webhookUrl]
+value = "https://hooks.staging.example.com/kestrel"
+secret = false
+
+[environment.variables.webhookSecret]
+value = ""
+secret = true
+
+[[environment]]
+name = "Production"
+
+[environment.variables.baseUrl]
+value = "https://api.kestrel.example"
+secret = false
+
+[environment.variables.apiVersion]
+value = "2026-06-15"
+secret = false
+
+[environment.variables.clientId]
+value = "kestrel-web"
+secret = false
+
+[environment.variables.clientSecret]
+value = ""
+secret = true
+
+[environment.variables.token]
+value = ""
+secret = false

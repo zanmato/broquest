@@ -323,6 +323,16 @@ impl BroquestApp {
         }
     }
 
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn editor_panel(&self) -> &Entity<EditorPanel> {
+        &self.editor_panel
+    }
+
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn collections_panel(&self) -> &Entity<CollectionsPanel> {
+        &self.collections_panel
+    }
+
     fn on_quit(&mut self, _: &Quit, _window: &mut Window, cx: &mut Context<Self>) {
         cx.quit();
     }

@@ -337,6 +337,22 @@ impl CollectionEditor {
         }
     }
 
+    /// Show the Environments tab with the environment named `name`, its
+    /// secrets filled in from `secrets`.
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn show_environment(
+        &mut self,
+        name: &str,
+        secrets: &[(&str, &str)],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_active_tab(1, cx);
+        self.environment_editor.update(cx, |editor, cx| {
+            editor.show_environment(name, secrets, window, cx);
+        });
+    }
+
     fn set_active_tab(&mut self, tab_index: usize, cx: &mut Context<Self>) {
         self.active_tab = tab_index;
         cx.notify();

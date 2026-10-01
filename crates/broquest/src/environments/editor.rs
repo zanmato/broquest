@@ -190,6 +190,30 @@ impl EnvironmentEditor {
         }
     }
 
+    /// Switch to the environment named `name` and fill in the values of its
+    /// secrets from `secrets`, as if typed.
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn show_environment(
+        &mut self,
+        name: &str,
+        secrets: &[(&str, &str)],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.environments.iter().position(|env| env.name == name) else {
+            return;
+        };
+        self.set_active_environment(index, cx);
+        for row in &self.environments[index].secrets {
+            let key = row.key_input.read(cx).value().to_string();
+            if let Some((_, value)) = secrets.iter().find(|(secret, _)| *secret == key) {
+                row.value_input.update(cx, |input, cx| {
+                    input.set_value(value.to_string(), window, cx);
+                });
+            }
+        }
+    }
+
     /// Update environment name when input changes
     pub fn update_environment_name(&mut self, env_index: usize, cx: &mut Context<Self>) {
         if let Some(env) = self.environments.get_mut(env_index) {
