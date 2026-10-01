@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Broquest</title>
+<meta name="description" content="Broquest is an API client for Linux, macOS and Windows. Collections are folders of TOML files, and requests can run JavaScript before they are sent and after the response arrives.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Broquest">
+<meta property="og:description" content="A cross platform API client. Collections are folders of TOML files.">
+<meta property="og:image" content="https://zanmato.github.io/broquest/images/request-mocha.webp">
+<meta name="theme-color" content="#161923">
+<link rel="icon" type="image/png" href="images/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:ital,wght@1,900&family=Instrument+Sans:ital,wdth,wght@0,75..100,400..700;1,75..100,400..700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+:root {
+  --ground: #f3f6f2;
+  --surface: #ffffff;
+  --sunken: #e7ece6;
+  --ink: #111913;
+  --muted: #536057;
+  --line: #d3dbd4;
+  --accent: #15803d;
+  --accent-soft: #d4f5de;
+  --on-accent: #ffffff;
+  --get: #15803d;
+  --post: #b45309;
+  --put: #1d4ed8;
+  --shadow: 0 32px 64px -32px rgb(17 25 19 / 0.45);
+  /* The URL line uses the syntax colors the app's URL bar shows in the
+     screenshot below it: Catppuccin Latte here, Mocha in the dark theme. */
+  --url-ink: #4c4f69;
+  --url-punct: #7c7f93;
+  --url-str: #40a02b;
+  --url-key: #1e66f5;
+  --url-op: #04a5e5;
+  /* Code panels stay dark in both themes, like the editor they mirror. */
+  --code-bg: #161923;
+  --code-bar: #1e2230;
+  --code-line: #2b3142;
+  --code-ink: #e3e7f1;
+  --code-muted: #7f879c;
+  --code-key: #86efac;
+  --code-str: #fcd88a;
+  --code-head: #93c5fd;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --display: "Red Hat Display", "Arial Black", ui-sans-serif, system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #161923;
+    --surface: #1e2230;
+    --sunken: #12151d;
+    --ink: #e8ebf3;
+    --muted: #9aa2b6;
+    --line: #2b3142;
+    --accent: #4ade80;
+    --accent-soft: #1b3326;
+    --on-accent: #0b1a10;
+    --get: #4ade80;
+    --post: #fbbf24;
+    --put: #7cb2ff;
+    --url-ink: #cdd6f4;
+    --url-punct: #9399b2;
+    --url-str: #a6e3a1;
+    --url-key: #89b4fa;
+    --url-op: #89dceb;
+    --shadow: 0 32px 80px -32px rgb(0 0 0 / 0.85);
+    --code-bg: #10131b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #161923;
+  --surface: #1e2230;
+  --sunken: #12151d;
+  --ink: #e8ebf3;
+  --muted: #9aa2b6;
+  --line: #2b3142;
+  --accent: #4ade80;
+  --accent-soft: #1b3326;
+  --on-accent: #0b1a10;
+  --get: #4ade80;
+  --post: #fbbf24;
+  --put: #7cb2ff;
+  --url-ink: #cdd6f4;
+  --url-punct: #9399b2;
+  --url-str: #a6e3a1;
+  --url-key: #89b4fa;
+  --url-op: #89dceb;
+  --shadow: 0 32px 80px -32px rgb(0 0 0 / 0.85);
+  --code-bg: #10131b;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 1.0625rem/1.6 var(--sans);
+}
+img { max-width: 100%; height: auto; display: block; }
+a { color: inherit; }
+p { margin: 0; }
+code, pre { font-family: var(--mono); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+
+.wrap { max-width: 74rem; margin-inline: auto; padding-inline: clamp(16px, 4vw, 40px); }
+
+.eyebrow {
+  font: 500 0.8125rem/1.2 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.display {
+  font-family: var(--display);
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: -0.015em;
+  line-height: 1;
+  text-wrap: balance;
+  margin: 0;
+}
+/* The logo draws dark letters inside a green outline, the headline borrows it. */
+.outline {
+  -webkit-text-stroke: 0.1em var(--accent);
+  paint-order: stroke fill;
+}
+
+/* Header */
+.top { display: flex; align-items: center; gap: 1.25rem 1.75rem; flex-wrap: wrap; padding-block: 1.25rem; }
+.logo img { height: 30px; width: auto; }
+.top nav { display: flex; align-items: center; gap: 1.25rem; margin-left: auto; font-size: 0.9375rem; }
+.top nav a { color: var(--muted); text-decoration: none; }
+.top nav a:hover { color: var(--ink); }
+.chip {
+  font: 500 0.75rem/1 var(--mono);
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hero */
+.hero { display: grid; gap: 1.5rem; padding-block: clamp(2.5rem, 7vw, 5.5rem) 2.5rem; }
+.hero h1 { font-size: clamp(2.6rem, 6.6vw, 5.4rem); max-width: 16ch; }
+.lede { font-size: 1.25rem; color: var(--muted); max-width: 40rem; }
+.facts { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; list-style: none; padding: 0; margin: 0; font-size: 0.9375rem; color: var(--muted); }
+.facts li { display: flex; align-items: center; gap: 0.45rem; }
+.facts li::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.cta { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.btn {
+  display: inline-flex; align-items: center; gap: 0.55rem;
+  padding: 0.8rem 1.2rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.btn:hover { transform: translateY(-1px); border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn svg { width: 18px; height: 18px; flex: none; }
+
+.reqline {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem;
+  font: 500 0.9375rem/1.4 var(--mono);
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.reqline .method { font-weight: 700; color: var(--get); }
+.reqline .url { overflow-wrap: anywhere; color: var(--url-str); }
+.reqline .u-var { color: var(--url-ink); }
+.reqline .u-punct { color: var(--url-punct); }
+.reqline .u-key { color: var(--url-key); }
+.reqline .u-op { color: var(--url-op); }
+.reqline .status { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; animation: arrive 0.45s ease-out 0.7s both; }
+.reqline .status b { color: var(--get); font-weight: 700; }
+@keyframes arrive { from { opacity: 0; transform: translateX(-6px); } }
+
+.shot { margin: 0 auto clamp(4rem, 9vw, 7rem); }
+.shot img { width: 100%; border-radius: 12px; box-shadow: var(--shadow), 0 0 0 1px var(--line); }
+.shot figcaption { margin-top: 0.9rem; font-size: 0.875rem; color: var(--muted); }
+
+/* Sections */
+section.block { padding-block: clamp(3rem, 7vw, 5.5rem); border-top: 1px solid var(--line); }
+.head { display: grid; gap: 0.9rem; margin-bottom: clamp(2rem, 4vw, 3rem); max-width: 44rem; }
+.head h2 { font-size: clamp(2rem, 4.2vw, 3.1rem); }
+.head p:not(.eyebrow) { color: var(--muted); font-size: 1.125rem; }
+
+.split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(2rem, 5vw, 4rem); align-items: start; }
+.split .head { margin-bottom: 1.5rem; }
+.prose { display: grid; gap: 1rem; color: var(--muted); font-size: 1.0625rem; max-width: 34rem; }
+.prose strong { color: var(--ink); font-weight: 600; }
+.prose code { font-size: 0.9em; color: var(--ink); }
+
+/* Tour: one tab per scene */
+.tour-tabs { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.75rem; }
+.tour-tabs button {
+  font: 600 0.9375rem/1 var(--sans);
+  padding: 0.65rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tour-tabs button:hover { color: var(--ink); border-color: var(--muted); }
+.tour-tabs button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+.tour-panel { display: grid; gap: clamp(1.5rem, 3vw, 2.25rem); }
+.tour-panel[hidden] { display: none; }
+.tour-panel + .tour-panel { margin-top: 3rem; }
+.js .tour-panel + .tour-panel { margin-top: 0; }
+.js .tour-panel h3 { display: none; }
+.tour-panel h3 { margin: 0 0 0.75rem; font: 700 1.25rem/1.25 var(--sans); }
+.tour-copy { display: grid; gap: 0.75rem; max-width: 46rem; color: var(--muted); }
+.tour-copy code { font-size: 0.9em; color: var(--ink); }
+.tour-panel img { width: 100%; border-radius: 12px; box-shadow: var(--shadow), 0 0 0 1px var(--line); }
+
+/* Code panels */
+.panel { background: var(--code-bg); color: var(--code-ink); border-radius: 12px; overflow: hidden; box-shadow: 0 0 0 1px var(--code-line); }
+.panel + .panel { margin-top: 1rem; }
+.panel-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.6rem 1rem;
+  background: var(--code-bar);
+  border-bottom: 1px solid var(--code-line);
+  font: 500 0.8125rem/1.2 var(--mono);
+  color: var(--code-muted);
+}
+.panel pre { margin: 0; padding: 1rem 1.1rem; overflow-x: auto; font-size: 0.875rem; line-height: 1.65; }
+.files { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+.files .tree { border-right: 1px solid var(--code-line); }
+.tree .on { color: var(--code-key); }
+.c-k { color: var(--code-key); }
+.c-s { color: var(--code-str); }
+.c-h { color: var(--code-head); }
+.c-m { color: var(--code-muted); }
+
+/* Feature rows */
+.rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 clamp(2rem, 5vw, 4rem); margin: 0; }
+.row { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 1rem; padding-block: 1.25rem; border-top: 1px solid var(--line); }
+.row dt { font: 500 0.875rem/1.7 var(--mono); color: var(--ink); }
+.row dt::before { content: ""; display: inline-block; width: 0.5rem; height: 0.5rem; margin-right: 0.55rem; border-radius: 2px; background: var(--accent); vertical-align: 0.05em; }
+.row dd { margin: 0; color: var(--muted); }
+.row dd code { font-size: 0.9em; color: var(--ink); }
+
+/* Download */
+.platforms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.platform {
+  display: grid; align-content: start; gap: 0.9rem;
+  padding: 1.35rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.platform.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.platform h3 { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin: 0; font: 700 1.25rem/1.2 var(--sans); }
+.platform h3 small { font: 500 0.75rem/1 var(--mono); color: var(--muted); }
+.platform .yours { display: none; font: 500 0.75rem/1 var(--mono); color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; }
+.platform.current .yours { display: block; }
+.platform .links { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.platform .links .btn { padding: 0.6rem 0.9rem; font-size: 0.9375rem; }
+.platform.current .links .btn:first-child { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.platform p { color: var(--muted); font-size: 0.9375rem; }
+.cmd { display: flex; align-items: stretch; border: 1px solid var(--line); border-radius: 8px; background: var(--sunken); overflow: hidden; }
+.cmd code { flex: 1; min-width: 0; padding: 0.55rem 0.7rem; font-size: 0.8125rem; line-height: 1.5; overflow-x: auto; white-space: nowrap; }
+.cmd button {
+  flex: none; border: 0; border-left: 1px solid var(--line);
+  background: transparent; color: var(--muted);
+  font: 500 0.75rem/1 var(--mono); padding-inline: 0.7rem; cursor: pointer;
+}
+.cmd button:hover { color: var(--ink); }
+
+.notes { margin-top: clamp(2.5rem, 5vw, 3.5rem); display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); gap: clamp(1.5rem, 4vw, 3rem); }
+.notes h3 { margin: 0 0 0.4rem; font: 700 1.25rem/1.25 var(--sans); }
+.notes .meta { color: var(--muted); font-size: 0.9375rem; display: grid; gap: 0.5rem; }
+.notes details { border-top: 1px solid var(--line); padding-block: 0.8rem; }
+.notes details:last-child { border-bottom: 1px solid var(--line); }
+.notes summary { cursor: pointer; font: 500 0.875rem/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; }
+.notes ul { margin: 0.75rem 0 0.25rem; padding-left: 1.2rem; display: grid; gap: 0.35rem; color: var(--muted); }
+.notes li::marker { color: var(--accent); }
+
+footer { border-top: 1px solid var(--line); padding-block: 2.5rem 3rem; color: var(--muted); font-size: 0.9375rem; }
+footer .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem 2rem; }
+footer nav { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }
+footer img { height: 22px; width: auto; }
+footer .credit { margin-left: auto; }
+
+@media (max-width: 900px) {
+  .split, .notes { grid-template-columns: minmax(0, 1fr); }
+  .platforms { grid-template-columns: minmax(0, 1fr); }
+  .rows { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .top nav .optional { display: none; }
+  .files { grid-template-columns: minmax(0, 1fr); }
+  .files .tree { border-right: 0; border-bottom: 1px solid var(--code-line); }
+  .row { grid-template-columns: minmax(0, 1fr); gap: 0.35rem; }
+  .reqline .status { margin-left: 0; }
+  footer .credit { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+/* Screenshots open full size in a dialog. */
+img[width="1600"] { cursor: zoom-in; }
+.zoom {
+  border: 0; padding: 0; margin: auto;
+  max-width: none; max-height: none;
+  background: transparent; overflow: visible;
+}
+.zoom::backdrop { background: rgb(0 0 0 / 0.8); }
+.zoom img {
+  display: block; width: auto; height: auto;
+  max-width: calc(100vw - 32px); max-height: calc(100vh - 32px);
+  border-radius: 12px; box-shadow: var(--shadow), 0 0 0 1px var(--line);
+  cursor: zoom-out;
+}
+.zoom-close {
+  position: fixed; top: 16px; right: 16px;
+  display: grid; place-items: center; width: 40px; height: 40px; padding: 0;
+  border: 1px solid var(--line); border-radius: 50%;
+  background: var(--surface); color: var(--ink); cursor: pointer;
+}
+.zoom-close svg { width: 20px; height: 20px; }
+.zoom[open], .zoom[open]::backdrop { animation: zoom-fade 0.18s ease-out; }
+@keyframes zoom-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .zoom[open], .zoom[open]::backdrop { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="wrap top">
+  <a class="logo" href="./" aria-label="Broquest home">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="images/logo-dark.png">
+      <img src="images/logo-light.png" alt="Broquest" width="142" height="30">
+    </picture>
+  </a>
+  <nav aria-label="Main">
+    <a class="optional" href="#tour">Tour</a>
+    <a class="optional" href="#files">Collections</a>
+    <a class="optional" href="#features">Features</a>
+    <a href="#download">Download</a>
+    <a href="https://github.com/zanmato/broquest">GitHub</a>
+    <a class="chip" href="https://github.com/zanmato/broquest/releases/tag/v__VERSION__">v__VERSION__</a>
+  </nav>
+</header>
+
+<main>
+  <section class="wrap hero">
+    <p class="eyebrow">Rust and GPUI · Apache 2.0</p>
+    <h1 class="display">A cross platform <span class="outline">API client</span></h1>
+    <p class="lede">Broquest runs on Linux, macOS and Windows. Collections are folders of TOML files, and requests can run JavaScript before they are sent and after the response arrives.</p>
+    <ul class="facts">
+      <li>No account or cloud sync</li>
+      <li>Environments and secrets</li>
+      <li>Imports OpenAPI, WSDL and cURL</li>
+    </ul>
+    <div class="cta">
+      <a class="btn primary" id="hero-download" href="#download">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
+        <span id="hero-download-label">Download v__VERSION__</span>
+      </a>
+      <a class="btn" href="https://github.com/zanmato/broquest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+        Source on GitHub
+      </a>
+    </div>
+    <p class="reqline" aria-label="The request shown in the screenshot below">
+      <span class="method">GET</span>
+      <span class="url"><span class="u-punct">{{</span><span class="u-var">baseUrl</span><span class="u-punct">}}/</span>v1<span class="u-punct">/</span>shipments<span class="u-punct">?</span><span class="u-key">status</span><span class="u-op">=</span>in_transit<span class="u-punct">&amp;</span><span class="u-key">destination_country</span><span class="u-op">=</span>SE<span class="u-punct">&amp;</span><span class="u-key">limit</span><span class="u-op">=</span>4</span>
+      <span class="status"><b>200 OK</b> · 1.1KB</span>
+    </p>
+  </section>
+
+  <figure class="wrap shot">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="images/request-mocha.webp">
+      <img src="images/request-latte.webp" width="1600" height="1000" alt="Broquest with a collection open in the sidebar and a GET request with three query parameters, sent in the Local environment, above its JSON response">
+    </picture>
+    <figcaption>The query table and the URL stay in sync. <code>{{baseUrl}}</code> comes from the environment selected next to the method.</figcaption>
+  </figure>
+
+  <section class="block" id="tour">
+    <div class="wrap">
+      <div class="head">
+        <h2 class="display">Request tabs</h2>
+        <p>Each request opens in a tab with its own environment and response.</p>
+      </div>
+
+      <div class="tour-tabs" role="tablist" aria-label="Tour" hidden>
+        <button type="button" role="tab" id="tab-scripting" aria-controls="panel-scripting" aria-selected="true">Scripting</button>
+        <button type="button" role="tab" id="tab-environments" aria-controls="panel-environments" aria-selected="false" tabindex="-1">Environments</button>
+        <button type="button" role="tab" id="tab-filter" aria-controls="panel-filter" aria-selected="false" tabindex="-1">Response filter</button>
+      </div>
+
+      <div class="tour-panel" id="panel-scripting" role="tabpanel" aria-labelledby="tab-scripting">
+        <div class="tour-copy">
+          <h3>Scripting</h3>
+          <p>Each request has a pre-request and a post-response script. Before the request is sent, a script can change its URL, headers and body through <code>req</code>. After the response arrives, a script can read its status, headers and body through <code>res</code>.</p>
+          <p><code>bro.setEnvVar</code> saves a value, such as a token, to the selected environment. Scripts run in QuickJS with LLRT modules for <code>crypto</code>, <code>Buffer</code> and <code>URL</code>, and scripts written for Bruno's <code>bru</code> API run as well.</p>
+          <p>The editor checks syntax as you type, completes the API and has recipes for common scripts such as HMAC signatures.</p>
+        </div>
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="images/scripting-mocha.webp">
+          <img src="images/scripting-latte.webp" width="1600" height="1000" loading="lazy" alt="A POST request with a pre-request script that signs the body and a post-response script that saves the token, next to the JSON response">
+        </picture>
+      </div>
+
+      <div class="tour-panel" id="panel-environments" role="tabpanel" aria-labelledby="tab-environments">
+        <div class="tour-copy">
+          <h3>Environments</h3>
+          <p>A collection can have several environments, such as Local, Staging and Production. They are stored in <code>collection.toml</code>.</p>
+          <p>Reference a variable as <code>{{name}}</code> in the URL, query, path parameters, headers, body and auth. Secret values are masked in the editor and saved to the system keychain.</p>
+        </div>
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="images/environments-mocha.webp">
+          <img src="images/environments-latte.webp" width="1600" height="1000" loading="lazy" alt="The Environments tab of a collection with the Staging environment selected, listing five variables and two masked secrets">
+        </picture>
+      </div>
+
+      <div class="tour-panel" id="panel-filter" role="tabpanel" aria-labelledby="tab-filter">
+        <div class="tour-copy">
+          <h3>Response filter</h3>
+          <p>Filter a JSON response with a JSONPath expression in the field under it.</p>
+          <p>XML responses are formatted, images are shown inline and PDFs open in the system viewer. The Raw tab shows the final URL, the request headers that were sent and the response headers.</p>
+        </div>
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="images/filter-mocha.webp">
+          <img src="images/filter-latte.webp" width="1600" height="1000" loading="lazy" alt="A GET request with a path parameter, its JSON response filtered by a JSONPath expression down to two tracking events">
+        </picture>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="files">
+    <div class="wrap split">
+      <div>
+        <div class="head">
+          <h2 class="display">Collections</h2>
+        </div>
+        <div class="prose">
+          <p>Each request is a TOML file and each group is a folder. A collection can live in the repository of the API it tests, and changes to it show up in diffs and pull requests.</p>
+          <p>Broquest can also open <strong>OpenCollection</strong> YAML folders, the format used by Bruno, and save changes back in that format. Support for it is partial.</p>
+          <p>Auth set on the collection is used by every request that inherits it.</p>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="files">
+          <div class="tree">
+            <div class="panel-bar"><span>kestrel/</span></div>
+<pre><span class="c-m">kestrel/</span>
+├─ collection.toml
+├─ Health check.toml
+├─ Auth/
+│  └─ Log in.toml
+├─ Rates/
+│  └─ Quote rates.toml
+├─ Shipments/
+│  ├─ Cancel shipment.toml
+│  ├─ Create shipment.toml
+│  ├─ <span class="on">Get shipment.toml</span>
+│  └─ List shipments.toml
+└─ Webhooks/
+   ├─ List webhooks.toml
+   └─ Register webhook.toml</pre>
+          </div>
+          <div>
+            <div class="panel-bar"><span>Shipments/Get shipment.toml</span><span>TOML</span></div>
+<pre><span class="c-h">[meta]</span>
+<span class="c-k">name</span> = <span class="c-s">"Get shipment"</span>
+<span class="c-k">type</span> = <span class="c-s">"http"</span>
+<span class="c-k">seq</span> = <span class="c-s">"2"</span>
+
+<span class="c-h">[http]</span>
+<span class="c-k">method</span> = <span class="c-s">"GET"</span>
+<span class="c-k">url</span> = <span class="c-s">"{{baseUrl}}/v1/shipments/:id"</span>
+<span class="c-k">auth</span> = <span class="c-s">"none"</span>
+
+<span class="c-h">[[headers]]</span>
+<span class="c-k">key</span> = <span class="c-s">"Authorization"</span>
+<span class="c-k">value</span> = <span class="c-s">"Bearer {{token}}"</span>
+<span class="c-k">enabled</span> = true
+
+<span class="c-h">[[headers]]</span>
+<span class="c-k">key</span> = <span class="c-s">"Kestrel-Version"</span>
+<span class="c-k">value</span> = <span class="c-s">"{{apiVersion}}"</span>
+<span class="c-k">enabled</span> = true
+
+<span class="c-h">[params.path]</span>
+<span class="c-k">id</span> = <span class="c-s">"KS-48213"</span></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="features">
+    <div class="wrap">
+      <div class="head">
+        <h2 class="display">Features</h2>
+      </div>
+      <dl class="rows">
+        <div class="row"><dt>Auth</dt><dd>Basic, Digest, API key, JWT and OAuth2 client credentials, set on a request or on the collection.</dd></div>
+        <div class="row"><dt>Body</dt><dd>JSON, XML, HTML, plain text, URL encoded forms and multipart forms with file uploads.</dd></div>
+        <div class="row"><dt>Import</dt><dd>Create a collection from an OpenAPI spec, grouped by tag, or from a WSDL URL. Paste a cURL command into the URL bar to import it, or copy a request as cURL.</dd></div>
+        <div class="row"><dt>History</dt><dd>Every response is listed in the history with its method, URL, status and time.</dd></div>
+        <div class="row"><dt>Palette</dt><dd>Press <code>Ctrl K</code> (<code>⌘ K</code> on macOS) to open a request by name or run a command.</dd></div>
+        <div class="row"><dt>Layout</dt><dd>Show the response under the request or beside it.</dd></div>
+        <div class="row"><dt>Themes</dt><dd>Comes with Catppuccin Latte, Frappé, Macchiato and Mocha. Theme files in the data directory are reloaded when they change.</dd></div>
+        <div class="row"><dt>Updates</dt><dd>Checks GitHub for new releases and updates itself. This can be turned off in the settings.</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="block" id="download">
+    <div class="wrap">
+      <div class="head">
+        <h2 class="display">Download Broquest __VERSION__</h2>
+      </div>
+
+      <div class="platforms">
+        <article class="platform" data-os="mac">
+          <span class="yours">Your system</span>
+          <h3>macOS <small>Apple silicon</small></h3>
+          <div class="links">
+            <a class="btn" href="https://github.com/zanmato/broquest/releases/download/v__VERSION__/broquest-macos-arm64.tar.gz">Broquest.app</a>
+          </div>
+          <div class="cmd"><code>brew install --cask zanmato/tap/broquest</code><button type="button">Copy</button></div>
+          <p>The app is not notarized. If you download the archive yourself, clear the quarantine flag after unpacking it:</p>
+          <div class="cmd"><code>xattr -r -d com.apple.quarantine Broquest.app</code><button type="button">Copy</button></div>
+        </article>
+
+        <article class="platform" data-os="windows">
+          <span class="yours">Your system</span>
+          <h3>Windows <small>x86_64</small></h3>
+          <div class="links">
+            <a class="btn" href="https://github.com/zanmato/broquest/releases/download/v__VERSION__/broquest-windows-x86_64.exe">broquest.exe</a>
+          </div>
+          <p>A single executable, no installer.</p>
+        </article>
+
+        <article class="platform" data-os="linux">
+          <span class="yours">Your system</span>
+          <h3>Linux <small>x86_64</small></h3>
+          <div class="links">
+            <a class="btn" href="https://github.com/zanmato/broquest/releases/download/v__VERSION__/broquest___VERSION___amd64.deb">.deb package</a>
+            <a class="btn" href="https://github.com/zanmato/broquest/releases/download/v__VERSION__/broquest-linux-x86_64">Binary</a>
+          </div>
+          <div class="cmd"><code>sudo apt install ./broquest___VERSION___amd64.deb</code><button type="button">Copy</button></div>
+          <p>Runs on Wayland and X11.</p>
+        </article>
+      </div>
+
+      <div class="notes">
+        <div>
+          <h3>What's new in __VERSION__</h3>
+          <div class="meta">
+            <p>Released __RELEASE_DATE__</p>
+            <p><a href="https://github.com/zanmato/broquest/blob/main/CHANGELOG.md">Full changelog</a> · <a href="https://github.com/zanmato/broquest/releases">All releases</a></p>
+          </div>
+        </div>
+        <div>
+<!-- __CHANGELOG__ -->
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="images/logo-dark.png">
+      <img src="images/logo-light.png" alt="Broquest" width="104" height="22">
+    </picture>
+    <nav aria-label="Project">
+      <a href="https://github.com/zanmato/broquest">Repository</a>
+      <a href="https://github.com/zanmato/broquest/issues">Issues</a>
+      <a href="https://github.com/zanmato/broquest/releases">Releases</a>
+      <a href="https://github.com/zanmato/broquest/blob/main/LICENSE">Apache 2.0</a>
+    </nav>
+    <p class="credit">Built with <a href="https://www.gpui.rs">GPUI</a> and <a href="https://github.com/longbridge/gpui-kit">gpui-kit</a>. Icons from <a href="https://lucide.dev">Lucide</a>.</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var ua = navigator.userAgent;
+  var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+  var os = null;
+  if (/mac/i.test(platform) || /Macintosh/.test(ua)) os = "mac";
+  else if (/win/i.test(platform) || /Windows/.test(ua)) os = "windows";
+  else if (/linux|x11/i.test(platform + ua) && !/Android/.test(ua)) os = "linux";
+
+  var names = { mac: "macOS", windows: "Windows", linux: "Linux" };
+  var card = os && document.querySelector('.platform[data-os="' + os + '"]');
+  if (card) {
+    card.classList.add("current");
+    card.parentNode.prepend(card);
+    var link = card.querySelector(".links .btn");
+    var hero = document.getElementById("hero-download");
+    hero.href = link.href;
+    document.getElementById("hero-download-label").textContent = "Download for " + names[os];
+  }
+
+  document.querySelectorAll(".cmd button").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var text = button.previousElementSibling.textContent;
+      navigator.clipboard.writeText(text).then(function () {
+        button.textContent = "Copied";
+        setTimeout(function () { button.textContent = "Copy"; }, 1500);
+      });
+    });
+  });
+
+  // Tour: without JavaScript every panel shows in turn, with it one at a time.
+  var tablist = document.querySelector(".tour-tabs");
+  var tabs = Array.prototype.slice.call(tablist.querySelectorAll('[role="tab"]'));
+  function select(tab, focus) {
+    tabs.forEach(function (other) {
+      var selected = other === tab;
+      other.setAttribute("aria-selected", selected ? "true" : "false");
+      other.tabIndex = selected ? 0 : -1;
+      document.getElementById(other.getAttribute("aria-controls")).hidden = !selected;
+    });
+    if (focus) tab.focus();
+  }
+  document.documentElement.classList.add("js");
+  tablist.hidden = false;
+  select(tabs[0], false);
+  tabs.forEach(function (tab, index) {
+    tab.addEventListener("click", function () { select(tab, false); });
+    tab.addEventListener("keydown", function (event) {
+      var next = null;
+      if (event.key === "ArrowRight") next = tabs[(index + 1) % tabs.length];
+      else if (event.key === "ArrowLeft") next = tabs[(index - 1 + tabs.length) % tabs.length];
+      else if (event.key === "Home") next = tabs[0];
+      else if (event.key === "End") next = tabs[tabs.length - 1];
+      if (next) {
+        event.preventDefault();
+        select(next, true);
+      }
+    });
+  });
+
+  var zoom = document.createElement("dialog");
+  zoom.className = "zoom";
+  zoom.innerHTML = '<button type="button" class="zoom-close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button><img alt="">';
+  document.body.append(zoom);
+  var zoomImage = zoom.querySelector("img");
+  zoom.addEventListener("click", function () {
+    zoom.close();
+  });
+  document.querySelectorAll('img[width="1600"]').forEach(function (image) {
+    function open() {
+      // currentSrc is the source the page shows, so the dark theme gets the dark screenshot.
+      zoomImage.src = image.currentSrc || image.src;
+      zoomImage.alt = image.alt;
+      zoom.showModal();
+    }
+    image.tabIndex = 0;
+    image.setAttribute("role", "button");
+    image.setAttribute("aria-haspopup", "dialog");
+    image.addEventListener("click", open);
+    image.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>

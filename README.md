@@ -148,6 +148,18 @@ req.headers["X-Timestamp"] = timestamp.toString();
 req.headers["X-Signature"] = signature;
 ```
 
+## Website
+
+The site at <https://zanmato.github.io/broquest> is built from `site/` with
+`script/build-site` and published by the release workflow.
+
+Its screenshots in `docs/images/screenshots` come from
+`script/screenshots/capture`. The script builds Broquest with the `screenshots`
+feature and runs it on a virtual X display against a throwaway data directory,
+a demo collection and a local demo API, so nothing from your own profile or
+keychain shows up. It needs Xvfb, ImageMagick, python3, dbus-run-session and
+Mesa's lavapipe Vulkan driver.
+
 ## License
 
 Apache-2.0

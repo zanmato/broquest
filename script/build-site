@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Builds the GitHub Pages site from site/ into _site/.
+#
+# Usage: script/build-site [version]
+# The version defaults to the workspace version in Cargo.toml. Preview with
+# `python3 -m http.server -d _site`. The screenshots come from
+# docs/images/screenshots, see script/screenshots/capture.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+version="${1:-$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)}"
+version="${version#v}"
+out="${SITE_DIR:-_site}"
+
+release_date=$(sed -n "s/^## \[${version}\] - \(.*\)$/\1/p" CHANGELOG.md | head -n1)
+if [[ -n "$release_date" ]]; then
+  release_date=$(LC_ALL=C date -d "$release_date" '+%-d %B %Y' 2>/dev/null || echo "$release_date")
+fi
+
+rm -rf "$out"
+mkdir -p "$out/images"
+cp docs/images/logo-light.png docs/images/logo-dark.png "$out/images/"
+cp docs/images/screenshots/*.webp "$out/images/"
+cp crates/broquest/resources/broquest-icon-512x512.png "$out/images/icon.png"
+
+notes="$(mktemp)"
+trap 'rm -f "$notes"' EXIT
+
+# Renders this version's CHANGELOG.md section as HTML, one <details> per
+# "### " heading with the first one expanded.
+awk -v ver="$version" '
+  function esc(s) { gsub(/&/, "\\&amp;", s); gsub(/</, "\\&lt;", s); gsub(/>/, "\\&gt;", s); return s }
+  function code(s) {
+    while (match(s, /`[^`]+`/))
+      s = substr(s, 1, RSTART - 1) "<code>" substr(s, RSTART + 1, RLENGTH - 2) "</code>" substr(s, RSTART + RLENGTH)
+    return s
+  }
+  function close_section() { if (open) print "</ul></details>"; open = 0 }
+  $0 ~ "^## \\[" ver "\\]" { in_section = 1; next }
+  in_section && /^## \[/ { exit }
+  !in_section { next }
+  /^### / {
+    close_section()
+    printf "<details%s><summary>%s</summary><ul>\n", (count++ ? "" : " open"), esc(substr($0, 5))
+    open = 1
+    next
+  }
+  /^- / { print "<li>" code(esc(substr($0, 3))) "</li>" }
+  END { close_section() }
+' CHANGELOG.md > "$notes"
+
+# awk reads the notes as its first file, which must not be empty.
+if [[ ! -s "$notes" ]]; then
+  echo '<p>No release notes for this version yet.</p>' > "$notes"
+fi
+
+awk -v version="$version" -v date="$release_date" '
+  FNR == NR { notes = notes $0 "\n"; next }
+  /__CHANGELOG__/ { printf "%s", notes; next }
+  { gsub(/__VERSION__/, version); gsub(/__RELEASE_DATE__/, date); print }
+' "$notes" site/index.html > "$out/index.html"
+
+echo "Built $out for v$version"
