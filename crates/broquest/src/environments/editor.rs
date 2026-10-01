@@ -465,6 +465,8 @@ impl EnvironmentEditor {
                         cx.theme().red
                     })
                     .w(px(24.))
+                    // The padding of a small button leaves no room for the glyph.
+                    .px_0()
                     .label(if var.enabled { "✓" } else { "○" })
                     .on_click(cx.listener({
                         let id = var.id;
@@ -536,6 +538,8 @@ impl EnvironmentEditor {
                         cx.theme().red
                     })
                     .w(px(24.))
+                    // The padding of a small button leaves no room for the glyph.
+                    .px_0()
                     .label(if secret.enabled { "✓" } else { "○" })
                     .on_click(cx.listener({
                         let id = secret.id;

@@ -365,6 +365,8 @@ impl KeyValueEditor {
                         cx.theme().red
                     })
                     .w(px(24.))
+                    // The padding of a small button leaves no room for the glyph.
+                    .px_0()
                     .label(if row.enabled { "✓" } else { "○" })
                     .on_click(cx.listener({
                         let id = row.id;
