@@ -210,6 +210,12 @@ impl VariableStore {
     }
 }
 
+impl Default for VariableStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,11 +259,5 @@ mod tests {
         assert!(!store.has_collection_var("namespace"));
         // Runtime vars are untouched by collection re-seed.
         assert!(store.has_var("runtime_only"));
-    }
-}
-
-impl Default for VariableStore {
-    fn default() -> Self {
-        Self::new()
     }
 }
