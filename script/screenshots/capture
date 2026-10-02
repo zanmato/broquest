@@ -5,9 +5,10 @@
 # Usage: script/screenshots/capture [scene...]
 #
 # Scenes: request scripting environments filter (default: all).
-# Writes docs/images/screenshots/<scene>-<theme>.webp.
+# Writes docs/images/screenshots/<scene>-<theme>.webp, and a lossless
+# <scene>-<theme>.png per capture into $PNG_DIR when that is set.
 #
-# Needs Xvfb, ImageMagick, python3, dbus-run-session and Mesa's lavapipe
+# Needs Xvfb, ImageMagick, x11-utils, python3, dbus-run-session and Mesa's lavapipe
 # Vulkan driver. The demo API listens on localhost:4010, which must be free.
 # Set BROQUEST_BIN to capture with an existing build of
 # `cargo build --release -p broquest --features screenshots`.
@@ -16,8 +17,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 root="$(pwd)"
 
-width=1600
-height=1000
+# The app's window, its 1600x1000 frame plus the frame's shadow inset.
+width=1640
+height=1040
 port=4010
 out="$root/docs/images/screenshots"
 
@@ -71,12 +73,57 @@ python3 "$root/script/screenshots/demo-server" "$port" &
 server_pid=$!
 
 display=":$((90 + RANDOM % 100))"
-Xvfb "$display" -screen 0 "${width}x${height}x24" -nolisten tcp >/dev/null 2>&1 &
+# -noreset keeps the root window properties set below once the last client
+# of a run disconnects.
+Xvfb "$display" -screen 0 "${width}x${height}x24" -nolisten tcp -noreset >/dev/null 2>&1 &
 xvfb_pid=$!
 for _ in $(seq 50); do
   DISPLAY="$display" xdpyinfo >/dev/null 2>&1 && break
   sleep 0.1
 done
+
+# Without a window manager gpui falls back to server-side decorations, and
+# the app then draws no window controls, leaving them to the window manager.
+# A root window that names a window manager supporting _GTK_FRAME_EXTENTS has
+# gpui draw the client-side frame, controls included, as on a desktop. gpui
+# reads the check property as a WINDOW, a type xprop cannot write.
+DISPLAY="$display" python3 - <<'PY'
+import ctypes
+import ctypes.util
+
+x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
+x11.XOpenDisplay.restype = ctypes.c_void_p
+x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+x11.XDefaultRootWindow.restype = ctypes.c_ulong
+x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+x11.XInternAtom.restype = ctypes.c_ulong
+x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+x11.XChangeProperty.argtypes = [
+    ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+    ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int,
+]
+x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+
+XA_ATOM = 4
+XA_WINDOW = 33
+PROP_MODE_REPLACE = 0
+
+display = x11.XOpenDisplay(None)
+if not display:
+    raise SystemExit("cannot open the display")
+root = x11.XDefaultRootWindow(display)
+check = (ctypes.c_ulong * 1)(root)
+x11.XChangeProperty(
+    display, root, x11.XInternAtom(display, b"_NET_SUPPORTING_WM_CHECK", 0),
+    XA_WINDOW, 32, PROP_MODE_REPLACE, check, 1,
+)
+supported = (ctypes.c_ulong * 1)(x11.XInternAtom(display, b"_GTK_FRAME_EXTENTS", 0))
+x11.XChangeProperty(
+    display, root, x11.XInternAtom(display, b"_NET_SUPPORTED", 0),
+    XA_ATOM, 32, PROP_MODE_REPLACE, supported, 1,
+)
+x11.XSync(display, 0)
+PY
 
 # A session bus that cannot activate services: no portals, gvfs or keyring
 # start, so nothing mounts into the runtime directory and secrets are never
@@ -98,7 +145,7 @@ cat > "$work/dbus.conf" <<'EOF'
 EOF
 
 lavapipe=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -n1 || true)
-mkdir -p "$out"
+mkdir -p "$out" ${PNG_DIR:+"$PNG_DIR"}
 
 # capture <scene> <slug> <theme name>
 capture() {
@@ -146,18 +193,26 @@ capture() {
   # One more frame for anything the last update scheduled.
   sleep 0.5
 
-  DISPLAY="$display" import -window root "$run/shot.png"
+  local window extents left right top bottom
+  window=$(DISPLAY="$display" xwininfo -name "broquest" | awk '/Window id:/ { print $4 }')
+  DISPLAY="$display" import -window "$window" "$run/shot.png"
+  # The client-side frame surrounds the window with room for a shadow that
+  # only a compositor paints, and gpui publishes its width on every side.
+  extents=$(DISPLAY="$display" xprop -id "$window" -notype _GTK_FRAME_EXTENTS)
+  read -r left right top bottom <<< "$(sed 's/.*= //; s/,//g' <<< "$extents")"
   kill -- "-$app_pid" 2>/dev/null || true
   wait "$app_pid" 2>/dev/null || true
   stop_run "$run_home"
   app_pid=""
 
   magick "$run/shot.png" \
-    \( +clone -alpha extract -draw "fill black polygon 0,0 0,10 10,0 fill white circle 10,10 10,0" \
-       \( +clone -flip \) -compose Multiply -composite \
-       \( +clone -flop \) -compose Multiply -composite \) \
-    -alpha off -compose CopyOpacity -composite \
-    -define webp:lossless=false -quality 90 "$out/$scene-$slug.webp"
+    -gravity West -chop "${left}x0" -gravity East -chop "${right}x0" \
+    -gravity North -chop "0x${top}" -gravity South -chop "0x${bottom}" \
+    +repage "$run/frame.png"
+  magick "$run/frame.png" -define webp:lossless=false -quality 90 "$out/$scene-$slug.webp"
+  if [[ -n "${PNG_DIR:-}" ]]; then
+    cp "$run/frame.png" "$PNG_DIR/$scene-$slug.png"
+  fi
 }
 
 for scene in "${scenes[@]}"; do

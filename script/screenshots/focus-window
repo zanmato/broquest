@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Give input focus to the first mapped top-level window on $DISPLAY, and park
-the pointer in the bottom right corner of the screen.
+"""Move the first mapped top-level window on $DISPLAY to the top left corner,
+give it input focus, and park the pointer in the bottom right corner of the
+screen.
 
 Xvfb runs without a window manager, so nothing focuses Broquest's window and
-GPUI treats it as inactive, which hides selections and the caret. Xvfb also
-starts the pointer in the middle of the screen, where it would hover whatever
-the scene put there. Waits up to the given number of seconds (default 30) for
-a window to appear. Uses libX11 through ctypes, so it needs nothing beyond the
-library Xvfb brings.
+GPUI treats it as inactive, which hides selections and the caret. The window
+also lands two pixels right of where the app places it, which leaves a black
+strip down the left edge of the screen. Xvfb starts the pointer in the middle
+of the screen, where it would hover whatever the scene put there. Waits up to
+the given number of seconds (default 30) for a window to appear. Uses libX11
+through ctypes, so it needs nothing beyond the library Xvfb brings.
 """
 
 import ctypes
@@ -70,6 +72,7 @@ def main() -> int:
     ]
     x11.XSetInputFocus.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
     x11.XFree.argtypes = [ctypes.c_void_p]
+    x11.XMoveWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int]
     x11.XWarpPointer.argtypes = [
         ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
         ctypes.c_int, ctypes.c_int, ctypes.c_uint, ctypes.c_uint, ctypes.c_int, ctypes.c_int,
@@ -98,11 +101,12 @@ def main() -> int:
                 attributes = XWindowAttributes()
                 x11.XGetWindowAttributes(display, window, ctypes.byref(attributes))
                 if attributes.map_state == IS_VIEWABLE and not attributes.override_redirect:
+                    x11.XMoveWindow(display, window, 0, 0)
                     x11.XSetInputFocus(display, window, REVERT_TO_PARENT, CURRENT_TIME)
                     x11.XWarpPointer(
                         display, 0, root, 0, 0, 0, 0,
-                        attributes.x + attributes.width - 1,
-                        attributes.y + attributes.height - 1,
+                        attributes.width - 1,
+                        attributes.height - 1,
                     )
                     x11.XSync(display, 0)
                     return 0

@@ -88,7 +88,9 @@ impl Scene {
 
 /// The window size for the screenshots, when a scene is being staged.
 pub(crate) fn window_size() -> Option<Size<Pixels>> {
-    Scene::from_env().map(|_| size(px(1600.), px(1000.)))
+    // The visible frame is 1600x1000. On Linux the client-side frame adds a 20px
+    // shadow inset on every side, which the capture script crops away.
+    Scene::from_env().map(|_| size(px(1640.), px(1040.)))
 }
 
 /// Register the demo collection and the settings in a fresh app database.
