@@ -26,7 +26,7 @@ use crate::{
     history::HistoryPanel,
     requests::EditorPanel,
     result_ext::ResultExt,
-    update_manager::UpdateManager,
+    update_manager::{UpdateManager, UpdateState},
 };
 
 /// Corner radius of the sidebar and editor cards. Matches the reference
@@ -278,27 +278,27 @@ impl BroquestApp {
 
         subscriptions.push(collection_subscription);
 
-        // Check for post-update notification
-        let update_manager = UpdateManager::global(cx);
-        if let Some(_prev_version) = update_manager.just_updated_from.read(cx).as_ref() {
-            let current = env!("CARGO_PKG_VERSION");
-
-            let app_entity = cx.entity().downgrade();
-            window.defer(cx, move |window, cx| {
-                if let Some(app_entity) = app_entity.upgrade() {
+        if let Some(update_manager) = UpdateManager::try_global(cx) {
+            let update_state = update_manager.state.clone();
+            let just_updated = update_manager.updated_from.is_some();
+            subscriptions.push(cx.observe(&update_state, |_, _, cx| cx.notify()));
+            if just_updated {
+                let current = env!("CARGO_PKG_VERSION");
+                window.defer(cx, move |window, cx| {
                     window.push_notification(
                         Notification::new()
                             .message(format!("Updated to v{}, click to view changelog", current))
                             .with_type(NotificationType::Success)
-                            .on_click(window.listener_for(&app_entity, move |_, _, _, cx| {
-                                let changelog_url =
-                                    UpdateManager::changelog_url(&format!("v{}", current));
-                                cx.open_url(&changelog_url);
-                            })),
+                            .on_click(move |_, _, cx| {
+                                cx.open_url(&UpdateManager::changelog_url(&format!(
+                                    "v{}",
+                                    current
+                                )));
+                            }),
                         cx,
                     );
-                }
-            });
+                });
+            }
         }
 
         // Defer font application so it runs after the theme has been loaded from disk.
@@ -747,23 +747,70 @@ impl BroquestApp {
             }))
     }
 
-    fn render_update_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let update_manager = UpdateManager::global(cx);
-        let has_update = update_manager.pending_update.read(cx).is_some();
-
-        if has_update {
-            div().child(
-                Button::new("update-available")
-                    .ghost()
-                    .compact()
-                    .small()
-                    .label("Update available, click to restart")
-                    .on_click(|_, _window, _cx| {
-                        UpdateManager::apply_pending_update();
+    /// Offers a newer release: "Update" downloads it, then "Restart" swaps the
+    /// executable and relaunches.
+    fn render_update_button(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
+        let state = UpdateManager::try_global(cx)?.state.read(cx).clone();
+        let button = Button::new("update").outline().small();
+        match state {
+            UpdateState::UpToDate => None,
+            UpdateState::Available(version) => Some(
+                button
+                    .label("Update")
+                    .tooltip(format!("Download Broquest {version}"))
+                    .on_click(|_, window, cx| {
+                        let download = UpdateManager::download_update(cx);
+                        window
+                            .spawn(cx, async move |cx| {
+                                let Err(error) = download.await else {
+                                    return;
+                                };
+                                tracing::error!("Failed to download update: {error:#}");
+                                cx.update(|window, cx| {
+                                    window.push_notification(
+                                        (
+                                            NotificationType::Error,
+                                            SharedString::from(format!(
+                                                "Failed to download update: {error:#}"
+                                            )),
+                                        ),
+                                        cx,
+                                    );
+                                })
+                                .log_err()
+                                .ok();
+                            })
+                            .detach();
                     }),
-            )
-        } else {
-            div()
+            ),
+            UpdateState::Manual(version) => Some(
+                button
+                    .label("Update")
+                    .tooltip(format!("Open the Broquest {version} release page"))
+                    .on_click(move |_, _, cx| {
+                        cx.open_url(&UpdateManager::changelog_url(&format!("v{version}")));
+                    }),
+            ),
+            UpdateState::Downloading(_) => Some(button.label("Downloading").loading(true)),
+            UpdateState::Ready(version) => Some(
+                button
+                    .label("Restart")
+                    .tooltip(format!("Restart to update to Broquest {version}"))
+                    .on_click(|_, window, cx| {
+                        if let Err(error) = UpdateManager::apply_pending_update(cx) {
+                            tracing::error!("Failed to apply update: {error:#}");
+                            window.push_notification(
+                                (
+                                    NotificationType::Error,
+                                    SharedString::from(format!(
+                                        "Failed to apply update: {error:#}"
+                                    )),
+                                ),
+                                cx,
+                            );
+                        }
+                    }),
+            ),
         }
     }
 }
@@ -860,7 +907,7 @@ impl Render for BroquestApp {
                             h_flex()
                                 .items_center()
                                 .gap_2()
-                                .child(self.render_update_button(cx))
+                                .children(self.render_update_button(cx))
                                 .child(self.render_sidebar_toggle(cx)),
                         ),
                 ),
