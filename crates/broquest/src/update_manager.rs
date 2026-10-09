@@ -2,13 +2,24 @@ use crate::app_settings::AppSettings;
 use anyhow::Context as _;
 use gpui::{App, AppContext, Entity, Global, Task};
 use semver::Version;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const GITHUB_OWNER: &str = "zanmato";
 const GITHUB_REPO: &str = "broquest";
 const UPDATED_FROM_MARKER: &str = ".updated_from";
+
+/// Release assets the workflow publishes next to the binaries: the SHA-256 of
+/// every asset, and a minisign signature over that file.
+const CHECKSUMS_ASSET: &str = "SHA256SUMS";
+const CHECKSUMS_SIGNATURE_ASSET: &str = "SHA256SUMS.minisig";
+
+/// The minisign public key releases are signed with. `None` until a key pair
+/// exists (see `script/generate-update-key.sh`); with no key the updater
+/// still verifies checksums but cannot tell a release of ours from one
+/// published by whoever holds the GitHub account.
+const UPDATE_PUBLIC_KEY: Option<&str> = None;
 
 /// The release asset built for this platform and the path of the executable
 /// inside it, as produced by `.github/workflows/build-and-package.yml`. `None`
@@ -50,6 +61,43 @@ pub struct UpdateManager {
 }
 
 impl Global for UpdateManager {}
+
+fn sha256_of_file(path: &Path) -> anyhow::Result<String> {
+    use sha2::Digest as _;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = sha2::Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Checks `path` against the `sha256sum`-format line for `asset_name`.
+fn verify_sha256(path: &Path, asset_name: &str, checksums: &str) -> anyhow::Result<()> {
+    let expected = checksums
+        .lines()
+        .find_map(|line| {
+            let mut parts = line.split_whitespace();
+            let digest = parts.next()?;
+            let name = parts.next()?.trim_start_matches('*');
+            (name == asset_name).then(|| digest.to_ascii_lowercase())
+        })
+        .with_context(|| format!("{CHECKSUMS_ASSET} has no entry for {asset_name}"))?;
+    let actual = sha256_of_file(path)?;
+    anyhow::ensure!(
+        actual == expected,
+        "SHA-256 mismatch for {asset_name}: expected {expected}, got {actual}"
+    );
+    Ok(())
+}
+
+fn verify_minisign(public_key: &str, message: &[u8], signature: &str) -> anyhow::Result<()> {
+    let public_key = minisign_verify::PublicKey::from_base64(public_key)
+        .context("Embedded update public key is malformed")?;
+    let signature =
+        minisign_verify::Signature::decode(signature).context("Release signature is malformed")?;
+    public_key
+        .verify(message, &signature, false)
+        .context("Release signature does not verify against the embedded key")
+}
 
 impl UpdateManager {
     pub fn new(cx: &mut App) -> Self {
@@ -231,11 +279,15 @@ impl UpdateManager {
         }
 
         tracing::info!("Downloading update {}", release.version);
-        let asset = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == asset_name)
-            .with_context(|| format!("Release {} has no {asset_name} asset", release.version))?;
+        let find_asset = |name: &str| {
+            release
+                .assets
+                .iter()
+                .find(|asset| asset.name == name)
+                .with_context(|| format!("Release {} has no {name} asset", release.version))
+        };
+        let asset = find_asset(asset_name)?;
+        let checksums = find_asset(CHECKSUMS_ASSET)?;
 
         // Starting from an empty directory drops releases staged earlier and
         // never applied. The download is unpacked in a scratch directory and
@@ -249,12 +301,34 @@ impl UpdateManager {
         std::fs::create_dir_all(&download_dir)?;
 
         let archive_path = download_dir.join(&asset.name);
-        let mut archive = std::fs::File::create(&archive_path)?;
-        let mut download = self_update::Download::from_url(&asset.download_url);
-        download.set_header(reqwest::header::ACCEPT, "application/octet-stream".parse()?);
-        download.show_progress(false);
-        download.download_to(&mut archive)?;
-        drop(archive);
+        Self::download_asset(&asset.download_url, &archive_path)?;
+        let checksums_path = download_dir.join(CHECKSUMS_ASSET);
+        Self::download_asset(&checksums.download_url, &checksums_path)?;
+
+        // Verified before anything is extracted or executed. The checksum file
+        // proves the bytes are the ones the release workflow produced, the
+        // signature over that file proves the workflow was ours.
+        let verification = (|| -> anyhow::Result<()> {
+            let checksums_text = std::fs::read_to_string(&checksums_path)?;
+            if let Some(public_key) = UPDATE_PUBLIC_KEY {
+                let signature_asset = find_asset(CHECKSUMS_SIGNATURE_ASSET)?;
+                let signature_path = download_dir.join(CHECKSUMS_SIGNATURE_ASSET);
+                Self::download_asset(&signature_asset.download_url, &signature_path)?;
+                let signature = std::fs::read_to_string(&signature_path)?;
+                verify_minisign(public_key, checksums_text.as_bytes(), &signature)?;
+            } else {
+                tracing::warn!(
+                    "Update signing key not configured, relying on checksums and TLS only"
+                );
+            }
+            verify_sha256(&archive_path, &asset.name, &checksums_text)
+        })();
+        if let Err(error) = verification {
+            if let Err(remove_error) = std::fs::remove_dir_all(&download_dir) {
+                tracing::warn!("Failed to remove rejected download: {remove_error}");
+            }
+            return Err(error.context("Downloaded update failed verification"));
+        }
 
         // A bare executable is copied under the file name of the requested
         // path, an archive member keeps its full path.
@@ -264,7 +338,7 @@ impl UpdateManager {
         let extracted = [
             extract_dir.join(executable_in_asset),
             extract_dir.join(
-                std::path::Path::new(executable_in_asset)
+                Path::new(executable_in_asset)
                     .file_name()
                     .context("Release executable path has no file name")?,
             ),
@@ -281,8 +355,24 @@ impl UpdateManager {
             tracing::warn!("Failed to remove update download directory: {error}");
         }
 
+        // Pins what was verified, so a file swapped into the user-writable
+        // staging directory before Restart is clicked is caught when applying.
+        std::fs::write(
+            Self::staged_digest_path(&release.version)?,
+            sha256_of_file(&staged_binary)?,
+        )?;
+
         tracing::info!("Update {} staged", release.version);
         Ok(Some(release.version))
+    }
+
+    fn download_asset(url: &str, destination: &Path) -> anyhow::Result<()> {
+        let mut file = std::fs::File::create(destination)?;
+        let mut download = self_update::Download::from_url(url);
+        download.set_header(reqwest::header::ACCEPT, "application/octet-stream".parse()?);
+        download.show_progress(false);
+        download.download_to(&mut file)?;
+        Ok(())
     }
 
     fn updates_dir() -> anyhow::Result<PathBuf> {
@@ -303,15 +393,18 @@ impl UpdateManager {
         Ok(Self::updates_dir()?.join(version).join(name))
     }
 
+    fn staged_digest_path(version: &str) -> anyhow::Result<PathBuf> {
+        Ok(Self::updates_dir()?.join(version).join("broquest.sha256"))
+    }
+
     /// Replace the running executable with the staged one and restart. On
     /// success the app is quitting when this returns.
     pub fn apply_pending_update(cx: &mut App) -> anyhow::Result<()> {
         let state = Self::try_global(cx)
             .context("Updates are not available")?
             .state
-            .read(cx)
             .clone();
-        let UpdateState::Ready(version) = state else {
+        let UpdateState::Ready(version) = state.read(cx).clone() else {
             anyhow::bail!("No update has been downloaded");
         };
         let staged_binary = Self::staged_binary_path(&version)?;
@@ -320,6 +413,20 @@ impl UpdateManager {
             "No downloaded update found at {}",
             staged_binary.display()
         );
+
+        let expected_digest = std::fs::read_to_string(Self::staged_digest_path(&version)?)
+            .context("Downloaded update has no recorded digest")?;
+        if sha256_of_file(&staged_binary)? != expected_digest.trim() {
+            if let Err(error) = std::fs::remove_file(&staged_binary) {
+                tracing::warn!("Failed to remove tampered staged update: {error}");
+            }
+            // Back to offering the download, which fetches a clean copy.
+            state.update(cx, |state, cx| {
+                *state = UpdateState::Available(version);
+                cx.notify();
+            });
+            anyhow::bail!("The downloaded update changed on disk and was discarded");
+        }
 
         // Resolved before the swap: on Linux the path of a replaced executable
         // reads back with a " (deleted)" suffix.
@@ -335,8 +442,10 @@ impl UpdateManager {
         ) {
             tracing::warn!("Failed to write update marker file: {error}");
         }
-        if let Err(error) = std::fs::remove_file(&staged_binary) {
-            tracing::warn!("Failed to remove staged update binary: {error}");
+        if let Some(staged_dir) = staged_binary.parent()
+            && let Err(error) = std::fs::remove_dir_all(staged_dir)
+        {
+            tracing::warn!("Failed to remove staged update: {error}");
         }
 
         tracing::info!("Update applied, restarting...");
@@ -350,5 +459,39 @@ impl UpdateManager {
 
     pub fn changelog_url(version: &str) -> String {
         format!("https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/tag/{version}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A throwaway key pair made for this test, not the release key.
+    const TEST_PUBLIC_KEY: &str = "RWSuP7TLTlfXLIwvb3Ojg/ZI+g2/fXCh+k87Xwq6gKZ5En2r4pCpPrCZ";
+    const TEST_CHECKSUMS: &str = "abc  file\n";
+    const TEST_SIGNATURE: &str = "untrusted comment: signature from minisign secret key
+RUSuP7TLTlfXLMbHaCt8CBuWVm88JdB+bbtplOR4t7l6bmUjC2sSMb5o0XkolEKyWloUJiVzo61giuxhBDLpEk1kxENxgV8ADQg=
+trusted comment: timestamp:1791535679\tfile:SHA256SUMS\thashed
+Pdfw32iU8mDa1Y1lt1/n44v5SxpwEAVjKpuw1FmMPw9GT0oti5Qc/7fZgkKkU5VuX78mPJF1tv5x7q53zFMmDw==
+";
+
+    #[test]
+    fn minisign_accepts_only_the_signed_checksums() {
+        verify_minisign(TEST_PUBLIC_KEY, TEST_CHECKSUMS.as_bytes(), TEST_SIGNATURE)
+            .expect("signature made by minisign -S should verify");
+        assert!(verify_minisign(TEST_PUBLIC_KEY, b"abd  file\n", TEST_SIGNATURE).is_err());
+    }
+
+    #[test]
+    fn sha256_must_match_the_entry_for_the_asset() {
+        let path =
+            std::env::temp_dir().join(format!("broquest-update-test-{}", std::process::id()));
+        std::fs::write(&path, b"hello").expect("write asset");
+        let digest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+
+        verify_sha256(&path, "asset", &format!("{digest}  asset\n")).expect("matching digest");
+        assert!(verify_sha256(&path, "asset", &format!("{digest}  other\n")).is_err());
+        assert!(verify_sha256(&path, "asset", &format!("{}  asset\n", "0".repeat(64))).is_err());
+        std::fs::remove_file(&path).expect("remove asset");
     }
 }

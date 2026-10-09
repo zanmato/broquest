@@ -157,12 +157,47 @@ jobs:
         echo "$CHANGELOG" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
+    # The updater refuses any asset whose SHA-256 is not listed here, and once
+    # update_manager.rs embeds a public key it also verifies the minisign
+    # signature over the list (script/generate-update-key.sh creates the pair).
+    - name: Write checksums
+      run: |
+        mkdir -p release
+        cp artifacts/broquest-*/broquest* release/
+        cd release
+        sha256sum broquest* > SHA256SUMS
+        cat SHA256SUMS
+
+    # Installs with an embedded key reject an unsigned release, so a missing
+    # secret fails the job then instead of publishing one.
+    - name: Sign checksums
+      env:
+        MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+      run: |
+        PUBLIC_KEY="$(grep -A1 'const UPDATE_PUBLIC_KEY' crates/broquest/src/update_manager.rs | sed -n 's/.*Some("\([^"]*\)").*/\1/p')"
+        if [ -z "$MINISIGN_SECRET_KEY" ]; then
+          if [ -n "$PUBLIC_KEY" ]; then
+            echo "::error::update_manager.rs embeds a public key but MINISIGN_SECRET_KEY is not set"
+            exit 1
+          fi
+          echo "::warning::MINISIGN_SECRET_KEY is not set, releasing without a signature"
+          exit 0
+        fi
+        sudo apt-get update && sudo apt-get install -y minisign
+        printf '%s\n' "$MINISIGN_SECRET_KEY" > minisign.key
+        printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s minisign.key -m release/SHA256SUMS -x release/SHA256SUMS.minisig
+        rm -f minisign.key
+        if [ -n "$PUBLIC_KEY" ]; then
+          minisign -V -P "$PUBLIC_KEY" -m release/SHA256SUMS -x release/SHA256SUMS.minisig
+        fi
+
     - name: Upload release assets
       uses: softprops/action-gh-release@v2
       with:
         body: ${{ steps.changelog.outputs.body }}
         files: |
-          artifacts/broquest-*/broquest*
+          release/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

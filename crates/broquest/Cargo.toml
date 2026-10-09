@@ -57,6 +57,9 @@ self_update = { version = "0.42", features = [
   "compression-flate2",
 ] }
 semver = "1.0.27"
+minisign-verify = "0.2.5"
+sha2 = "0.10"
+hex = "0.4.3"
 
 [features]
 # Stages scenes for the website screenshots; see script/screenshots/capture.
