@@ -15,11 +15,11 @@ const UPDATED_FROM_MARKER: &str = ".updated_from";
 const CHECKSUMS_ASSET: &str = "SHA256SUMS";
 const CHECKSUMS_SIGNATURE_ASSET: &str = "SHA256SUMS.minisig";
 
-/// The minisign public key releases are signed with. `None` until a key pair
-/// exists (see `script/generate-update-key.sh`); with no key the updater
-/// still verifies checksums but cannot tell a release of ours from one
-/// published by whoever holds the GitHub account.
-const UPDATE_PUBLIC_KEY: Option<&str> = None;
+/// The minisign public key releases are signed with. The secret half is the
+/// `MINISIGN_SECRET_KEY` repository secret, which the release workflow signs
+/// `SHA256SUMS` with (see `script/generate-update-key.sh`).
+const UPDATE_PUBLIC_KEY: Option<&str> =
+    Some("RWTw5QZHMdaXJeK+RkjKnGxEpQKHVWXqsA3o3Poy75et7vFbMJhMtAW9");
 
 /// The release asset built for this platform and the path of the executable
 /// inside it, as produced by `.github/workflows/build-and-package.yml`. `None`
@@ -474,6 +474,14 @@ RUSuP7TLTlfXLMbHaCt8CBuWVm88JdB+bbtplOR4t7l6bmUjC2sSMb5o0XkolEKyWloUJiVzo61giuxh
 trusted comment: timestamp:1791535679\tfile:SHA256SUMS\thashed
 Pdfw32iU8mDa1Y1lt1/n44v5SxpwEAVjKpuw1FmMPw9GT0oti5Qc/7fZgkKkU5VuX78mPJF1tv5x7q53zFMmDw==
 ";
+
+    #[test]
+    fn embedded_public_key_parses() {
+        if let Some(public_key) = UPDATE_PUBLIC_KEY {
+            minisign_verify::PublicKey::from_base64(public_key)
+                .expect("UPDATE_PUBLIC_KEY should be a minisign public key");
+        }
+    }
 
     #[test]
     fn minisign_accepts_only_the_signed_checksums() {
