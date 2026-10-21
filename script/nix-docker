@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Runs a Nix command against this checkout inside the nixos/nix container, for
+# testing the flake on a machine without Nix:
+#
+#   script/nix-docker nix build -L .#broquest
+#   script/nix-docker nix flake check
+#   script/nix-docker nix develop -c cargo check -p broquest
+#
+# The store lives in the broquest-nix-store volume and fetched flake inputs in
+# broquest-nix-cache, so the dependency build (every download included) is
+# paid once. Removing both volumes starts over. The flake sees only files git
+# tracks, so stage new ones first.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+docker_args=(
+  --rm
+  --volume broquest-nix-store:/nix
+  --volume broquest-nix-cache:/root/.cache/nix
+  --volume "$repo_root:/src"
+  --workdir /src
+)
+if [[ -t 0 ]]; then
+  docker_args+=(--interactive --tty)
+fi
+if [[ -e /dev/kvm ]]; then
+  docker_args+=(--device /dev/kvm)
+fi
+
+# The checkout and its submodules belong to the host user, and git refuses to
+# read a repository owned by someone else unless it is marked safe.
+exec docker run "${docker_args[@]}" nixos/nix:latest sh -c '
+  git config --global --add safe.directory "*"
+  printf "%s\n" "experimental-features = nix-command flakes" "max-jobs = auto" >> /etc/nix/nix.conf
+  exec "$@"
+' nix-docker "$@"

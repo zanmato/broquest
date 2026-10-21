@@ -3,3 +3,6 @@
 .cargo
 /_site
 update-signing/
+
+# nix build output links
+/result*

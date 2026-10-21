@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Starts the flake's package in a virtual X server with Mesa's software Vulkan
+# driver and saves a screenshot, to see that the Nix build runs. Run it in the
+# container: script/nix-docker bash script/nix-smoke
+#
+# usage: nix-smoke [flake attribute] [binary] [screenshot]
+set -uo pipefail
+set -- "${1:-broquest}" "${2:-broquest}" "${3:-target/nix-smoke.png}"
+out=$(nix build --no-link --print-out-paths ".#$1") || exit 1
+mesa=$(nix build --no-link --print-out-paths nixpkgs#mesa 2>/dev/null)
+for t in $(nix build --no-link --print-out-paths nixpkgs#xvfb nixpkgs#imagemagick nixpkgs#procps 2>/dev/null); do PATH=$t/bin:$PATH; done
+Xvfb :99 -screen 0 1400x900x24 >/dev/null 2>&1 &
+sleep 2
+export DISPLAY=:99 HOME=/tmp/home XDG_RUNTIME_DIR=/tmp/run VK_ICD_FILENAMES=$(ls $mesa/share/vulkan/icd.d/lvp_icd.*.json)
+mkdir -p $HOME $XDG_RUNTIME_DIR
+# A bare container has no fonts, and GPUI needs a system font to fall back on.
+fonts=$(nix build --no-link --print-out-paths nixpkgs#dejavu_fonts 2>/dev/null)
+printf '<?xml version="1.0"?><fontconfig><dir>%s/share/fonts</dir><cachedir>/tmp/fc</cachedir></fontconfig>' "$fonts" > /tmp/fonts.conf
+export FONTCONFIG_FILE=/tmp/fonts.conf
+$out/bin/$2 > /tmp/app.log 2>&1 &
+sleep 25
+import -window root "$3"
+if ! pgrep -x "$2" >/dev/null; then
+  echo "$2 exited:" >&2
+  tail -20 /tmp/app.log >&2
+  exit 1
+fi
+echo "$2 is running, screenshot in $3"

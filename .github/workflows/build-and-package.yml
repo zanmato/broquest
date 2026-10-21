@@ -38,6 +38,16 @@ jobs:
       with:
         submodules: 'true'
 
+    # flake.nix fetches llrt as an input of its own, pinned to a commit.
+    - name: Check the flake pins the llrt submodule's commit
+      if: runner.os == 'Linux'
+      run: |
+        SUBMODULE="$(git rev-parse HEAD:vendor/llrt)"
+        if ! grep -q "github:awslabs/llrt/${SUBMODULE}\"" flake.nix; then
+          echo "::error::flake.nix must pin llrt to ${SUBMODULE}, the commit of vendor/llrt"
+          exit 1
+        fi
+
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:

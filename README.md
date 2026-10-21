@@ -29,6 +29,24 @@ brew install --cask zanmato/tap/broquest
 
 **IMPORTANT:** If you download the release manually you have to run `xattr -r -d com.apple.quarantine Broquest.app` in the folder of the app since the app isn't notarized.
 
+## Nix
+
+The repository is a flake for x86_64 and aarch64 Linux. It builds Broquest from
+source, so the first install compiles for a while.
+
+```bash
+nix run github:zanmato/broquest                  # try it
+nix profile install github:zanmato/broquest      # install it
+```
+
+On NixOS, add the flake as an input and `broquest.overlays.default` to
+`nixpkgs.overlays`, then add `pkgs.broquest` to `environment.systemPackages`.
+That builds Broquest against your system's own libraries.
+
+Broquest draws with Vulkan. NixOS provides the driver, but with Nix on another
+distribution a Nix-built program cannot load the system's driver, so start it
+through [nixGL](https://github.com/nix-community/nixGL).
+
 ## Scripting
 
 Broquest supports JavaScript scripting for pre-request and post-response hooks using [QuickJS](https://bellard.org/quickjs/) with [LLRT modules](https://github.com/awslabs/llrt) that provide Node.js-compatible APIs.
