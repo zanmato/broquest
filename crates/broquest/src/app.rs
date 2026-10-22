@@ -6,7 +6,7 @@ use gpui::{
     px, svg,
 };
 use gpui_kit::component::{
-    ActiveTheme, Icon, Root, Sizable as _, ThemeRegistry, TitleBar, WindowExt,
+    ActiveTheme, Icon, Sizable as _, ThemeRegistry, TitleBar, WindowExt,
     button::{Button, ButtonVariants as _},
     global_state::GlobalState,
     h_flex,
@@ -825,10 +825,6 @@ impl Focusable for BroquestApp {
 
 impl Render for BroquestApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let sheet_layer = Root::render_sheet_layer(window, cx);
-        let dialog_layer = Root::render_dialog_layer(window, cx);
-        let notification_layer = Root::render_notification_layer(window, cx);
-
         let logo_height = if cfg!(target_os = "macos") {
             PALETTE_TRIGGER_HEIGHT
         } else {
@@ -1002,9 +998,6 @@ impl Render for BroquestApp {
                         ),
                     ),
             )
-            .children(sheet_layer)
-            .children(dialog_layer)
-            .children(notification_layer)
             .child(self.command_palette.clone())
     }
 }

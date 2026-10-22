@@ -15,7 +15,7 @@ description = "Desktop API Client"
 [workspace.dependencies]
 # Core GPUI dependencies
 # GPUI is published on crates.io as the `gpui-pre-*` family by the gpui-kit
-# project, so no git pins are needed.
+# project. The [patch] at the end runs it on gpui-fast, as Blanco does.
 gpui = { package = "gpui-pre", version = "0.3" }
 gpui_platform = { package = "gpui-pre-platform", version = "0.3", features = [
     "font-kit",
@@ -107,3 +107,15 @@ opt-level = 3
 [profile.profiling]
 inherits = "release"
 debug = true
+
+[patch.crates-io]
+# Run on gpui-fast instead of the gpui-pre snapshots, at the revision Blanco
+# uses. Its compat crates carry the gpui-pre names and the version
+# gpui-component pins, so they must move with the gpui-kit revision.
+# See https://github.com/longbridge/gpui-fast/blob/main/compat/README.md
+# gpui-kit's `gpui-fast` feature would do the same without a patch, but it
+# compiles the gpui-pre snapshots as well.
+gpui-pre = { git = "https://github.com/longbridge/gpui-fast", rev = "8e1e1987fdb512bb8b0ab27261906a598aff2ab8" }
+gpui-pre-platform = { git = "https://github.com/longbridge/gpui-fast", rev = "8e1e1987fdb512bb8b0ab27261906a598aff2ab8" }
+gpui-pre-macros = { git = "https://github.com/longbridge/gpui-fast", rev = "8e1e1987fdb512bb8b0ab27261906a598aff2ab8" }
+gpui-pre-sum-tree = { git = "https://github.com/longbridge/gpui-fast", rev = "8e1e1987fdb512bb8b0ab27261906a598aff2ab8" }
