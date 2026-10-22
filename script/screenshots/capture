@@ -209,7 +209,9 @@ capture() {
     -gravity West -chop "${left}x0" -gravity East -chop "${right}x0" \
     -gravity North -chop "0x${top}" -gravity South -chop "0x${bottom}" \
     +repage "$run/frame.png"
-  magick "$run/frame.png" -define webp:lossless=false -quality 90 "$out/$scene-$slug.webp"
+  # Lossy WebP smears small text, and lossless comes out about the same size
+  # for these flat UI frames.
+  magick "$run/frame.png" -define webp:lossless=true -define webp:method=6 "$out/$scene-$slug.webp"
   if [[ -n "${PNG_DIR:-}" ]]; then
     cp "$run/frame.png" "$PNG_DIR/$scene-$slug.png"
   fi
