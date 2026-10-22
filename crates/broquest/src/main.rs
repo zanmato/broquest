@@ -134,6 +134,15 @@ fn main() {
             tracing::error!("Failed to watch themes directory: {}", err);
         }
 
+        // gpui-component re-applies the active theme from the registry
+        // whenever the registry changes, which drops the font overrides
+        // `apply_theme_config` folds into it. The folder changes whenever a
+        // theme is installed in Settings, so put the user's theme and fonts
+        // back after every reload. This observer is registered after
+        // gpui-component's, so it runs after it.
+        cx.observe_global::<ThemeRegistry>(settings::apply_font_settings)
+            .detach();
+
         cx.set_global(db);
 
         // Initialize global CollectionManager as an entity-backed global.

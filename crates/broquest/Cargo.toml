@@ -51,6 +51,9 @@ oas3 = { version = "0.20", features = ["yaml-spec"] }
 
 # WSDL/SOAP support
 wsdl = { path = "../wsdl" }
+
+# VS Code themes from Open VSX, converted (Settings, Appearance)
+vsx-themes = { path = "../vsx-themes" }
 jsonpath-rust = "1.0.4"
 self_update = { version = "0.42", features = [
   "archive-tar",

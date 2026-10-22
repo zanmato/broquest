@@ -29,6 +29,31 @@ pub fn apply_theme_config(theme_config: &Rc<ThemeConfig>, cx: &mut App) {
     cx.refresh_windows();
 }
 
+/// Make the registered theme `name` the app's theme and save the choice, as
+/// the Theme setting does. Broquest has a single theme setting rather than a
+/// light and dark pair, so the theme's mode needs no handling.
+pub fn use_theme(name: &str, cx: &mut App) {
+    let Some(theme_config) = ThemeRegistry::global(cx)
+        .themes()
+        .get(&SharedString::from(name.to_string()))
+        .cloned()
+    else {
+        tracing::warn!("Unknown theme: {name}");
+        return;
+    };
+    AppSettings::global_mut(cx).settings.appearance.theme = name.to_string();
+    apply_theme_config(&theme_config, cx);
+
+    let db = crate::app_database::AppDatabase::global(cx).clone();
+    let name = name.to_string();
+    cx.spawn(async move |_| {
+        if let Err(error) = db.save_setting("appearance.theme", &name).await {
+            tracing::error!("Failed to save setting appearance.theme: {error}");
+        }
+    })
+    .detach();
+}
+
 /// Apply user font settings on top of the current theme.
 pub fn apply_font_settings(cx: &mut App) {
     let appearance = AppSettings::global(cx).settings.appearance.clone();

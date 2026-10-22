@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Features
+
+- Settings, Appearance has a VS Code Themes group that searches Open VSX for
+  VS Code color themes, previews them, lets you try one across the app before
+  installing, and installs them converted to Broquest's theme format
+
 ## [0.1.13] - 2026-07-07
 
 ### Features

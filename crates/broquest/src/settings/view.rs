@@ -46,6 +46,7 @@ pub struct SettingsView {
     save_tasks: std::collections::HashMap<String, gpui::Task<()>>,
     ui_font_select: Option<Entity<SelectState<SearchableVec<FontOption>>>>,
     mono_font_select: Option<Entity<SelectState<SearchableVec<FontOption>>>>,
+    theme_browser: Option<Entity<vsx_themes::ThemeBrowser>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -56,6 +57,7 @@ impl SettingsView {
             save_tasks: std::collections::HashMap::new(),
             ui_font_select: None,
             mono_font_select: None,
+            theme_browser: None,
             _subscriptions: Vec::new(),
         }
     }
@@ -447,6 +449,9 @@ impl SettingsView {
                     )
                     .description("Monospace font used in the request/response editors."),
                 ]),
+                vsx_themes::browser::setting_group(
+                    self.theme_browser.clone().expect("created before the pages"),
+                ),
             ]),
         ]
     }
@@ -461,6 +466,23 @@ impl Focusable for SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_font_selects(window, cx);
+        if self.theme_browser.is_none() {
+            let options = vsx_themes::ThemeBrowserOptions {
+                themes_dir: crate::themes_manager::ThemesManager::themes_directory(),
+                // The editors hold JSON, XML, JavaScript and HTML, which the
+                // generic scopes cover.
+                convert: vsx_themes::ConvertOptions::default(),
+                use_theme: Some(std::rc::Rc::new(
+                    |name: &str, _: &mut Window, cx: &mut App| {
+                        crate::settings::use_theme(name, cx);
+                    },
+                )),
+                // main.rs loads the themes with `ThemeRegistry::watch_dir`.
+                watches_themes_dir: true,
+            };
+            self.theme_browser =
+                Some(cx.new(|cx| vsx_themes::ThemeBrowser::new(options, window, cx)));
+        }
 
         div().track_focus(&self.focus_handle).size_full().child(
             GpuiSettings::new("broquest-settings")

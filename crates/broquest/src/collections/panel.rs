@@ -113,9 +113,11 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                     .child(
                         div()
                             .flex_1()
-                            .overflow_hidden()
                             .text_sm()
-                            .text_ellipsis()
+                            // Never wraps: text less than a pixel too wide is
+                            // not truncated, and would wrap its last
+                            // character onto a second line instead.
+                            .truncate()
                             .child(item.label.clone()),
                     )
                     //.context_menu(self.build_context_menu(item, cx))

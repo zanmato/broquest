@@ -1,0 +1,37 @@
+[package]
+name = "vsx-themes"
+version.workspace = true
+edition = "2024"
+publish = false
+description = "Convert VS Code color themes to gpui-component themes and find them on Open VSX"
+
+[lib]
+path = "src/vsx_themes.rs"
+
+# The crate is meant to be copied into other gpui-component apps. Only `gpui`
+# and `gpui-component` are app specific: point them at the app's own copies.
+# A gpui-kit app names `gpui-component` from the same source as its gpui-kit,
+# so Cargo builds the component library once.
+[dependencies]
+anyhow = { workspace = true }
+gpui = { workspace = true }
+gpui-component = { workspace = true }
+plist = "1.7"
+# Blocking, so the crate runs its requests on GPUI's background executor and
+# needs no tokio runtime from the app.
+reqwest = { workspace = true, features = ["blocking", "json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+zip = { version = "6", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+# The app turns this on, and without it gpui-component compiles a stub
+# highlight theme that reads none of the editor or status keys, which the
+# schema test would then report.
+gpui-component = { workspace = true, features = ["tree-sitter"] }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
