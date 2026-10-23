@@ -37,6 +37,7 @@ pub enum CommandType {
     OpenCollection,
     NewRequest,
     SaveRequest,
+    CopyResponse,
     CloseTab,
     NextTab,
     PrevTab,
@@ -311,6 +312,7 @@ fn keybinding_for_command(
     let action: Box<dyn gpui::Action> = match cmd {
         CommandType::SendRequest => Box::new(crate::requests::Send),
         CommandType::SaveRequest => Box::new(crate::requests::Save),
+        CommandType::CopyResponse => Box::new(crate::requests::CopyResponse),
         CommandType::NewRequest => Box::new(crate::app::NewScratchRequest),
         CommandType::NewCollection => Box::new(crate::app::OpenNewCollectionTab),
         CommandType::OpenCollection => Box::new(crate::app::OpenCollection),
@@ -339,6 +341,9 @@ fn execute_command(cmd: &CommandType, window: &mut Window, cx: &mut App) {
         }
         CommandType::SaveRequest => {
             window.dispatch_action(Box::new(crate::requests::Save), cx);
+        }
+        CommandType::CopyResponse => {
+            window.dispatch_action(Box::new(crate::requests::CopyResponse), cx);
         }
         CommandType::CloseTab => {
             window.dispatch_action(Box::new(crate::requests::CloseTab), cx);
@@ -493,6 +498,11 @@ fn build_commands(cx: &App) -> Vec<CommandItem> {
             label: "Save Request".into(),
             group: "Request".into(),
             action_type: CommandType::SaveRequest,
+        },
+        CommandItem {
+            label: "Copy Response".into(),
+            group: "Request".into(),
+            action_type: CommandType::CopyResponse,
         },
         CommandItem {
             label: "New Request".into(),

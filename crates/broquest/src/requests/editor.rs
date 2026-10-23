@@ -41,7 +41,7 @@ use std::time::Duration;
 
 const CONTEXT: &str = "request_editor";
 
-actions!(request_editor, [Save, Send]);
+actions!(request_editor, [Save, Send, CopyResponse]);
 
 /// Basic URL encoding function
 fn url_encode(input: &str) -> String {
@@ -182,6 +182,7 @@ impl RequestEditor {
         cx.bind_keys([
             KeyBinding::new("secondary-s", Save, Some(CONTEXT)),
             KeyBinding::new("secondary-enter", Send, Some(CONTEXT)),
+            KeyBinding::new("secondary-shift-c", CopyResponse, Some(CONTEXT)),
         ]);
     }
 
@@ -1656,6 +1657,28 @@ impl RequestEditor {
             )
     }
 
+    /// The response text the active response tab shows: the formatted (and
+    /// filtered) body on Response, the body as received on Raw. `None` when
+    /// there is nothing to copy, or the response is an image or a PDF.
+    fn copyable_response_text(&self, cx: &App) -> Option<String> {
+        if self.response_format == ResponseFormat::Pdf || self.response_image.is_some() {
+            return None;
+        }
+        let input = match self.active_response_tab {
+            ResponseTab::Response => &self.response_input,
+            ResponseTab::Raw => &self.raw_response_input,
+        };
+        let text = input.read(cx).value().to_string();
+        (!text.is_empty()).then_some(text)
+    }
+
+    pub fn copy_response(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self.copyable_response_text(cx) {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            window.push_notification((NotificationType::Info, "Copied response"), cx);
+        }
+    }
+
     fn render_response_area(
         &self,
         layout: EditorLayout,
@@ -1693,7 +1716,23 @@ impl RequestEditor {
                                     cx.notify();
                                 }))
                                 .child(Tab::new().label("Response"))
-                                .child(Tab::new().label("Raw")),
+                                .child(Tab::new().label("Raw"))
+                                .when(self.copyable_response_text(cx).is_some(), |this| {
+                                    this.suffix(
+                                        Button::new("copy-response")
+                                            .ghost()
+                                            .xsmall()
+                                            .icon(IconName::Copy)
+                                            .tooltip_with_action(
+                                                "Copy Response",
+                                                &CopyResponse,
+                                                Some(CONTEXT),
+                                            )
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.copy_response(window, cx);
+                                            })),
+                                    )
+                                }),
                         ),
                     )
                     .child(
@@ -2383,6 +2422,11 @@ impl Render for RequestEditor {
             .on_action(cx.listener(|this: &mut RequestEditor, &Send, window, cx| {
                 this.send_request(window, cx);
             }))
+            .on_action(
+                cx.listener(|this: &mut RequestEditor, &CopyResponse, window, cx| {
+                    this.copy_response(window, cx);
+                }),
+            )
             // No background: the editor card in `BroquestApp::render` owns the
             // surface so this square-cornered div can't paint over the card's
             // rounded border.
