@@ -976,6 +976,7 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "hex",
+ "http-file",
  "jsonpath-rust",
  "llrt_modules",
  "lsp-types",

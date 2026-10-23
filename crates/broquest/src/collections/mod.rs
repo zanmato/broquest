@@ -3,6 +3,7 @@
 mod collection_editor;
 mod format;
 mod group_editor;
+mod http_files;
 mod manager;
 mod openapi;
 mod opencollection;
@@ -15,6 +16,7 @@ mod wsdl;
 pub use collection_editor::*;
 pub use format::*;
 pub use group_editor::*;
+pub use http_files::is_http_collection;
 pub use manager::*;
 pub use opencollection::*;
 pub use panel::*;

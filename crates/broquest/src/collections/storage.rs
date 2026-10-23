@@ -66,6 +66,55 @@ pub(crate) fn storage_for(format: CollectionFormat) -> &'static dyn CollectionSt
     match format {
         CollectionFormat::Broquest => &BroquestStorage,
         CollectionFormat::OpenCollection => &OpenCollectionStorage,
+        CollectionFormat::Http => &HttpFileStorage,
+    }
+}
+
+// -- .http files, read-only -------------------------------------------------
+
+/// Folders of `.http` files are read-only for now, so every change is
+/// refused with a message saying so.
+pub(crate) struct HttpFileStorage;
+
+fn read_only<T>() -> Result<T> {
+    Err(anyhow::anyhow!(
+        "Collections of .http files are read-only for now, so changes can't be saved"
+    ))
+}
+
+impl CollectionStorage for HttpFileStorage {
+    fn save_collection(&self, _: &CollectionInfo) -> Result<()> {
+        read_only()
+    }
+
+    fn save_request(
+        &self,
+        _: &mut CollectionInfo,
+        _: &RequestData,
+        _: &str,
+        _: Option<&str>,
+    ) -> Result<()> {
+        read_only()
+    }
+
+    fn delete_request(&self, _: &mut CollectionInfo, _: &RequestData) -> Result<()> {
+        read_only()
+    }
+
+    fn move_request(&self, _: &mut CollectionInfo, _: &RequestData, _: Option<&str>) -> Result<()> {
+        read_only()
+    }
+
+    fn create_group(&self, _: &mut CollectionInfo, _: &str) -> Result<()> {
+        read_only()
+    }
+
+    fn rename_group(&self, _: &mut CollectionInfo, _: &str, _: &str) -> Result<()> {
+        read_only()
+    }
+
+    fn delete_group(&self, _: &mut CollectionInfo, _: &str) -> Result<()> {
+        read_only()
     }
 }
 

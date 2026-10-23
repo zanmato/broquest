@@ -150,6 +150,9 @@ impl CollectionManager {
                         CollectionFormat::Broquest => {
                             self.build_broquest_info(&collection_path, collection_data.clone())
                         }
+                        CollectionFormat::Http => {
+                            Self::build_http_info(&collection_path, collection_data.clone())
+                        }
                     };
 
                     match result {
@@ -185,13 +188,17 @@ impl CollectionManager {
     /// file presence (a directory with an OpenCollection marker but no
     /// `collection.toml` is treated as OpenCollection).
     fn detect_collection_format(data: &CollectionData, dir: &Path) -> CollectionFormat {
-        if CollectionFormat::from_db_str(&data.format) == CollectionFormat::OpenCollection {
-            return CollectionFormat::OpenCollection;
+        match CollectionFormat::from_db_str(&data.format) {
+            CollectionFormat::Broquest => {}
+            format => return format,
         }
-        if !dir.join("collection.toml").exists()
-            && opencollection::find_opencollection_file(dir).is_some()
-        {
-            return CollectionFormat::OpenCollection;
+        if !dir.join("collection.toml").exists() {
+            if opencollection::find_opencollection_file(dir).is_some() {
+                return CollectionFormat::OpenCollection;
+            }
+            if super::http_files::is_http_collection(dir) {
+                return CollectionFormat::Http;
+            }
         }
         CollectionFormat::Broquest
     }
@@ -213,6 +220,44 @@ impl CollectionManager {
             oc_envs: HashMap::new(),
             runtime_vars: HashMap::new(),
         })
+    }
+
+    /// Build a `CollectionInfo` for a folder of `.http` files.
+    fn build_http_info(dir: &Path, mut data: CollectionData) -> Result<CollectionInfo> {
+        let loaded = super::http_files::load(dir)?;
+        data.name = loaded.toml.collection.name.clone();
+        data.format = CollectionFormat::Http.as_db_str().to_string();
+        Ok(CollectionInfo {
+            data,
+            toml: loaded.toml,
+            requests: HashMap::new(),
+            groups: loaded.groups,
+            format: CollectionFormat::Http,
+            oc_source: None,
+            oc_items: HashMap::new(),
+            oc_groups: HashMap::new(),
+            oc_envs: HashMap::new(),
+            runtime_vars: HashMap::new(),
+        })
+    }
+
+    /// Load a folder of `.http` files into the manager and return its
+    /// collection metadata (mirrors [`Self::load_collection_toml`]).
+    pub fn load_http_dir(&mut self, dir: &Path, cx: &mut Context<Self>) -> Result<CollectionToml> {
+        let data = CollectionData {
+            id: None,
+            name: String::new(),
+            path: dir.to_string_lossy().to_string(),
+            position: 0,
+            format: CollectionFormat::Http.as_db_str().to_string(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let info = Self::build_http_info(dir, data)?;
+        let toml = info.toml.clone();
+        self.collections.insert(info.data.path.clone(), info);
+        cx.emit(CollectionManagerEvent::CollectionsChanged);
+        Ok(toml)
     }
 
     /// Build an OpenCollection `CollectionInfo` from a directory + database
@@ -463,6 +508,13 @@ impl CollectionManager {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let now = chrono::Utc::now();
+
+        if let Some(info) = self.collections.get(path)
+            && info.format == CollectionFormat::Http
+        {
+            // Refuse before touching the in-memory model.
+            return storage_for(info.format).save_collection(info);
+        }
 
         // Update the in-memory model in place (preserving requests, groups,
         // runtime vars, and OpenCollection sources) or create a fresh native

@@ -15,6 +15,8 @@ pub enum CollectionFormat {
     Broquest,
     /// Bruno OpenCollection: `opencollection.yml` (bundled or non-bundled tree).
     OpenCollection,
+    /// A folder of `.http` and `.rest` files. Read-only for now.
+    Http,
 }
 
 impl CollectionFormat {
@@ -23,6 +25,7 @@ impl CollectionFormat {
         match self {
             Self::Broquest => "broquest",
             Self::OpenCollection => "opencollection",
+            Self::Http => "http",
         }
     }
 
@@ -31,6 +34,7 @@ impl CollectionFormat {
     pub fn from_db_str(value: &str) -> Self {
         match value {
             "opencollection" => Self::OpenCollection,
+            "http" => Self::Http,
             _ => Self::Broquest,
         }
     }

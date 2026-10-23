@@ -47,6 +47,19 @@ Broquest draws with Vulkan. NixOS provides the driver, but with Nix on another
 distribution a Nix-built program cannot load the system's driver, so start it
 through [nixGL](https://github.com/nix-community/nixGL).
 
+## .http files
+
+Open a folder of `.http` or `.rest` files, as used by the JetBrains HTTP
+Client and the VS Code REST Client, with Open Collection. Each file shows as
+a group of its requests, and `@name = value` lines in a file apply to every
+request in it. Environments come from `http-client.env.json` and
+`http-client.private.env.json`, or from `rest-client.environmentVariables` in
+`.vscode/settings.json`.
+
+These collections are read-only for now. Requests can be edited and sent, but
+not saved. Response handler scripts and `< file` parts inside multipart
+bodies are not run or read yet.
+
 ## Built in variables
 
 Requests can use `{{$...}}` variables that make a new value every time they

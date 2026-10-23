@@ -539,8 +539,11 @@ impl BroquestApp {
                 let is_opencollection =
                     crate::collections::find_opencollection_file(&dir_path).is_some();
                 let has_toml = dir_path.join("collection.toml").exists();
+                let is_http = !is_opencollection
+                    && !has_toml
+                    && crate::collections::is_http_collection(&dir_path);
 
-                if is_opencollection || has_toml {
+                if is_opencollection || has_toml || is_http {
                     let _ = window
                         .update(|window, cx| {
                             // Load the collection with CollectionManager
@@ -548,6 +551,8 @@ impl BroquestApp {
                             let collection = manager.update(cx, |collection_manager, cx| {
                                 let load_result = if is_opencollection {
                                     collection_manager.load_opencollection_dir(&dir_path, cx)
+                                } else if is_http {
+                                    collection_manager.load_http_dir(&dir_path, cx)
                                 } else {
                                     collection_manager.load_collection_toml(&dir_path, cx)
                                 };
@@ -593,6 +598,8 @@ impl BroquestApp {
                                 let app_database = AppDatabase::global(cx).clone();
                                 let format = if is_opencollection {
                                     crate::collections::CollectionFormat::OpenCollection
+                                } else if is_http {
+                                    crate::collections::CollectionFormat::Http
                                 } else {
                                     crate::collections::CollectionFormat::Broquest
                                 };
@@ -619,7 +626,7 @@ impl BroquestApp {
                     let _ = window
                         .update(|window, cx| {
                             window.push_notification(
-                                "No collection.toml or opencollection.yml found in selected directory",
+                                "No collection.toml, opencollection.yml or .http files found in this folder",
                                 cx,
                             );
                         })

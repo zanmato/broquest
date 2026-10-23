@@ -644,57 +644,7 @@ impl RequestEditor {
 
     /// Strip query parameters from URL, returning base URL and extracted parameters
     fn strip_query_params_from_url(url: &str) -> (String, Vec<KeyValuePair>) {
-        let mut base_url = url.to_string();
-        let mut query_params = Vec::new();
-
-        // Check if URL has query parameters
-        if let Some(query_start) = url.find('?') {
-            // Extract the base URL (before ?)
-            base_url = url[..query_start].to_string();
-
-            // Extract query string (after ?, before # if present)
-            let query_part = if let Some(fragment_start) = url.find('#') {
-                // Fragment comes after query
-                if fragment_start > query_start {
-                    &url[query_start + 1..fragment_start]
-                } else {
-                    &url[query_start + 1..]
-                }
-            } else {
-                &url[query_start + 1..]
-            };
-
-            // Parse query parameters
-            for pair in query_part.split('&') {
-                if let Some(eq_pos) = pair.find('=') {
-                    let key = &pair[..eq_pos];
-                    let value = &pair[eq_pos + 1..];
-
-                    if !key.is_empty() {
-                        query_params.push(KeyValuePair {
-                            key: urlencoding::decode(key)
-                                .unwrap_or_else(|_| key.to_string().into())
-                                .to_string(),
-                            value: urlencoding::decode(value)
-                                .unwrap_or_else(|_| value.to_string().into())
-                                .to_string(),
-                            enabled: true,
-                        });
-                    }
-                } else if !pair.is_empty() {
-                    // Parameter without value
-                    query_params.push(KeyValuePair {
-                        key: urlencoding::decode(pair)
-                            .unwrap_or_else(|_| pair.to_string().into())
-                            .to_string(),
-                        value: String::new(),
-                        enabled: true,
-                    });
-                }
-            }
-        }
-
-        (base_url, query_params)
+        crate::domain::split_query(url)
     }
 
     pub fn get_request_data(&self, cx: &Context<Self>) -> RequestData {
@@ -1277,6 +1227,10 @@ impl RequestEditor {
                 }
                 Err(e) => {
                     tracing::error!("Failed to save request: {}", e);
+                    window.push_notification(
+                        (NotificationType::Error, SharedString::from(e.to_string())),
+                        cx,
+                    );
                 }
             }
         } else {
