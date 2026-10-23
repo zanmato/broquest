@@ -368,6 +368,14 @@ impl CollectionEditor {
     }
 
     /// The left-hand form: name, path, import toggles, OpenCollection switch.
+    /// The format of the collection being edited, when it already exists.
+    fn existing_format(&self, cx: &App) -> Option<super::CollectionFormat> {
+        CollectionManager::global(cx)
+            .read(cx)
+            .get_collection_by_path(&self.collection_path)
+            .map(|info| info.format)
+    }
+
     fn render_collection_form(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let import_kind = self.selected_import(cx);
         let label_color = cx.theme().muted_foreground;
@@ -440,9 +448,26 @@ impl CollectionEditor {
                     ),
                 ]),
             )
-            .child(
-                // OpenCollection format toggle (kept at the bottom of the form).
-                v_flex().gap_2().child(
+            .child(match self.existing_format(cx) {
+                // An existing collection keeps its format, so show what it is.
+                Some(format) => v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_medium()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Format"),
+                    )
+                    .child(div().text_sm().child(format.label()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format.description()),
+                    ),
+                // A new collection picks one (kept at the bottom of the form).
+                None => v_flex().gap_2().child(
                     h_flex().gap_2().items_center().child(
                         Switch::new("use-opencollection")
                             .small()
@@ -454,7 +479,7 @@ impl CollectionEditor {
                             })),
                     ),
                 ),
-            )
+            })
     }
 
     /// The Collection tab: a horizontal split with the form on the left and the

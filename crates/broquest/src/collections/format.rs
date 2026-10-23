@@ -29,6 +29,39 @@ impl CollectionFormat {
         }
     }
 
+    /// A short tag for the sidebar. The default format has none.
+    pub fn tag(&self) -> Option<&'static str> {
+        match self {
+            Self::Broquest => None,
+            Self::OpenCollection => Some("OC"),
+            Self::Http => Some("HTTP"),
+        }
+    }
+
+    /// The format's name.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Broquest => "Broquest TOML",
+            Self::OpenCollection => "OpenCollection (Bruno)",
+            Self::Http => ".http files",
+        }
+    }
+
+    /// Where the collection is stored and what it keeps.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Broquest => {
+                "A collection.toml and one TOML file per request. Everything is saved."
+            }
+            Self::OpenCollection => {
+                "Bruno's YAML format, in opencollection.yml or a folder of YAML files. Everything is saved."
+            }
+            Self::Http => {
+                "A folder of .http and .rest files, as used by the JetBrains HTTP Client and the VS Code REST Client. Requests, groups and environments are saved to the files. Collection docs, variables and auth have no place in them and are not saved."
+            }
+        }
+    }
+
     /// Parse the value stored in the database, defaulting to `Broquest` for
     /// legacy rows (written before the `format` column existed).
     pub fn from_db_str(value: &str) -> Self {

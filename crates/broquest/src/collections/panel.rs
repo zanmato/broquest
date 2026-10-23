@@ -1,15 +1,17 @@
 use gpui::SharedString;
 use gpui::{
     App, AppContext, ClickEvent, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
+    px,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable, WindowExt,
+    ActiveTheme as _, Icon, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     list::ListItem,
     menu::PopupMenuItem,
     notification::NotificationType,
+    tooltip::Tooltip,
     v_flex,
 };
 use smol::Timer;
@@ -21,6 +23,7 @@ use crate::domain::{HttpMethod, RequestData};
 use crate::ui::icon::IconName;
 use crate::ui::method_badge::MethodBadge;
 
+use super::format::CollectionFormat;
 use super::manager::{CollectionInfo, CollectionManager};
 use crate::ui::draggable_tree::{
     DragIcon, DraggableTree, DraggableTreeDelegate, DraggableTreeState, DraggedTreeItem,
@@ -87,6 +90,10 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
             };
         }
 
+        let format = connections_panel
+            .get_tree_item_metadata(&item.id)
+            .and_then(|metadata| metadata.format);
+
         ListItem::new(ix)
             .selected(selected)
             .w_full()
@@ -116,6 +123,33 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                             // character onto a second line instead.
                             .truncate()
                             .child(item.label.clone()),
+                    )
+                    .when_some(
+                        format.and_then(|format| Some((format, format.tag()?))),
+                        |this, (format, tag)| {
+                            this.child(
+                                div()
+                                    .id(("format-tag", ix))
+                                    .flex_none()
+                                    .px(px(4.))
+                                    .py(px(1.))
+                                    .rounded(px(6.))
+                                    .bg(cx.theme().muted_foreground.opacity(0.15))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .text_size(px(10.))
+                                    .line_height(px(13.))
+                                    .font_bold()
+                                    .child(tag)
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::new(format!(
+                                            "{}. {}",
+                                            format.label(),
+                                            format.description()
+                                        ))
+                                        .build(window, cx)
+                                    }),
+                            )
+                        },
                     )
                     //.context_menu(self.build_context_menu(item, cx))
                     .when(entry.is_folder(), |this| {
@@ -467,6 +501,8 @@ pub struct TreeItemMetadata {
     pub icon: TreeItemIcon,
     pub collection_path: String, // Path to collection directory for collection items
     pub group_path: Option<String>, // Path to group directory for group items
+    /// The format of a collection item.
+    pub format: Option<CollectionFormat>,
 }
 
 impl CollectionsPanel {
@@ -624,6 +660,7 @@ impl CollectionsPanel {
                     },
                     collection_path: collection_data.path.clone(),
                     group_path: None, // Root level request
+                    format: None,
                 };
 
                 self.tree_item_metadata
@@ -666,6 +703,7 @@ impl CollectionsPanel {
                         },
                         collection_path: collection_data.path.clone(),
                         group_path: Some(group_info.path.clone()),
+                        format: None,
                     };
 
                     self.tree_item_metadata
@@ -692,6 +730,7 @@ impl CollectionsPanel {
                     },
                     collection_path: collection_data.path.clone(),
                     group_path: Some(group_info.path.clone()),
+                    format: None,
                 };
 
                 self.tree_item_metadata.insert(group_id, group_metadata);
@@ -719,6 +758,7 @@ impl CollectionsPanel {
                 },
                 collection_path: collection_data.path.clone(),
                 group_path: None,
+                format: Some(collection_info.format),
             };
 
             self.tree_item_metadata
