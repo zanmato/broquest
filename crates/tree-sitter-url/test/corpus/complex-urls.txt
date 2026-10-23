@@ -5,32 +5,41 @@ Complex URL with all features
 {{baseUrl}}/api/v1/users/:id/posts?include={{relations}}&sort=date&limit={{count}}
 
 ---
+
 (source_file
   (url_line
-    (variable)
     (url_components
       (path
-        "/"
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))
+        (path_segment))))
+  (url_line
+    (url_components
+      (path
         (path_segment)
-        "/"
         (path_segment)
-        "/"
-        (path_segment)
-        "/"
         (path_param)
-        "/"
         (path_segment))
       (query_string
         (query_param
           (key)
-          (variable))
+          (value
+            (variable
+              (variable_delim_start)
+              (variable_name)
+              (variable_delim_end))))
         (query_param
           (key)
           (value))
         (query_param
           (key)
-          (variable))))))
-
+          (value
+            (variable
+              (variable_delim_start)
+              (variable_name)
+              (variable_delim_end))))))))
 
 ============================
 Full URL with everything
@@ -39,6 +48,7 @@ Full URL with everything
 https://api.example.com:8443/users/:userId/profile?format=json&fields={{userFields}}
 
 ---
+
 (source_file
   (url_line
     (protocol)
@@ -47,11 +57,8 @@ https://api.example.com:8443/users/:userId/profile?format=json&fields={{userFiel
       (port))
     (url_components
       (path
-        "/"
         (path_segment)
-        "/"
         (path_param)
-        "/"
         (path_segment))
       (query_string
         (query_param
@@ -59,8 +66,11 @@ https://api.example.com:8443/users/:userId/profile?format=json&fields={{userFiel
           (value))
         (query_param
           (key)
-          (variable)))))))
-
+          (value
+            (variable
+              (variable_delim_start)
+              (variable_name)
+              (variable_delim_end))))))))
 
 ============================
 Multiple variables in path
@@ -69,20 +79,25 @@ Multiple variables in path
 {{host}}/{{api}}/v{{version}}/resources
 
 ---
+
 (source_file
   (url_line
-    (variable)
     (url_components
       (path
-        "/"
-        (variable)
-        "/"
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))
         (path_segment)
-        "/"
-        (variable)
-        "/"
-        (path_segment))))))
-
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))
+        (path_segment)))))
 
 ============================
 Just path with parameters
@@ -91,19 +106,15 @@ Just path with parameters
 /resource/:id/subresource/:subId
 
 ---
+
 (source_file
   (url_line
     (url_components
       (path
-        "/"
         (path_segment)
-        "/"
         (path_param)
-        "/"
         (path_segment)
-        "/"
-        (path_param))))))
-
+        (path_param)))))
 
 ============================
 Simple HTTPS URL
@@ -112,16 +123,16 @@ Simple HTTPS URL
 https://localhost/health
 
 ---
+
 (source_file
   (url_line
     (protocol)
     (domain_and_port
-      (hostname))
+      (domain
+        (hostname)))
     (url_components
       (path
-        "/"
-        (path_segment))))))
-
+        (path_segment)))))
 
 ============================
 Example from original file
@@ -130,18 +141,23 @@ Example from original file
 {{baseUrl}}/path-segment/:id/another-path-segment?query={{variable}}
 
 ---
+
 (source_file
   (url_line
-    (variable)
     (url_components
       (path
-        "/"
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))
         (path_segment)
-        "/"
         (path_param)
-        "/"
         (path_segment))
       (query_string
         (query_param
           (key)
-          (variable))))))
+          (value
+            (variable
+              (variable_delim_start)
+              (variable_name)
+              (variable_delim_end))))))))

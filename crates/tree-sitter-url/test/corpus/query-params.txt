@@ -5,17 +5,16 @@ Simple query parameter
 /users?name=john
 
 ---
+
 (source_file
   (url_line
     (url_components
       (path
-        "/"
         (path_segment))
       (query_string
         (query_param
           (key)
           (value))))))
-
 
 ============================
 Multiple query parameters
@@ -24,11 +23,11 @@ Multiple query parameters
 /search?q=tree&sort=date&filter=all
 
 ---
+
 (source_file
   (url_line
     (url_components
       (path
-        "/"
         (path_segment))
       (query_string
         (query_param
@@ -40,7 +39,6 @@ Multiple query parameters
         (query_param
           (key)
           (value))))))
-
 
 ============================
 Variable in query value
@@ -49,17 +47,20 @@ Variable in query value
 /users?filter={{status}}
 
 ---
+
 (source_file
   (url_line
     (url_components
       (path
-        "/"
         (path_segment))
       (query_string
         (query_param
           (key)
-          (variable))))))
-
+          (value
+            (variable
+              (variable_delim_start)
+              (variable_name)
+              (variable_delim_end))))))))
 
 ============================
 Variable in query key
@@ -68,17 +69,20 @@ Variable in query key
 /users?{{param}}=value
 
 ---
+
 (source_file
   (url_line
     (url_components
       (path
-        "/"
         (path_segment))
       (query_string
         (query_param
-          (variable)
+          (key
+            (variable
+              (variable_delim_start)
+              (variable_name)
+              (variable_delim_end)))
           (value))))))
-
 
 ============================
 Query parameter without value
@@ -87,12 +91,12 @@ Query parameter without value
 /users?debug
 
 ---
+
 (source_file
   (url_line
     (url_components
       (path
-        "/"
         (path_segment))
       (query_string
         (query_param
-          (key)))))
+          (key))))))

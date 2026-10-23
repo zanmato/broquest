@@ -5,12 +5,15 @@ Variable only
 {{variable}}
 
 ---
+
 (source_file
   (url_line
-    (variable)
     (url_components
-      (path))))
-
+      (path
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))))))
 
 ============================
 Variable in path
@@ -19,17 +22,17 @@ Variable in path
 /path/{{variable}}/other
 
 ---
+
 (source_file
   (url_line
     (url_components
       (path
-        "/"
         (path_segment)
-        "/"
-        (variable)
-        "/"
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))
         (path_segment)))))
-
 
 ============================
 Multiple variables
@@ -38,16 +41,23 @@ Multiple variables
 {{api}}/{{version}}/{{resource}}
 
 ---
+
 (source_file
   (url_line
-    (variable)
     (url_components
       (path
-        "/"
-        (variable)
-        "/"
-        (variable))))))
-
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))))))
 
 ============================
 Variable with domain
@@ -56,11 +66,66 @@ Variable with domain
 https://{{host}}/path
 
 ---
+
 (source_file
   (url_line
     (protocol)
-    (variable)
     (url_components
       (path
-        "/"
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))
         (path_segment)))))
+
+============================
+Variable with spaces
+============================
+
+https://{{ host }}/path
+
+---
+
+(source_file
+  (url_line
+    (protocol)
+    (url_components
+      (path
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end))
+        (path_segment)))))
+
+============================
+Built in variables
+============================
+
+/items/{{$guid}}?at={{$timestamp -1 d}}&n={{$random.integer(1, 7)}}
+
+---
+
+(source_file
+  (url_line
+    (url_components
+      (path
+        (path_segment)
+        (variable
+          (variable_delim_start)
+          (variable_name)
+          (variable_delim_end)))
+      (query_string
+        (query_param
+          (key)
+          (value
+            (variable
+              (variable_delim_start)
+              (variable_name)
+              (variable_delim_end))))
+        (query_param
+          (key)
+          (value
+            (variable
+              (variable_delim_start)
+              (variable_name)
+              (variable_delim_end))))))))

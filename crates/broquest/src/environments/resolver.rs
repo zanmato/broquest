@@ -28,9 +28,9 @@ impl EnvironmentResolver {
         secrets: &HashMap<String, String>,
     ) -> String {
         resolve_placeholders(input, |name| {
-            if name.starts_with('$') {
-                // Dynamic {{$...}} variables are left untouched.
-                return None;
+            if let Some(expr) = name.strip_prefix('$') {
+                // Built in {{$...}} variables. Unknown ones keep their placeholder.
+                return super::dynamic::resolve(expr);
             }
             runtime_vars
                 .get(name)
@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_string_preserves_unknown_and_dynamic() {
+    fn test_resolve_string_unknown_and_dynamic() {
         let resolver = EnvironmentResolver::new();
         let empty = HashMap::new();
 
@@ -418,10 +418,15 @@ mod tests {
         let s = resolver.resolve_string("a-{{missing}}-b", &empty, &empty, &empty, &empty);
         assert_eq!(s, "a-{{missing}}-b");
 
-        // Dynamic {{$...}} vars are left untouched even if they share a name.
+        // Built in {{$...}} vars are generated, and win over a plain variable
+        // of the same name.
         let env = map(&[("guid", "should-not-win")]);
-        let s = resolver.resolve_string("{{$guid}}", &empty, &empty, &env, &empty);
-        assert_eq!(s, "{{$guid}}");
+        let s = resolver.resolve_string("{{ $guid }}", &empty, &empty, &env, &empty);
+        assert!(uuid::Uuid::parse_str(&s).is_ok(), "{s}");
+
+        // Unknown built ins keep their placeholder.
+        let s = resolver.resolve_string("{{$nope}}", &empty, &empty, &empty, &empty);
+        assert_eq!(s, "{{$nope}}");
     }
 
     #[test]

@@ -47,6 +47,32 @@ Broquest draws with Vulkan. NixOS provides the driver, but with Nix on another
 distribution a Nix-built program cannot load the system's driver, so start it
 through [nixGL](https://github.com/nix-community/nixGL).
 
+## Built in variables
+
+Requests can use `{{$...}}` variables that make a new value every time they
+are sent. The names from the VS Code REST Client, the JetBrains HTTP Client
+and Postman all work, so imported requests keep their meaning.
+
+| Variable | Value |
+|---|---|
+| `{{$guid}}`, `{{$uuid}}`, `{{$randomUUID}}` | A random UUID |
+| `{{$nanoid}}`, `{{$nanoid 10}}` | A random URL safe id |
+| `{{$timestamp}}`, `{{$timestampMs}}` | Unix time in seconds or milliseconds |
+| `{{$isoTimestamp}}` | The current UTC time in ISO 8601 |
+| `{{$datetime iso8601}}`, `{{$datetime rfc1123}}` | The current UTC time |
+| `{{$localDatetime "YYYY-MM-DD HH:mm"}}` | Local time in a [day.js style format](https://day.js.org/docs/en/display/format) |
+| `{{$date}}`, `{{$today}}`, `{{$tomorrow}}`, `{{$yesterday}}` | A local date as `YYYY-MM-DD` |
+| `{{$randomInt}}`, `{{$randomInt 1 7}}`, `{{$random.integer(1, 7)}}` | A random integer, the upper bound left out |
+| `{{$random.float(0, 1)}}` | A random number |
+| `{{$randomDigits 4}}`, `{{$randomZipCode}}` | Random digits |
+| `{{$random.alphabetic(8)}}`, `{{$random.alphanumeric(8)}}`, `{{$random.hexadecimal(8)}}` | A random string |
+| `{{$randomEmail}}`, `{{$randomFirstName}}`, `{{$randomLastName}}`, `{{$randomFullName}}`, `{{$randomCity}}`, `{{$randomPhoneNumber}}`, `{{$randomWord}}`, `{{$randomBoolean}}` | Example data |
+| `{{$processEnv HOME}}` | An environment variable of the Broquest process |
+
+Time based variables take an offset: `{{$timestamp -1 d}}`,
+`{{$date -1 w}}` or `{{$datetime iso8601 2 h}}`, in the units
+`y M w d h m s ms`.
+
 ## Scripting
 
 Broquest supports JavaScript scripting for pre-request and post-response hooks using [QuickJS](https://bellard.org/quickjs/) with [LLRT modules](https://github.com/awslabs/llrt) that provide Node.js-compatible APIs.

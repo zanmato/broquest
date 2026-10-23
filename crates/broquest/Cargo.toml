@@ -67,6 +67,8 @@ flate2 = "1"
 brotli-decompressor = "5"
 ruzstd = "0.8"
 encoding_rs = "0.8"
+uuid = { version = "1", features = ["v4"] }
+fastrand = "2"
 
 [features]
 # Stages scenes for the website screenshots; see script/screenshots/capture.

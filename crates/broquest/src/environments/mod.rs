@@ -1,5 +1,6 @@
 //! Environment handling module
 
+pub mod dynamic;
 mod editor;
 mod resolver;
 

@@ -77,7 +77,9 @@ module.exports = grammar({
 
     variable_delim_end: $ => "}}",
 
-    variable_name: $ => /[a-zA-Z_][a-zA-Z0-9_]*/,
+    // Anything up to the closing braces: `{{ host }}`, `{{$guid}}`,
+    // `{{$timestamp -1 d}}` or `{{$random.integer(1, 7)}}`.
+    variable_name: $ => /[^{}\r\n]+/,
 
     query_string: $ => seq(
       "?",
@@ -98,9 +100,10 @@ module.exports = grammar({
       /[a-zA-Z0-9_-]+/
     ),
 
-    value: $ => choice(
+    // Text and variables, as in `id-{{id}}` or `{{$timestamp -1 d}}`.
+    value: $ => prec.right(repeat1(choice(
       $.variable,
-      /[^&]+/
-    )
+      /[^&{}\r\n]+/
+    )))
   }
 });
