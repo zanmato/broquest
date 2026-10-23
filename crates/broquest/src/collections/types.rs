@@ -302,7 +302,12 @@ impl From<RequestToml> for RequestData {
             None => String::new(),
             Some(body_section) => match body_type {
                 "json" => body_section.json.clone().unwrap_or_default(),
-                "text" => body_section.text.clone().unwrap_or_default(),
+                // Multipart bodies used to be stored as json.
+                "text" => body_section
+                    .text
+                    .clone()
+                    .or_else(|| body_section.json.clone())
+                    .unwrap_or_default(),
                 "xml" => body_section.xml.clone().unwrap_or_default(),
                 "form" => {
                     // Convert form data to URL-encoded string

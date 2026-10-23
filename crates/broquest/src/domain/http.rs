@@ -25,6 +25,8 @@ pub enum ContentType {
     Html,
     Form,
     UrlEncoded,
+    /// A multipart body, edited as text.
+    Multipart,
 }
 
 impl HttpMethod {
@@ -61,27 +63,31 @@ impl HttpMethod {
 }
 
 impl ContentType {
-    pub const ALL: [ContentType; 6] = [
+    pub const ALL: [ContentType; 7] = [
         ContentType::Json,
         ContentType::Xml,
         ContentType::Text,
         ContentType::Html,
         ContentType::Form,
         ContentType::UrlEncoded,
+        ContentType::Multipart,
     ];
 
     pub fn from_header(content_type: &str) -> Self {
         let content_type = content_type.to_lowercase();
-        if content_type.contains("application/json") {
+        let mime = content_type.split(';').next().unwrap_or("").trim();
+        if mime == "application/json" || mime.ends_with("+json") {
             ContentType::Json
-        } else if content_type.contains("application/xml") || content_type.contains("text/xml") {
+        } else if mime == "application/xml" || mime == "text/xml" || mime.ends_with("+xml") {
             ContentType::Xml
-        } else if content_type.contains("text/html") {
+        } else if mime == "text/html" {
             ContentType::Html
-        } else if content_type.contains("text/plain") {
-            ContentType::Text
-        } else if content_type.contains("application/x-www-form-urlencoded") {
+        } else if mime == "application/x-www-form-urlencoded" {
             ContentType::Form
+        } else if mime.starts_with("multipart/") {
+            ContentType::Multipart
+        } else if mime.starts_with("text/") {
+            ContentType::Text
         } else {
             ContentType::Json // Default
         }
@@ -95,6 +101,7 @@ impl ContentType {
             ContentType::Html => "text/html",
             ContentType::Form => "application/x-www-form-urlencoded",
             ContentType::UrlEncoded => "application/x-www-form-urlencoded",
+            ContentType::Multipart => "multipart/form-data",
         }
     }
 
@@ -106,6 +113,7 @@ impl ContentType {
             ContentType::Html => "html",
             ContentType::Form => "form",
             ContentType::UrlEncoded => "form",
+            ContentType::Multipart => "text",
         }
     }
 
@@ -117,6 +125,7 @@ impl ContentType {
             ContentType::Html => "html",
             ContentType::Form => "text",
             ContentType::UrlEncoded => "text",
+            ContentType::Multipart => "text",
         }
     }
 }
@@ -132,6 +141,7 @@ impl SelectItem for ContentType {
             ContentType::Html => "HTML".into(),
             ContentType::Form => "Form Data".into(),
             ContentType::UrlEncoded => "URL Encoded".into(),
+            ContentType::Multipart => "Multipart".into(),
         }
     }
 
@@ -157,5 +167,32 @@ impl SelectItem for HttpMethod {
 
     fn value(&self) -> &Self::Value {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_types_from_headers() {
+        let cases = [
+            ("application/json; charset=utf-8", ContentType::Json),
+            ("application/problem+json", ContentType::Json),
+            ("application/atom+xml", ContentType::Xml),
+            ("text/xml", ContentType::Xml),
+            ("text/html", ContentType::Html),
+            ("text/plain", ContentType::Text),
+            ("text/csv", ContentType::Text),
+            ("application/x-www-form-urlencoded", ContentType::Form),
+            (
+                "multipart/form-data; boundary=ParcelBoundary",
+                ContentType::Multipart,
+            ),
+            ("application/octet-stream", ContentType::Json),
+        ];
+        for (header, expected) in cases {
+            assert_eq!(ContentType::from_header(header), expected, "{header}");
+        }
     }
 }
