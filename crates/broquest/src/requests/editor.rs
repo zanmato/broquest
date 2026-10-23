@@ -47,39 +47,66 @@ const CONTEXT: &str = "request_editor";
 
 actions!(request_editor, [Save, Send, CopyResponse]);
 
-/// Basic URL encoding function
+/// Percent-encode text for a URL or form body. `{{variables}}` stay as they
+/// are, so they can still be resolved.
 fn url_encode(input: &str) -> String {
-    input
-        .chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            ' ' => "+".to_string(),
-            _ => format!("%{:02X}", c as u8),
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(start) = rest.find("{{") {
+        let Some(end) = rest[start..].find("}}") else {
+            break;
+        };
+        out.push_str(&urlencoding::encode(&rest[..start]));
+        out.push_str(&rest[start..start + end + 2]);
+        rest = &rest[start + end + 2..];
+    }
+    out.push_str(&urlencoding::encode(rest));
+    out
+}
+
+/// Decode percent-encoded text, with `+` as a space.
+fn url_decode(input: &str) -> String {
+    let spaced = input.replace('+', " ");
+    urlencoding::decode(&spaced)
+        .map(|text| text.into_owned())
+        .unwrap_or(spaced)
+}
+
+/// The fields of a urlencoded form body. `name=@path` file fields keep
+/// their path as written.
+fn parse_form_body(body: &str) -> Vec<KeyValuePair> {
+    body.split('&')
+        .filter(|pair| !pair.trim().is_empty())
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            let value = if value.starts_with('@') {
+                value.to_string()
+            } else {
+                url_decode(value)
+            };
+            KeyValuePair {
+                key: url_decode(key),
+                value,
+                enabled: true,
+            }
         })
         .collect()
 }
 
-/// Basic URL decoding function
-fn url_decode(input: &str) -> String {
-    let mut result = String::new();
-    let mut chars = input.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        match c {
-            '+' => result.push(' '),
-            '%' => {
-                if let (Some(h1), Some(h2)) = (chars.next(), chars.next())
-                    && let Ok(byte) = u8::from_str_radix(&format!("{}{}", h1, h2), 16)
-                    && let Some(decoded) = char::from_u32(byte as u32)
-                {
-                    result.push(decoded);
-                }
+/// A urlencoded form body from its fields. File fields stay `name=@path`.
+fn form_body(fields: &[KeyValuePair]) -> String {
+    fields
+        .iter()
+        .filter(|field| field.enabled && !field.key.is_empty())
+        .map(|field| {
+            if field.value.starts_with('@') {
+                format!("{}={}", field.key, field.value)
+            } else {
+                format!("{}={}", url_encode(&field.key), url_encode(&field.value))
             }
-            _ => result.push(c),
-        }
-    }
-
-    result
+        })
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -557,6 +584,15 @@ impl RequestEditor {
 
         self.on_content_type_change(cx);
 
+        // A urlencoded body shows as form fields. Requests from .http files
+        // keep their body as written.
+        if content_type == ContentType::Form && data.http_file.is_none() {
+            let fields = parse_form_body(&data.body);
+            self.form_editor.update(cx, |editor, cx| {
+                editor.set_pairs(&fields, window, cx);
+            });
+        }
+
         // Update scripts
         self.script_editor.update(cx, |editor, cx| {
             editor.set_scripts(
@@ -708,27 +744,9 @@ impl RequestEditor {
         // Update body from input
         data.body = self.body_input.read(cx).value().to_string();
 
-        // If Form content type is selected, convert form editor data to body string
-        // This ensures form data is properly saved and variables can be resolved
-        if let Some(selected_content_type) = self.content_type_select.read(cx).selected_value()
-            && selected_content_type == &ContentType::Form
-        {
-            let form_data = self.form_editor.read(cx).get_pairs(cx);
-            let form_body = form_data
-                .iter()
-                .filter(|field| field.enabled && !field.key.is_empty())
-                .map(|field| {
-                    if field.value.starts_with('@') {
-                        // File reference - keep as-is
-                        format!("{}={}", field.key, field.value)
-                    } else {
-                        // Regular form field - URL encode
-                        format!("{}={}", url_encode(&field.key), url_encode(&field.value))
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("&");
-            data.body = form_body;
+        // The form editor holds a urlencoded body as fields.
+        if self.uses_form_editor(cx) {
+            data.body = form_body(&self.form_editor.read(cx).get_pairs(cx));
         }
 
         let vars = self
@@ -763,6 +781,13 @@ impl RequestEditor {
         data.auth = self.auth_editor.read(cx).get_auth(cx);
 
         data
+    }
+
+    /// Whether the body is edited as form fields: a urlencoded body, unless
+    /// the request comes from a .http file, which keeps its body as written.
+    fn uses_form_editor(&self, cx: &App) -> bool {
+        self.request_data.http_file.is_none()
+            && self.content_type_select.read(cx).selected_value() == Some(&ContentType::Form)
     }
 
     pub fn is_dirty(&self, cx: &Context<Self>) -> bool {
@@ -1008,27 +1033,9 @@ impl RequestEditor {
         // Get the current request data
         let mut request_data = self.get_request_data(cx);
 
-        // Check if Form Data content type is selected and update form data
-        if let Some(selected_content_type) = self.content_type_select.read(cx).selected_value()
-            && selected_content_type == &ContentType::Form
-        {
-            let form_data = self.form_editor.read(cx).get_pairs(cx);
-            // Convert form data to body format (key=value pairs, files as @path)
-            let form_body = form_data
-                .iter()
-                .filter(|field| field.enabled && !field.key.is_empty())
-                .map(|field| {
-                    if field.value.starts_with('@') {
-                        // File reference
-                        format!("{}={}", field.key, field.value)
-                    } else {
-                        // Regular form field
-                        format!("{}={}", url_encode(&field.key), url_encode(&field.value))
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("&");
-            request_data.body = form_body;
+        // The form editor holds a urlencoded body as fields.
+        if self.uses_form_editor(cx) {
+            request_data.body = form_body(&self.form_editor.read(cx).get_pairs(cx));
         }
 
         // Perform path parameter replacement on the URL
@@ -1715,10 +1722,12 @@ impl RequestEditor {
                                 ),
                         )
                         .child(match selected_content_type {
-                            Some(ContentType::Form) => div()
-                                .size_full()
-                                .child(self.form_editor.clone())
-                                .into_any_element(),
+                            Some(ContentType::Form) if self.request_data.http_file.is_none() => {
+                                div()
+                                    .size_full()
+                                    .child(self.form_editor.clone())
+                                    .into_any_element()
+                            }
                             _ => Editor::new(&self.body_input)
                                 .font_family(cx.theme().mono_font_family.clone())
                                 .text_size(px(12.))
@@ -2676,5 +2685,49 @@ impl ResponseData {
         }
 
         raw_output
+    }
+}
+
+#[cfg(test)]
+mod form_tests {
+    use super::*;
+
+    fn field(key: &str, value: &str) -> KeyValuePair {
+        KeyValuePair {
+            key: key.to_string(),
+            value: value.to_string(),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn encoding_keeps_variables_and_handles_unicode() {
+        assert_eq!(url_encode("a b&c=é"), "a%20b%26c%3D%C3%A9");
+        assert_eq!(url_encode("Bearer {{token}}!"), "Bearer%20{{token}}%21");
+        assert_eq!(url_encode("{{unclosed"), "%7B%7Bunclosed");
+        assert_eq!(url_decode("a+b%26c%3D%C3%A9"), "a b&c=é");
+        assert_eq!(url_decode("100%"), "100%");
+    }
+
+    #[test]
+    fn form_bodies_round_trip() {
+        let fields =
+            parse_form_body("email=a%40b.com&name=Ann+Lee&city=Ume%C3%A5&file=@/tmp/x.pdf&flag");
+        assert_eq!(
+            fields,
+            vec![
+                field("email", "a@b.com"),
+                field("name", "Ann Lee"),
+                field("city", "Umeå"),
+                field("file", "@/tmp/x.pdf"),
+                field("flag", ""),
+            ]
+        );
+        assert_eq!(
+            form_body(&fields),
+            "email=a%40b.com&name=Ann%20Lee&city=Ume%C3%A5&file=@/tmp/x.pdf&flag="
+        );
+        assert_eq!(form_body(&[field("token", "{{token}}")]), "token={{token}}");
+        assert!(parse_form_body("").is_empty());
     }
 }
