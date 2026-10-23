@@ -4,6 +4,7 @@ mod collection_editor;
 mod format;
 mod group_editor;
 mod http_files;
+mod http_watch;
 mod manager;
 mod openapi;
 mod opencollection;

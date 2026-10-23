@@ -70,6 +70,7 @@ encoding_rs = "0.8"
 uuid = { version = "1", features = ["v4"] }
 fastrand = "2"
 http-file = { version = "0.1.0", path = "../http-file" }
+notify = "8"
 
 [features]
 # Stages scenes for the website screenshots; see script/screenshots/capture.

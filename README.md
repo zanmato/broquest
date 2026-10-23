@@ -83,8 +83,9 @@ file of that name, and `>>! ./response.json` overwrites it.
 folder. Authorization headers can use the VS Code shorthands `Basic user:password`,
 `Basic user password` and `Digest user password`.
 
-These collections are read-only for now. Requests can be edited and sent, but
-not saved.
+The collection reloads when its files change, so edits made in another
+editor show up right away. These collections are read-only for now. Requests
+can be edited and sent, but not saved.
 
 ## Built in variables
 

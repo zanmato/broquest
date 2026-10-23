@@ -70,6 +70,8 @@ pub struct CollectionManager {
     /// The last exchange of each request this session, by collection path and
     /// request name, for `{{name.response...}}` references.
     exchanges: HashMap<String, HashMap<String, ResponseData>>,
+    /// Watches on collections of `.http` files, by collection path.
+    http_watches: HashMap<String, super::http_watch::HttpWatch>,
 }
 
 impl CollectionManager {
@@ -77,6 +79,7 @@ impl CollectionManager {
         Self {
             collections: HashMap::new(),
             exchanges: HashMap::new(),
+            http_watches: HashMap::new(),
         }
     }
 
@@ -191,6 +194,7 @@ impl CollectionManager {
 
                 // Replace the contents of self.collections with the local collections
                 self.collections = local_collections;
+                self.sync_http_watches(cx);
             }
             Err(e) => {
                 tracing::error!("Failed to load collections from database: {}", e);
@@ -273,8 +277,58 @@ impl CollectionManager {
         let info = Self::build_http_info(dir, data)?;
         let toml = info.toml.clone();
         self.collections.insert(info.data.path.clone(), info);
+        self.sync_http_watches(cx);
         cx.emit(CollectionManagerEvent::CollectionsChanged);
         Ok(toml)
+    }
+
+    /// Watch every collection of `.http` files, and stop watching those that
+    /// are gone.
+    fn sync_http_watches(&mut self, cx: &mut Context<Self>) {
+        let http_paths: Vec<String> = self
+            .collections
+            .iter()
+            .filter(|(_, info)| info.format == CollectionFormat::Http)
+            .map(|(path, _)| path.clone())
+            .collect();
+        self.http_watches
+            .retain(|path, _| http_paths.contains(path));
+        for path in http_paths {
+            if !self.http_watches.contains_key(&path)
+                && let Some(watch) = super::http_watch::watch(path.clone(), cx)
+            {
+                self.http_watches.insert(path, watch);
+            }
+        }
+    }
+
+    /// Read a collection of `.http` files again after it changed on disk.
+    pub fn reload_http_collection(&mut self, collection_path: &str, cx: &mut Context<Self>) {
+        let Some(info) = self.collections.get(collection_path) else {
+            return;
+        };
+        if info.format != CollectionFormat::Http {
+            return;
+        }
+        match Self::build_http_info(Path::new(collection_path), info.data.clone()) {
+            Ok(mut reloaded) => {
+                reloaded.runtime_vars = std::mem::take(
+                    &mut self
+                        .collections
+                        .get_mut(collection_path)
+                        .expect("collection was just found")
+                        .runtime_vars,
+                );
+                self.collections
+                    .insert(collection_path.to_string(), reloaded);
+                tracing::info!("Reloaded {} after it changed", collection_path);
+                cx.emit(CollectionManagerEvent::CollectionsChanged);
+                cx.emit(CollectionManagerEvent::EnvironmentsChanged {
+                    collection_path: collection_path.to_string().into(),
+                });
+            }
+            Err(error) => tracing::error!("Could not reload {}: {}", collection_path, error),
+        }
     }
 
     /// Build an OpenCollection `CollectionInfo` from a directory + database
@@ -596,6 +650,7 @@ impl CollectionManager {
 
     /// Remove a collection from the manager by path
     pub fn remove_collection(&mut self, collection_path: &str, cx: &mut Context<Self>) {
+        self.http_watches.remove(collection_path);
         if let Some(collection) = self.collections.remove(collection_path) {
             tracing::info!(
                 "Removed collection '{}' (path: {}) from manager",

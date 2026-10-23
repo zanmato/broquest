@@ -981,6 +981,7 @@ dependencies = [
  "llrt_modules",
  "lsp-types",
  "minisign-verify",
+ "notify",
  "oas3",
  "quick-xml 0.37.5",
  "reqwest",
