@@ -12,6 +12,7 @@ use crate::scripting::{ScriptExecutionService, VariableStore};
 
 use super::auth_shorthand;
 use super::body_files;
+use super::dotenv;
 use super::encoding;
 use super::jwt;
 use super::oauth2::{self, calculate_expires_at, is_oauth_token_expired};
@@ -276,8 +277,15 @@ impl HttpClientService {
 
         // `<@ file` body lines of .http requests bring in a file whose
         // variables are resolved along with the rest of the request.
+        // `{{$dotenv NAME}}` reads the `.env` file beside the .http file.
+        let dotenv_values = request_data
+            .http_file
+            .as_ref()
+            .map(|options| dotenv::load(&options.dir))
+            .unwrap_or_default();
         if let Some(options) = &request_data.http_file {
             request_data.body = body_files::expand_text_refs(&request_data.body, &options.dir);
+            dotenv::expand_request(&mut request_data, &dotenv_values);
         }
 
         // Create variable store for this request
@@ -334,7 +342,12 @@ impl HttpClientService {
 
         // Initialize variable store with environment data if provided
         let has_environment = variables.is_some() && secrets.is_some();
-        let variables = variables.unwrap_or_default();
+        let mut variables = variables.unwrap_or_default();
+        if !dotenv_values.is_empty() {
+            for value in variables.values_mut() {
+                *value = dotenv::expand(value, &dotenv_values);
+            }
+        }
         let secrets = secrets.unwrap_or_default();
         if has_environment {
             tracing::info!(

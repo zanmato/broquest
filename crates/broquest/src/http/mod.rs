@@ -4,6 +4,7 @@ mod auth_shorthand;
 mod body_files;
 mod client;
 pub mod curl;
+mod dotenv;
 pub mod encoding;
 pub mod jwt;
 pub mod oauth2;

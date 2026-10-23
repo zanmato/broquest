@@ -820,6 +820,37 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(3));
     }
 
+    #[tokio::test]
+    async fn dotenv_values_come_from_the_file_folder() {
+        use wiremock::matchers::{header, method};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(header("x-api-key", "from-dotenv"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let dir = temp_dir();
+        write(&dir, ".env", "API_KEY=from-dotenv\n");
+        let source = format!(
+            "GET {}/\nX-Api-Key: {{{{$dotenv API_KEY}}}}\n",
+            server.uri()
+        );
+        let request = requests_from_file(&source, "k.http", &dir)
+            .into_values()
+            .next()
+            .unwrap();
+        let client = crate::http::HttpClientService::new(30).unwrap();
+        let (response, _) = client
+            .send_request(request, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(response.status_code, Some(200));
+        fs::remove_dir_all(dir).ok();
+    }
+
     #[test]
     fn duplicate_names_get_numbers() {
         let requests = requests_from_file(

@@ -77,7 +77,8 @@ These directives work before a request line:
 | `# @timeout 5s` | Sets the request's timeout, in `ms`, `s` or `m` |
 | `# @no-log` | Leaves the request out of the history |
 
-Authorization headers can use the VS Code shorthands `Basic user:password`,
+`{{$dotenv NAME}}` reads `NAME` from the `.env` file in the `.http` file's
+folder. Authorization headers can use the VS Code shorthands `Basic user:password`,
 `Basic user password` and `Digest user password`.
 
 These collections are read-only for now. Requests can be edited and sent, but
