@@ -77,6 +77,8 @@ These directives work before a request line:
 | `# @timeout 5s` | Sets the request's timeout, in `ms`, `s` or `m` |
 | `# @no-log` | Leaves the request out of the history |
 
+`>> ./response.json` after a request saves its response, next to an existing
+file of that name, and `>>! ./response.json` overwrites it.
 `{{$dotenv NAME}}` reads `NAME` from the `.env` file in the `.http` file's
 folder. Authorization headers can use the VS Code shorthands `Basic user:password`,
 `Basic user password` and `Digest user password`.

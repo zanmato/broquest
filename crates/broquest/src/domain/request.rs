@@ -90,6 +90,16 @@ pub struct HttpFileOptions {
     pub note: Option<String>,
     /// `# @prompt name description`: values to ask for before sending.
     pub prompts: Vec<Prompt>,
+    /// `>> path` and `>>! path`: files to save the response body to.
+    pub response_files: Vec<ResponseFile>,
+}
+
+/// `>> path` saves the response body next to an existing file of the same
+/// name, `>>! path` overwrites it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResponseFile {
+    pub path: String,
+    pub overwrite: bool,
 }
 
 /// A variable to ask for before sending, from `# @prompt`.

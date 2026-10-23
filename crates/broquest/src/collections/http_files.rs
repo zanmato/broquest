@@ -19,7 +19,7 @@ use anyhow::{Context as _, Result};
 use super::manager::GroupInfo;
 use super::types::{CollectionMeta, CollectionToml, EnvironmentToml, EnvironmentVariable};
 use crate::domain::{
-    HttpFileOptions, HttpMethod, KeyValuePair, Prompt, RequestData, ScriptDialect,
+    HttpFileOptions, HttpMethod, KeyValuePair, Prompt, RequestData, ResponseFile, ScriptDialect,
 };
 
 /// Folders that never hold a collection's request files.
@@ -202,6 +202,14 @@ fn options(request: &http_file::Request, base_dir: &Path, relative_path: &str) -
         dir: base_dir.to_path_buf(),
         ..Default::default()
     };
+    options.response_files = request
+        .response_redirects
+        .iter()
+        .map(|redirect| ResponseFile {
+            path: redirect.path.text.clone(),
+            overwrite: redirect.force,
+        })
+        .collect();
     for directive in &request.directives {
         let value = directive.value.as_ref().map(|v| v.text.as_str());
         match directive.name.text.to_ascii_lowercase().as_str() {
@@ -848,6 +856,49 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status_code, Some(200));
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn responses_are_saved_to_files() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{\"n\": 1}"))
+            .mount(&server)
+            .await;
+
+        let dir = temp_dir();
+        let source = format!(
+            "GET {}/n\n\n>> ./out/{{{{name}}}}.json\n>>! ./out/latest.json\n",
+            server.uri()
+        );
+        let request = requests_from_file(&source, "n.http", &dir)
+            .into_values()
+            .next()
+            .unwrap();
+        let client = crate::http::HttpClientService::new(30).unwrap();
+        let variables = HashMap::from([("name".to_string(), "response".to_string())]);
+        for _ in 0..2 {
+            client
+                .send_request(
+                    request.clone(),
+                    Some(variables.clone()),
+                    Some(HashMap::new()),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        let read = |name: &str| fs::read_to_string(dir.join("out").join(name)).unwrap();
+        assert_eq!(read("response.json"), "{\"n\": 1}");
+        assert_eq!(read("response-1.json"), "{\"n\": 1}");
+        assert_eq!(read("latest.json"), "{\"n\": 1}");
+        assert!(!dir.join("out/latest-1.json").exists());
         fs::remove_dir_all(dir).ok();
     }
 

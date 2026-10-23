@@ -430,25 +430,57 @@ impl HttpClientService {
         // Ensure auth tokens are valid (fetch/refresh if needed)
         self.ensure_auth_tokens(&mut request_data.auth).await?;
 
+        // `>> file` lines of .http requests, with variables resolved.
+        let response_files: Vec<(std::path::PathBuf, bool)> = request_data
+            .http_file
+            .as_ref()
+            .map(|options| {
+                let runtime_now: HashMap<String, String> = variable_store
+                    .get_all_vars()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), value_to_string(v)))
+                    .collect();
+                options
+                    .response_files
+                    .iter()
+                    .map(|file| {
+                        let path = self.environment_resolver.resolve_string(
+                            &file.path,
+                            &runtime_now,
+                            &collection_str,
+                            &variables,
+                            &secrets,
+                        );
+                        (options.dir.join(path), file.overwrite)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         // For digest auth, use challenge-response flow
-        if matches!(&request_data.auth, AuthType::Digest(_)) {
-            return self
-                .send_with_digest_auth(request_data, start_time, variable_store)
-                .await;
+        let result = if matches!(&request_data.auth, AuthType::Digest(_)) {
+            self.send_with_digest_auth(request_data, start_time, variable_store)
+                .await?
+        } else {
+            // Standard request flow for non-digest auth
+            let (request_builder, request_headers) =
+                self.build_request_builder(&request_data, None);
+            let response = self.execute_request(request_builder).await?;
+
+            self.process_response(
+                response,
+                request_data,
+                request_headers,
+                start_time,
+                variable_store,
+            )
+            .await?
+        };
+
+        for (path, overwrite) in response_files {
+            save_response_file(&result.0, &path, overwrite);
         }
-
-        // Standard request flow for non-digest auth
-        let (request_builder, request_headers) = self.build_request_builder(&request_data, None);
-        let response = self.execute_request(request_builder).await?;
-
-        self.process_response(
-            response,
-            request_data,
-            request_headers,
-            start_time,
-            variable_store,
-        )
-        .await
+        Ok(result)
     }
 
     /// Send request with digest authentication (RFC 2617 challenge-response flow)
@@ -921,6 +953,45 @@ impl HttpClientService {
         };
 
         (request, headers)
+    }
+}
+
+/// Write a response body to `path`. Without `overwrite`, an existing file is
+/// kept and the body goes to `name-1.ext`, `name-2.ext` and so on.
+fn save_response_file(response: &ResponseData, path: &std::path::Path, overwrite: bool) {
+    let target = if overwrite || !path.exists() {
+        path.to_path_buf()
+    } else {
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let extension = path
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
+        (1..)
+            .map(|n| path.with_file_name(format!("{stem}-{n}{extension}")))
+            .find(|candidate| !candidate.exists())
+            .unwrap_or_else(|| path.to_path_buf())
+    };
+    let bytes = response
+        .body_bytes
+        .as_deref()
+        .unwrap_or(response.body.as_bytes());
+    let result = target
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(&target, bytes));
+    match result {
+        Ok(()) => tracing::info!("Saved the response to {}", target.display()),
+        Err(error) => {
+            tracing::error!(
+                "Could not save the response to {}: {}",
+                target.display(),
+                error
+            )
+        }
     }
 }
 
