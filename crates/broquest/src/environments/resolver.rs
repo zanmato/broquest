@@ -330,39 +330,78 @@ impl Default for EnvironmentResolver {
     }
 }
 
-/// Scan `input` for `{{ name }}` placeholders and replace each with the value
-/// returned by `resolve(name)`, preserving the original placeholder text when
-/// the resolver returns `None`. Whitespace inside the braces is trimmed. This
-/// is a single-pass scan so resolved values are not re-scanned, giving correct
-/// per-name precedence (higher-precedence buckets are consulted first by the
-/// caller's resolver closure).
+/// How deep variables may refer to other variables before resolving stops.
+const MAX_DEPTH: usize = 10;
+
+/// Replace each `{{ name }}` in `input` with `resolve(name)`, keeping the
+/// placeholder as written when `resolve` returns `None`.
+///
+/// Resolved values are resolved in turn, so variables can refer to other
+/// variables, up to [`MAX_DEPTH`] deep. A variable that refers back to
+/// itself, directly or through others, keeps its placeholder. Names can be
+/// built from other variables, as in `{{server_{{env}}_url}}`: the inner
+/// placeholder is resolved first. Whitespace inside the braces is trimmed.
 fn resolve_placeholders<F: Fn(&str) -> Option<String>>(input: &str, resolve: F) -> String {
+    expand(input, &resolve, &mut Vec::new())
+}
+
+fn expand(
+    input: &str,
+    resolve: &dyn Fn(&str) -> Option<String>,
+    stack: &mut Vec<String>,
+) -> String {
     let bytes = input.as_bytes();
+    let opens_at = |i: usize| bytes.get(i) == Some(&b'{') && bytes.get(i + 1) == Some(&b'{');
+    let closes_at = |i: usize| bytes.get(i) == Some(&b'}') && bytes.get(i + 1) == Some(&b'}');
+
     let mut out = String::with_capacity(input.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'{' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
-            // Find the matching closing "}}".
-            if let Some(rel_end) = input[i + 2..].find("}}") {
-                let inner = &input[i + 2..i + 2 + rel_end];
-                let name = inner.trim();
-                match resolve(name) {
-                    Some(value) => {
-                        out.push_str(&value);
+        if opens_at(i) {
+            // Find the matching "}}", counting nested "{{".
+            let mut depth = 1;
+            let mut j = i + 2;
+            let mut close = None;
+            while j < bytes.len() {
+                if opens_at(j) {
+                    depth += 1;
+                    j += 2;
+                } else if closes_at(j) {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(j);
+                        break;
                     }
-                    None => {
-                        // Preserve the original placeholder verbatim
-                        // (including its original surrounding whitespace).
-                        out.push_str(&input[i..i + 2 + rel_end + 2]);
-                    }
+                    j += 2;
+                } else {
+                    j += 1;
                 }
-                i = i + 2 + rel_end + 2;
+            }
+            if let Some(close) = close {
+                let placeholder = &input[i..close + 2];
+                let inner = &input[i + 2..close];
+                let name = if inner.contains("{{") {
+                    expand(inner, resolve, stack)
+                } else {
+                    inner.to_string()
+                };
+                let name = name.trim();
+
+                let value = (stack.len() < MAX_DEPTH && !stack.iter().any(|n| n == name))
+                    .then(|| resolve(name))
+                    .flatten();
+                match value {
+                    Some(value) => {
+                        stack.push(name.to_string());
+                        out.push_str(&expand(&value, resolve, stack));
+                        stack.pop();
+                    }
+                    None => out.push_str(placeholder),
+                }
+                i = close + 2;
                 continue;
             }
         }
-        // No placeholder start; copy this char as a UTF-8 boundary. The loop
-        // condition guarantees `i < len`, but guard the slice defensively rather
-        // than panicking if that ever changes.
         let Some(ch) = input[i..].chars().next() else {
             break;
         };
@@ -445,5 +484,66 @@ mod tests {
             &empty,
         );
         assert_eq!(s, "1/2/3/12");
+    }
+
+    #[test]
+    fn test_resolve_string_nested() {
+        let resolver = EnvironmentResolver::new();
+        let empty = HashMap::new();
+        let env = map(&[
+            ("host", "api.example.com"),
+            ("baseUrl", "https://{{host}}/v1"),
+            ("usersUrl", "{{baseUrl}}/users"),
+            ("env", "prod"),
+            ("server_prod_url", "https://prod.example.com"),
+            ("a", "{{b}}"),
+            ("b", "{{a}}"),
+            ("self", "x{{self}}"),
+        ]);
+        let secrets = map(&[("token", "s3cret")]);
+        let collection = map(&[("auth", "Bearer {{token}}")]);
+        let resolve =
+            |input: &str| resolver.resolve_string(input, &empty, &collection, &env, &secrets);
+
+        // Values refer to other values, across buckets too.
+        assert_eq!(
+            resolve("{{usersUrl}}?q=1"),
+            "https://api.example.com/v1/users?q=1"
+        );
+        assert_eq!(resolve("{{auth}}"), "Bearer s3cret");
+        // Names built from other variables.
+        assert_eq!(
+            resolve("{{server_{{env}}_url}}/health"),
+            "https://prod.example.com/health"
+        );
+        assert_eq!(
+            resolve("{{ server_{{ env }}_url }}"),
+            "https://prod.example.com"
+        );
+        // Loops stop and keep the placeholder where they close.
+        assert_eq!(resolve("{{a}}"), "{{a}}");
+        assert_eq!(resolve("{{self}}"), "x{{self}}");
+        // Unknown names inside a built name keep everything.
+        assert_eq!(
+            resolve("{{server_{{nope}}_url}}"),
+            "{{server_{{nope}}_url}}"
+        );
+        // Unmatched braces are left alone.
+        assert_eq!(resolve("{{host"), "{{host");
+        assert_eq!(resolve("{{{host}}}"), "{{{host}}}");
+    }
+
+    #[test]
+    fn test_resolve_string_depth_limit() {
+        let resolver = EnvironmentResolver::new();
+        let empty = HashMap::new();
+        // v0 -> v1 -> ... -> v20, deeper than the limit.
+        let pairs: Vec<(String, String)> = (0..20)
+            .map(|n| (format!("v{n}"), format!("{{{{v{}}}}}", n + 1)))
+            .chain([("v20".to_string(), "end".to_string())])
+            .collect();
+        let env: HashMap<String, String> = pairs.into_iter().collect();
+        let out = resolver.resolve_string("{{v0}}", &empty, &empty, &env, &empty);
+        assert_eq!(out, format!("{{{{v{MAX_DEPTH}}}}}"));
     }
 }
