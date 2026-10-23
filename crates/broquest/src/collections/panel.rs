@@ -40,6 +40,8 @@ pub struct CollectionsPanel {
     tree_state: Entity<DraggableTreeState<CollectionsTreeDelegate>>,
     tree_item_metadata: HashMap<String, TreeItemMetadata>, // Map hierarchical key -> metadata
     request_data_map: HashMap<String, RequestData>,        // Map item_id -> RequestData
+    /// Items to expand on the next tree build, from a restored session.
+    restored_expanded_ids: HashSet<SharedString>,
 }
 
 struct CollectionsTreeDelegate {
@@ -477,11 +479,16 @@ impl CollectionsPanel {
             )
         });
 
+        // Pass tree changes, such as a folder expanding, on to this panel's
+        // observers so the session is saved.
+        cx.observe(&tree_state, |_, _, cx| cx.notify()).detach();
+
         Self {
             collections: Vec::new(),
             tree_state,
             tree_item_metadata: HashMap::new(),
             request_data_map: HashMap::new(),
+            restored_expanded_ids: HashSet::new(),
         }
     }
 
@@ -494,6 +501,27 @@ impl CollectionsPanel {
                 tracing::error!("Failed to load collections from database: {}", e);
             }
         });
+    }
+
+    /// Ids of the expanded collections and groups.
+    pub fn expanded_ids(&self, cx: &App) -> Vec<String> {
+        self.tree_state
+            .read(cx)
+            .entries()
+            .iter()
+            .filter(|entry| entry.is_expanded())
+            .filter(|entry| {
+                self.get_tree_item_metadata(&entry.item().id)
+                    .is_some_and(|metadata| metadata.kind != TreeItemKind::Request)
+            })
+            .map(|entry| entry.item().id.to_string())
+            .collect()
+    }
+
+    /// Expand the given items, typically from a restored session.
+    pub fn restore_expanded(&mut self, ids: &[String], cx: &mut Context<Self>) {
+        self.restored_expanded_ids = ids.iter().cloned().map(SharedString::from).collect();
+        self.load_collections(cx);
     }
 
     pub fn load_collections(&mut self, cx: &mut Context<Self>) {
@@ -532,7 +560,7 @@ impl CollectionsPanel {
         cx: &mut Context<Self>,
     ) {
         // Collect IDs of expanded items before clearing
-        let expanded_item_ids: std::collections::HashSet<SharedString> = self
+        let mut expanded_item_ids: std::collections::HashSet<SharedString> = self
             .tree_state
             .read(cx)
             .entries()
@@ -540,6 +568,7 @@ impl CollectionsPanel {
             .filter(|entry| entry.is_expanded())
             .map(|entry| entry.item().id.clone())
             .collect();
+        expanded_item_ids.extend(self.restored_expanded_ids.drain());
 
         // Clear existing metadata
         self.tree_item_metadata.clear();

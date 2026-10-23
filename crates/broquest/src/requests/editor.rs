@@ -129,6 +129,7 @@ pub enum ResponseTab {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestEditorEvent {
     DirtyStateChanged { is_dirty: bool },
+    EnvironmentChanged,
 }
 
 pub struct RequestEditor {
@@ -461,6 +462,21 @@ impl RequestEditor {
         self.group_path = group_path;
     }
 
+    pub fn collection_path(&self) -> Option<&str> {
+        self.collection_path.as_deref()
+    }
+
+    pub fn group_path(&self) -> Option<&str> {
+        self.group_path.as_deref()
+    }
+
+    /// The request's name as last saved, which is how it is found on disk.
+    pub fn saved_name(&self) -> Option<&str> {
+        self.original_request_data
+            .as_ref()
+            .map(|data| data.name.as_str())
+    }
+
     pub fn apply_editor_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = AppSettings::global(cx).settings.editor.clone();
         for input in [
@@ -610,6 +626,35 @@ impl RequestEditor {
         });
 
         cx.notify();
+    }
+
+    /// Name of the selected environment, if one is selected.
+    pub fn selected_environment_name(&self, cx: &App) -> Option<String> {
+        match self.environment_select.read(cx).selected_value()? {
+            EnvironmentOption::None => None,
+            EnvironmentOption::Environment(env) => Some(env.name.clone()),
+        }
+    }
+
+    /// Select the environment called `name`. Does nothing when the request's
+    /// collection has no environment by that name.
+    pub fn select_environment(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        // Rows match `set_environments`: "No environment" first, then the
+        // collection's environments in order.
+        let Some(collection_path) = self.collection_path.as_deref() else {
+            return;
+        };
+        let row = CollectionManager::global(cx)
+            .read(cx)
+            .get_collection_environments(collection_path)
+            .and_then(|envs| envs.iter().position(|env| env.name == name))
+            .map(|index| index + 1);
+        if let Some(row) = row {
+            self.environment_select.update(cx, |state, cx| {
+                state.set_selected_index(Some(IndexPath::default().row(row)), window, cx);
+            });
+            cx.notify();
+        }
     }
 
     pub fn get_selected_environment(&self, cx: &Context<Self>) -> Option<EnvironmentToml> {
@@ -885,6 +930,7 @@ impl RequestEditor {
             tracing::info!("Environment changed to: None");
         }
 
+        cx.emit(RequestEditorEvent::EnvironmentChanged);
         cx.notify();
     }
 

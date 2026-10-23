@@ -20,6 +20,7 @@ mod result_ext;
 #[cfg(feature = "screenshots")]
 mod screenshots;
 mod scripting;
+mod session;
 mod settings;
 mod themes_manager;
 mod ui;

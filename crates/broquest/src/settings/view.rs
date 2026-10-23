@@ -187,6 +187,35 @@ impl SettingsView {
         vec![
             // General Settings Page
             SettingPage::new("General").resettable(true).groups(vec![
+                SettingGroup::new().title("Startup").items(vec![
+                    SettingItem::new(
+                        "Restore Session",
+                        SettingField::switch(
+                            move |cx: &App| {
+                                AppSettings::global(cx).settings.general.restore_session
+                            },
+                            {
+                                let view_handle = view_handle.clone();
+                                move |val: bool, cx: &mut App| {
+                                    AppSettings::global_mut(cx).settings.general.restore_session =
+                                        val;
+
+                                    let key = "general.restore_session".to_string();
+                                    let value = val.to_string();
+                                    if let Some(view) = view_handle.upgrade() {
+                                        view.update(cx, |view, cx| {
+                                            view.save_setting_debounced(key, value, cx);
+                                        });
+                                    }
+                                }
+                            },
+                        )
+                        .default_value(default_settings.general.restore_session),
+                    )
+                    .description(
+                        "Reopen the tabs, selected environments and expanded folders from last time.",
+                    ),
+                ]),
                 SettingGroup::new().title("Updates").items(vec![
                     SettingItem::new(
                         "Check for Updates",

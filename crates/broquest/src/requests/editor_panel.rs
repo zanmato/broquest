@@ -20,6 +20,7 @@ use crate::collections::{
     CollectionEditor, CollectionManager, CollectionManagerEvent, CollectionToml, GroupEditor,
 };
 use crate::domain::{HttpMethod, RequestData};
+use crate::session::SessionTab;
 use crate::settings::SettingsView;
 use crate::ui::icon::IconName;
 use crate::ui::method_badge::MethodBadge;
@@ -351,7 +352,14 @@ impl EditorPanel {
         let request_editor_for_closure = request_editor.clone();
         let dirty_subscription = cx.subscribe_in(&request_editor, window, {
             move |editor_panel: &mut Self, _editor, event: &RequestEditorEvent, _window, cx| {
-                let RequestEditorEvent::DirtyStateChanged { is_dirty } = event;
+                let is_dirty = match event {
+                    RequestEditorEvent::DirtyStateChanged { is_dirty } => is_dirty,
+                    // Notify so the session picks up the tab's new environment.
+                    RequestEditorEvent::EnvironmentChanged => {
+                        cx.notify();
+                        return;
+                    }
+                };
                 for tab in editor_panel.tabs.iter_mut() {
                     if let TabType::Request(request_tab) = tab
                         && request_tab.request_editor.clone() == request_editor_for_closure
@@ -572,6 +580,145 @@ impl EditorPanel {
         cx.notify();
     }
 
+    /// The open tabs as a session to restore on the next launch, and the
+    /// index of the active one in it. Tabs with nothing saved on disk to
+    /// reopen, such as a request that was never saved, are left out.
+    pub fn session_tabs(&self, cx: &App) -> (Vec<SessionTab>, usize) {
+        let mut tabs = Vec::new();
+        let mut active = 0;
+        for (ix, tab) in self.tabs.iter().enumerate() {
+            let session_tab = match tab {
+                TabType::Request(tab) => {
+                    let editor = tab.request_editor.read(cx);
+                    match (editor.collection_path(), editor.saved_name()) {
+                        (Some(collection_path), Some(name)) if !collection_path.is_empty() => {
+                            Some(SessionTab::Request {
+                                collection_path: collection_path.to_string(),
+                                group_path: editor.group_path().map(str::to_string),
+                                name: name.to_string(),
+                                environment: editor.selected_environment_name(cx),
+                            })
+                        }
+                        _ => None,
+                    }
+                }
+                TabType::Collection(tab) => Some(SessionTab::Collection {
+                    collection_path: tab.collection_path.clone(),
+                }),
+                TabType::Group(tab) => Some(SessionTab::Group {
+                    collection_path: tab.collection_path.clone(),
+                    group_name: tab.title.clone(),
+                }),
+                TabType::Settings(_) => Some(SessionTab::Settings),
+            };
+            if let Some(session_tab) = session_tab {
+                if ix <= self.active_tab_ix {
+                    active = tabs.len();
+                }
+                tabs.push(session_tab);
+            }
+        }
+        (tabs, active)
+    }
+
+    /// Reopen the tabs of a previous session. Tabs whose request, group or
+    /// collection no longer exists are skipped.
+    pub fn restore_tabs(
+        &mut self,
+        tabs: &[SessionTab],
+        active_tab: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut active_ix = None;
+        for (ix, tab) in tabs.iter().enumerate() {
+            let restored = self.restore_tab(tab, window, cx);
+            if restored && ix <= active_tab {
+                active_ix = Some(self.tabs.len() - 1);
+            }
+        }
+
+        if let Some(active_ix) = active_ix {
+            self.active_tab_ix = active_ix;
+            self.scroll_tabbar_to_active();
+        }
+        cx.notify();
+    }
+
+    fn restore_tab(
+        &mut self,
+        tab: &SessionTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let manager = CollectionManager::global(cx);
+        match tab {
+            SessionTab::Request {
+                collection_path,
+                group_path,
+                name,
+                environment,
+            } => {
+                let Some(request_data) = manager
+                    .read(cx)
+                    .find_request(collection_path, group_path.as_deref(), name)
+                    .cloned()
+                else {
+                    tracing::info!("Not restoring tab, request {} is gone", name);
+                    return false;
+                };
+                self.create_and_add_request_tab(
+                    request_data,
+                    collection_path.clone(),
+                    group_path.clone(),
+                    window,
+                    cx,
+                );
+                if let (Some(environment), Some(TabType::Request(tab))) =
+                    (environment, self.tabs.last())
+                {
+                    tab.request_editor.update(cx, |editor, cx| {
+                        editor.select_environment(environment, window, cx);
+                    });
+                }
+                true
+            }
+            SessionTab::Collection { collection_path } => {
+                let Some(toml) = manager
+                    .read(cx)
+                    .get_collection_by_path(collection_path)
+                    .map(|info| info.toml.clone())
+                else {
+                    return false;
+                };
+                self.create_and_add_collection_tab(toml, collection_path.clone(), window, cx);
+                true
+            }
+            SessionTab::Group {
+                collection_path,
+                group_name,
+            } => {
+                let exists = manager
+                    .read(cx)
+                    .get_collection_by_path(collection_path)
+                    .is_some_and(|info| info.groups.contains_key(group_name));
+                if exists {
+                    self.create_and_add_group_tab_with_name(
+                        collection_path.clone(),
+                        Some(group_name.clone()),
+                        window,
+                        cx,
+                    );
+                }
+                exists
+            }
+            SessionTab::Settings => {
+                self.add_settings_tab(window, cx);
+                true
+            }
+        }
+    }
+
     /// Scroll the tab bar so the active tab is visible. `scroll_to_item` defers
     /// to the next paint, so this is safe to call right after adding a tab.
     fn scroll_tabbar_to_active(&self) {
@@ -625,8 +772,9 @@ impl Render for EditorPanel {
                         // scroll. The dock's TabBar omits it and relies on flex
                         // stretch, so we match that.
                         .selected_index(self.active_tab_ix)
-                        .on_click(cx.listener(|this, ix: &usize, _, _| {
+                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
                             this.active_tab_ix = *ix;
+                            cx.notify();
                         }))
                         .track_scroll(&self.tabbar_scroll_handle)
                         .children(self.tabs.iter().enumerate().map(|(ix, tab)| match tab {

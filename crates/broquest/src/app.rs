@@ -21,11 +21,13 @@ use crate::requests::{CloseTab, NextTab, PrevTab};
 use crate::{
     app_database::{AppDatabase, CollectionData, UserSetting},
     app_events::AppEvent,
+    app_settings::AppSettings,
     collections::{CollectionManager, CollectionManagerEvent, CollectionsPanel},
     domain::{AuthType, HttpMethod, RequestData},
     history::HistoryPanel,
     requests::EditorPanel,
     result_ext::ResultExt,
+    session::{SESSION_KEY, Session},
     update_manager::{UpdateManager, UpdateState},
 };
 
@@ -99,6 +101,8 @@ pub struct BroquestApp {
     editor_panel: Entity<EditorPanel>,
     command_palette: Entity<crate::ui::command_palette::CommandPalette>,
     app_menu_bar: Option<Entity<AppMenuBar>>,
+    /// The session as last written, to skip writes when nothing changed.
+    saved_session: String,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -307,6 +311,15 @@ impl BroquestApp {
             window.refresh();
         });
 
+        if AppSettings::global(cx).settings.general.restore_session {
+            Self::restore_session(&collections_panel, &editor_panel, window, cx);
+        }
+
+        // Save the session whenever tabs or the sidebar change, so it
+        // survives the window closing or the app crashing.
+        subscriptions.push(cx.observe(&editor_panel, |this, _, cx| this.save_session(cx)));
+        subscriptions.push(cx.observe(&collections_panel, |this, _, cx| this.save_session(cx)));
+
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
 
@@ -319,7 +332,55 @@ impl BroquestApp {
             editor_panel,
             command_palette,
             app_menu_bar,
+            saved_session: String::new(),
             _subscriptions: subscriptions,
+        }
+    }
+
+    fn restore_session(
+        collections_panel: &Entity<CollectionsPanel>,
+        editor_panel: &Entity<EditorPanel>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let db = AppDatabase::global(cx).clone();
+        let session = match smol::block_on(async move { db.load_state(SESSION_KEY).await }) {
+            Ok(Some(json)) => Session::from_json(&json),
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!("Failed to load the previous session: {}", error);
+                return;
+            }
+        };
+
+        collections_panel.update(cx, |panel, cx| {
+            panel.restore_expanded(&session.expanded, cx);
+        });
+        editor_panel.update(cx, |panel, cx| {
+            panel.restore_tabs(&session.tabs, session.active_tab, window, cx);
+        });
+    }
+
+    fn save_session(&mut self, cx: &mut Context<Self>) {
+        let (tabs, active_tab) = self.editor_panel.read(cx).session_tabs(cx);
+        let expanded = self.collections_panel.read(cx).expanded_ids(cx);
+        let json = Session {
+            tabs,
+            active_tab,
+            expanded,
+        }
+        .to_json();
+        if json == self.saved_session {
+            return;
+        }
+
+        // A small upsert, written right away so saves land in order and the
+        // last one is not lost when the window closes.
+        let db = AppDatabase::global(cx).clone();
+        let value = json.clone();
+        match smol::block_on(async move { db.save_state(SESSION_KEY, &value).await }) {
+            Ok(()) => self.saved_session = json,
+            Err(error) => tracing::warn!("Failed to save the session: {}", error),
         }
     }
 

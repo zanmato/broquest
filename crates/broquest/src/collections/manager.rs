@@ -91,6 +91,28 @@ impl CollectionManager {
             .map(|info| info.toml.environments.clone())
     }
 
+    /// Find a saved request by its name, at the collection root or in the
+    /// group at `group_path`.
+    pub fn find_request(
+        &self,
+        collection_path: &str,
+        group_path: Option<&str>,
+        name: &str,
+    ) -> Option<&RequestData> {
+        let info = self.collections.get(collection_path)?;
+        let requests = match group_path {
+            Some(group_path) => {
+                &info
+                    .groups
+                    .values()
+                    .find(|group| group.path == group_path)?
+                    .requests
+            }
+            None => &info.requests,
+        };
+        requests.values().find(|request| request.name == name)
+    }
+
     /// Get all cached collections
     pub fn get_all_collections(&self) -> Vec<&CollectionInfo> {
         self.collections.values().collect()

@@ -157,7 +157,50 @@ impl AppDatabase {
         .execute(&self.pool)
         .await?;
 
+        // Machine state the app keeps between launches, such as the open
+        // tabs. Kept apart from `settings`, which holds user choices.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS app_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
+    }
+
+    // App state operations
+    pub async fn save_state(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO app_state (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(key)
+        .bind(value)
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn load_state(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
+        let row = sqlx::query("SELECT value FROM app_state WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(|row| row.get(0)))
     }
 
     // Collections operations

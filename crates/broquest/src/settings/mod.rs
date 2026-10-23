@@ -93,6 +93,9 @@ impl Settings {
                 "general.check_for_updates" => {
                     settings.general.check_for_updates = value.parse().unwrap_or(true);
                 }
+                "general.restore_session" => {
+                    settings.general.restore_session = value.parse().unwrap_or(true);
+                }
                 "connection.request_timeout_seconds" => {
                     settings.connection.request_timeout_seconds = value.parse().unwrap_or(300);
                 }
@@ -128,12 +131,20 @@ impl Settings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralSettings {
     pub check_for_updates: bool,
+    /// Reopen the previous session's tabs and sidebar state on launch.
+    #[serde(default = "default_true")]
+    pub restore_session: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
             check_for_updates: true,
+            restore_session: true,
         }
     }
 }
