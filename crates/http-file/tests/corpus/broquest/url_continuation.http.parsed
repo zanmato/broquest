@@ -1,0 +1,10 @@
+block 1 "JetBrains style, path split over lines"
+  lines: Separator, RequestLine, UrlContinuation x2, Header, Blank
+  request GET "http://example.com/api/get"
+    header Accept: "application/json"
+block 2 "VS Code style query lines"
+  lines: Separator, RequestLine, UrlContinuation x3, Blank
+  request GET "https://example.com/comments?page=2&pageSize=10&sort=desc"
+block 3 "Indented query after a full URL"
+  lines: Separator, RequestLine, UrlContinuation
+  request GET "https://example.com/search?q=birds&limit=5" HTTP/1.1

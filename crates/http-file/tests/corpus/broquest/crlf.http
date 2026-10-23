@@ -1,0 +1,11 @@
+### Health
+GET https://api.example.com/health
+Accept: application/json
+
+### Create
+POST https://api.example.com/items
+Content-Type: application/json
+
+{
+  "name": "kestrel"
+}

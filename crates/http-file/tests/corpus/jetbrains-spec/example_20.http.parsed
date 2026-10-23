@@ -1,0 +1,4 @@
+block 1
+  lines: RequestLine, Blank, ResponseHandler
+  request GET "http://example.com/auth"
+    response handler "client.global.set(\"auth\", response.body.token);"

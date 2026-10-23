@@ -1,0 +1,5 @@
+block 1
+  lines: Blank, RequestLine, Header, Blank, Body x8
+  request POST "https://ijhttp-examples.jetbrains.com/post"
+    header Content-Type: "application/x-www-form-urlencoded"
+    body "key1 = value1 &\nkey2 = value2 &\nkey3 = value3 &\nkey4 = value4 &\nkey5 = value5\n\nfield6={{value6}}&\nfield7={{value7}}"

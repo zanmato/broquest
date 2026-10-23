@@ -1,0 +1,46 @@
+block 1
+  lines: Variable, Blank
+  variable HOST = "http://httpbin.org"
+block 2 "SimpleGet"
+  lines: Separator, Blank, RequestLine, Blank, Body x2
+  request GET "{{HOST}}/get" HTTP/1.1
+    body "/// Another comment"
+block 3
+  lines: Separator, Directive, Blank, RequestLine, Header x3, Blank, Body x5
+  request POST "{{HOST}}/post" HTTP/1.1
+    @name "JsonPost"
+    header Authorization: "Basic Zm9vOmJhcg=="
+    header Content-Type: "application/json"
+    header X-Http-Method-Override: "PUT"
+    body "{\n    \"data\": \"my data\"\n}"
+block 4
+  lines: Separator, Variable, Blank, RequestLine, Header x4, Blank, Body x3
+  variable endpoint = "put"
+  request PUT "https://httpbin.org/{{endpoint}}" HTTP/1.1
+    header Authorization: "Bearer efaxijasdfjasdfa"
+    header Content-Type: "application/x-www-form-urlencoded"
+    header My-Header: "hello"
+    header Other-Header: "goodbye"
+    body "a=b&c=d"
+block 5
+  lines: Separator, Directive, Variable, Blank, RequestLine, Blank
+  variable sort_by = "products"
+  request GET "{{HOST}}/get?q=query&sort={{sort_by}}" HTTP/1.1
+    @name "WithQuery"
+block 6 "CanTemplateVariables"
+  lines: Separator, Directive, Variable x3, Blank, RequestLine, Header, Blank, Body x5
+  variable first_name = "joe"
+  variable last_name = "list"
+  variable name = "{{first_name}}_{{last_name}}"
+  request POST "{{HOST}}/post" HTTP/1.1
+    @timeout "300 m"
+    header Content-Type: "application/json"
+    body "{\n    \"name\": \"{{name}}\"\n}"
+block 7
+  lines: Separator, Directive x2, RequestLine, Header, Blank, Body x4, ResponseRedirect
+  request POST "{{HOST}}/post" HTTP/1.1
+    @name "CanEpxort"
+    @no-log
+    header Content-Type: "application/json"
+    body "{\n    \"name\": \"{{name}}\"\n}"
+    >> "./cool-file.json"

@@ -1,0 +1,4 @@
+block 1
+  lines: Blank, RequestLine, Blank, Body x5
+  request POST "example.com"
+    body "# @_RES\n{\n  \"foo\": \"bar\"\n}\n# @_END"

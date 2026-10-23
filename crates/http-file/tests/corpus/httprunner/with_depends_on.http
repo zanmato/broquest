@@ -1,0 +1,12 @@
+# @name login
+POST https://api.example.com/auth/login
+Content-Type: application/json
+
+{"username":"demo","password":"secret"}
+
+###
+
+# @dependsOn login
+# @if login.response.status == 200
+GET https://api.example.com/profile
+Authorization: Bearer {{login.response.body.$.token}}

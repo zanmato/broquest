@@ -1,0 +1,9 @@
+block 1 "Health"
+  lines: Separator, RequestLine, Header, Blank
+  request GET "https://api.example.com/health"
+    header Accept: "application/json"
+block 2 "Create"
+  lines: Separator, RequestLine, Header, Blank, Body x3
+  request POST "https://api.example.com/items"
+    header Content-Type: "application/json"
+    body "{\r\n  \"name\": \"kestrel\"\r\n}"

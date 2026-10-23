@@ -1,0 +1,5 @@
+block 1
+  lines: RequestLine, Header, Blank, Body x10
+  request POST "https://example.com/api/upload"
+    header Content-Type: "multipart/form-data; boundary=WebAppBoundary"
+    body "--WebAppBoundary\nContent-Disposition: form-data; name=\"description\"\n\nA parcel label\n--WebAppBoundary\nContent-Disposition: form-data; name=\"label\"; filename=\"label.pdf\"\nContent-Type: application/pdf\n\n< ./label.pdf\n--WebAppBoundary--"

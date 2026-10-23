@@ -1,0 +1,9 @@
+block 1 "Sök försändelser 📦"
+  lines: Separator, RequestLine, Header, Blank
+  request GET "https://example.com/sök?stad=Umeå&land=SE"
+    header Accept-Language: "sv-SE"
+block 2 "Tabs\tand\ttitles"
+  lines: Separator, RequestLine, Header, Blank, Body x2
+  request POST "https://example.com/notes"
+    header Content-Type: "text/plain; charset=utf-8"
+    body "Indented first line keeps its text, trimmed at the edges\nÅngström 🌙"

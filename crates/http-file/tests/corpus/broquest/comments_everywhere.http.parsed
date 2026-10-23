@@ -1,0 +1,10 @@
+block 1
+  lines: Comment x2, Blank
+block 2 "Only comments in this block"
+  lines: Separator, Comment, Blank
+block 3 "Comments around headers"
+  lines: Separator, Comment, RequestLine, Comment, Header, Comment, Header, Blank, Body x3
+  request GET "https://example.com/items"
+    header Accept: "application/json"
+    header X-Trace: "on"
+    body "# body that starts with a comment\n{\"a\": 1}\n// trailing comment kept in the body"

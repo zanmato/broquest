@@ -1,0 +1,35 @@
+### Login
+< {%
+    request.variables.set("nonce", $random.uuid);
+%}
+POST https://auth.example.com/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id={{clientId}}
+
+> {%
+    client.global.set("token", response.body.access_token);
+    client.test("ok", function () {
+        client.assert(response.status === 200);
+    });
+%}
+
+### Handler from a file, then a reference and redirects
+< ./before.js
+GET https://example.com/me
+Authorization: Bearer {{token}}
+
+> ./check-me.js
+<> 2026-10-23T101010.200.json
+>> ./me.json
+>>! ./me-latest.json
+
+### One line handler without a body
+GET https://example.com/ping
+> {% client.log("pong"); %}
+
+### Unclosed script
+GET https://example.com/broken
+
+> {%
+    client.log("never closed");

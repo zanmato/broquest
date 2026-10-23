@@ -1,0 +1,5 @@
+block 1
+  lines: RequestLine, Header, Blank, Body
+  request POST "https://api.example.com/echo"
+    header Content-Type: "text/plain"
+    body "hello"

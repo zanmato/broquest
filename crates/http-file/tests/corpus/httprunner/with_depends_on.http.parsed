@@ -1,0 +1,12 @@
+block 1
+  lines: Directive, RequestLine, Header, Blank, Body x2
+  request POST "https://api.example.com/auth/login"
+    @name "login"
+    header Content-Type: "application/json"
+    body "{\"username\":\"demo\",\"password\":\"secret\"}"
+block 2
+  lines: Separator, Blank, Directive x2, RequestLine, Header
+  request GET "https://api.example.com/profile"
+    @dependsOn "login"
+    @if "login.response.status == 200"
+    header Authorization: "Bearer {{login.response.body.$.token}}"

@@ -1,0 +1,7 @@
+[package]
+name = "http-file"
+version = "0.1.0"
+edition = "2024"
+description = "Lossless parser for .http and .rest request files (JetBrains HTTP Client and VS Code REST Client)"
+
+[dependencies]

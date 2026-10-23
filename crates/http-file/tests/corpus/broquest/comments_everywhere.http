@@ -1,0 +1,17 @@
+# A file comment
+// Another style
+
+### Only comments in this block
+# nothing to send
+
+### Comments around headers
+# before the request line
+GET https://example.com/items
+# between headers
+Accept: application/json
+// another
+X-Trace: on
+
+# body that starts with a comment
+{"a": 1}
+// trailing comment kept in the body

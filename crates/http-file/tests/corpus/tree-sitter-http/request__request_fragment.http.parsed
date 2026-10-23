@@ -1,0 +1,3 @@
+block 1
+  lines: Blank, RequestLine
+  request GET "https://github.com/rest-nvim/tree-sitter-http?tab=readme-ov-file#how-to-contribute"

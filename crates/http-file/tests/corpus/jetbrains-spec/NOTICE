@@ -1,0 +1,4 @@
+The examples in this folder are taken from the HTTP Request in Editor
+Specification by JetBrains, https://github.com/JetBrains/http-request-in-editor-spec,
+licensed under CC BY 4.0, https://creativecommons.org/licenses/by/4.0/.
+They are unchanged apart from being split into one file per example.

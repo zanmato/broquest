@@ -1,0 +1,18 @@
+
+POST https://example.com/api/v1/users/new
+Content-Type: application/json
+
+< ./user.json
+
+>> ./response_file.json
+
+> ./response_script.js
+
+>>! ./another_file.json
+
+> {%
+  // this is an inline script
+  context.set_global('foo','bar');
+%}
+
+>> ./one_more_file.json

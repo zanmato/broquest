@@ -1,0 +1,16 @@
+### Body without a blank line
+POST https://example.com/items
+Content-Type: application/json
+{"missing": "blank line"}
+
+### Stray text after the handler
+GET https://example.com/x
+
+> {% client.log(1) %}
+this line does not belong here
+
+### Pasted response
+HTTP/1.1 200 OK
+Content-Type: text/plain
+
+hello

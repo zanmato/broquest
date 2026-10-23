@@ -1,0 +1,7 @@
+block 1
+  lines: Blank, Comment x2, RequestLine, Blank, ResponseHandler, Script x7, Blank
+  request GET "https://jsonplaceholder.typicode.com/posts/3"
+    response handler "local body = context.json_decode(context.result.body)\n\ncontext.set_env(\"userId\", body.userId)\ncontext.set_env(\"postId\", body.id)"
+block 2
+  lines: Separator, RequestLine
+  request GET "https://jsonplaceholder.typicode.com/posts/{{postId}}"

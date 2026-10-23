@@ -1,0 +1,4 @@
+block 1
+  lines: RequestLine, Header
+  request GET "http://example.com/api/get?id=15"
+    header From: "user@example.com"

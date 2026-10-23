@@ -1,0 +1,4 @@
+block 1
+  lines: RequestLine, Header
+  request OPTIONS "*" HTTP/1.1
+    header Host: "http://example.com:8080"

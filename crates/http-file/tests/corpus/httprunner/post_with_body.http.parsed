@@ -1,0 +1,5 @@
+block 1
+  lines: RequestLine, Header, Blank, Body
+  request POST "https://api.example.com/users"
+    header Content-Type: "application/json"
+    body "{\"name\": \"Jane\", \"role\": \"admin\"}"

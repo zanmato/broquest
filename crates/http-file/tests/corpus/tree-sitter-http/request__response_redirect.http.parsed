@@ -1,0 +1,5 @@
+block 1
+  lines: Blank, RequestLine, Header, Blank, ResponseRedirect
+  request GET "https://example.com/"
+    header Accept: "application/json"
+    >> "./response.json"

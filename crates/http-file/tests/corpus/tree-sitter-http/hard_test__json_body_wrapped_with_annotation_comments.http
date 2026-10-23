@@ -1,0 +1,8 @@
+
+POST example.com
+
+# @_RES
+{
+  "foo": "bar"
+}
+# @_END

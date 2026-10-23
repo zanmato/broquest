@@ -1,0 +1,18 @@
+# @name first
+POST https://api.example.com/data
+Content-Type: application/json
+
+{"id": 1}
+
+###
+
+# @name second
+GET https://api.example.com/data/1
+Accept: application/json
+
+###
+
+GET https://api.example.com/raw
+Content-Type: text/plain
+
+raw body content

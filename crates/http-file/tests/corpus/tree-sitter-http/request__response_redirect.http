@@ -1,0 +1,5 @@
+
+GET https://example.com/
+Accept: application/json
+
+>> ./response.json

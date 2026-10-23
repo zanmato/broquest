@@ -1,0 +1,6 @@
+GET https://example.com/
+Accept: application/json,
+    text/plain
+X-Long: first part
+	second part
+Authorization: Bearer {{token}}

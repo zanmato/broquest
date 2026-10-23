@@ -1,0 +1,5 @@
+block 1
+  lines: Directive x2, RequestLine
+  request GET "https://api.example.com/protected"
+    @if "auth.response.status == 200"
+    @if-not "auth.response.body.$.blocked == \"true\""

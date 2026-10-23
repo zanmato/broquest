@@ -1,0 +1,32 @@
+block 1
+  lines: Variable
+  variable HOST = "http://httpbin.org"
+block 2 "SimpleGet"
+  lines: Separator, Blank, RequestLine, Blank, Body x2
+  request GET "{{ HOST}}/get" HTTP/1.1
+    body "/// Another comment"
+block 3
+  lines: Separator, Directive, Variable x3, Blank, RequestLine, Header x3, Blank, Body x6
+  variable FIRST = "Joe"
+  variable LAST = "Smith"
+  variable FULL = "{{ FIRST }} {{LAST}}"
+  request POST "{{HOST}}/post?hello=123" HTTP/1.1
+    @name "JsonPost"
+    header Authorization: "Basic Zm9vOmJhcg=="
+    header Content-Type: "application/json"
+    header X-Http-Method-Override: "PUT"
+    body "{\n    \"data\": \"my data\", \n    \"name\": \"{{FULL}}\"\n}"
+block 4
+  lines: Separator, Variable, Blank, RequestLine, Header x4, Blank, Body x2
+  variable ENDPOINT = "post"
+  request POST "https://httpbin.org/{{ENDPOINT}}" HTTP/1.1
+    header Authorization: "Bearer efaxijasdfjasdfa"
+    header Content-Type: "application/x-www-form-urlencoded"
+    header My-Header: "hello"
+    header Other-Header: "goodbye"
+    body "first={{ FIRST}}&last={{LAST}}&full={{FULL}}"
+block 5 "Pet.json"
+  lines: Separator, Blank, RequestLine, Header, Blank, Body
+  request POST "{{HOST}}/post" HTTP/1.1
+    header Content-Type: "application/json"
+    body from file "../test_data/pets.json"

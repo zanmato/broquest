@@ -1,0 +1,5 @@
+block 1
+  lines: Blank, RequestLine, Header, Blank, Body
+  request POST "https://example.com/api/v1/users/new"
+    header Content-Type: "application/json"
+    body "<@ ./user.json"

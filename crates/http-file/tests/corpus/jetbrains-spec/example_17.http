@@ -1,0 +1,4 @@
+POST http://example.com/api/add
+Content-Type: application/json
+
+{ “key”: “value” }

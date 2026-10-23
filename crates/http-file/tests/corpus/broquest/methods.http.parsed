@@ -1,0 +1,24 @@
+block 1
+  lines: RequestLine
+  request get "https://example.com/lower"
+block 2
+  lines: Separator, RequestLine, Header
+  request PROPFIND "https://dav.example.com/files" HTTP/1.1
+    header Depth: "1"
+block 3
+  lines: Separator, RequestLine, Header
+  request OPTIONS "*" HTTP/1.1
+    header Host: "example.com:8080"
+block 4
+  lines: Separator, RequestLine
+  request GET "http://{{ host }}/a b" HTTP/2
+block 5
+  lines: Separator, RequestLine
+  request GET "https://example.com/no-method" (no method)
+block 6
+  lines: Separator, RequestLine, Blank, Body
+  request GRAPHQL "https://example.com/graphql"
+    body "query { shipments { id } }"
+block 7
+  lines: Separator, RequestLine
+  request GET "localhost:3000/health" (no method)

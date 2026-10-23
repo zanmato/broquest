@@ -1,0 +1,10 @@
+
+@url = "https://foo.com/api"
+
+POST {{ url }}/users/create
+Content-Type: application/json
+
+{
+  "username": "JohnDoe",
+  "is_admin": false
+}

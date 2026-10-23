@@ -1,0 +1,5 @@
+block 1
+  lines: Directive x2, RequestLine
+  request GET "https://api.example.com/delayed"
+    @pre-delay "500"
+    @post-delay "1000"

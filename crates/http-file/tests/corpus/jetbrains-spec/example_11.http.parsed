@@ -1,0 +1,3 @@
+block 1
+  lines: RequestLine
+  request GET "http://[::1]" (no method)

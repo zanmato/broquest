@@ -1,0 +1,5 @@
+
+POST https://example.com/api/v1/users/new
+Content-Type: application/json
+
+< ./user.json

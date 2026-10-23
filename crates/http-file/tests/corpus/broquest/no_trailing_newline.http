@@ -1,0 +1,4 @@
+POST https://api.example.com/echo
+Content-Type: text/plain
+
+hello

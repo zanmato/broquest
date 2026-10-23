@@ -1,0 +1,6 @@
+block 1
+  lines: Blank, RequestLine, Header x2, Blank, Body x5
+  request POST "https://example.com/comments" HTTP/1.1
+    header Content-Type: "application/xml"
+    header Accept: "application/xml"
+    body "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<Request>\n  <Login>login</Login>\n  <Password>password</Password>\n</Request>"

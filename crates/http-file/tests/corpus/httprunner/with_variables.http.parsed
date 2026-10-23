@@ -1,0 +1,5 @@
+block 1
+  lines: Variable x2, RequestLine
+  variable host = "api.example.com"
+  variable port = "8080"
+  request GET "https://{{host}}:{{port}}/users"

@@ -1,0 +1,7 @@
+block 1
+  lines: Blank, RequestLine, Header x3, Blank, Body x24
+  request POST "https://api.github.com/graphql"
+    header Content-Type: "application/json"
+    header Authorization: "Bearer xxx"
+    header X-REQUEST-TYPE: "GraphQL"
+    body "mutation CreateRepository($name: String!, $owner: String!) {\n  repository(name: $name, owner: $owner) {\n    name\n    fullName: nameWithOwner\n    description\n    diskUsage\n    forkCount\n    stargazers(first: 5) {\n        totalCount\n        nodes {\n            login\n            name\n        }\n    }\n    watchers {\n        totalCount\n    }\n  }\n}\n\n{\n    \"name\": \"vscode-restclient\",\n    \"owner\": \"Huachao\"\n}"

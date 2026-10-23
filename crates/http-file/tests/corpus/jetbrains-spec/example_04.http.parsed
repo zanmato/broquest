@@ -1,0 +1,8 @@
+block 1
+  lines: Separator, RequestLine
+  request GET "http://example.com"
+block 2
+  lines: Separator, RequestLine
+  request GET "http://example.com"
+block 3
+  lines: Separator

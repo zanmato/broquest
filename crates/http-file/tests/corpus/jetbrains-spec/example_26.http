@@ -1,0 +1,5 @@
+###
+POST http://example.com/add
+
+< input.txt
+###

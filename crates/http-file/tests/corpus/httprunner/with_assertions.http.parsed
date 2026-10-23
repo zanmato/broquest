@@ -1,0 +1,5 @@
+block 1
+  lines: RequestLine, Body x3
+  request GET "https://api.example.com/health"
+    body "EXPECTED_RESPONSE_STATUS 200\nEXPECTED_RESPONSE_BODY \"healthy\"\nEXPECTED_RESPONSE_HEADERS \"Content-Type: application/json\""
+diagnostic "EXPECTED_RESPONSE_STATUS 200": Expected a header, or a blank line before the body

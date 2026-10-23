@@ -1,0 +1,5 @@
+block 1
+  lines: Directive x2, RequestLine
+  request GET "https://api.example.com/slow-resource"
+    @timeout "30s"
+    @connection-timeout "10s"

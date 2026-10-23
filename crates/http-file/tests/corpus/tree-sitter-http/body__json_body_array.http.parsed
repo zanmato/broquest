@@ -1,0 +1,5 @@
+block 1
+  lines: RequestLine, Header, Blank, Body x6
+  request PUT "https://reqres.in/api/users/2"
+    header Content-Type: "application/json"
+    body "[\n    {\n        \"name\": \"morpheus\",\n        \"job\": \"zion resident\"\n    }\n]"

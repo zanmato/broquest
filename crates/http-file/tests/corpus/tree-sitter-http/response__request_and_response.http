@@ -1,0 +1,18 @@
+
+GET http://localhost:3000/api/v1/users/all
+User-Agent: neovim
+# these are raw body
+
+HTTP/1.1 200 OK
+Content-Length: 21
+Content-Type: application/json
+
+### These are response section
+HTTP/1.1 200 OK
+Content-Length: 21
+Content-Type: application/json
+
+{
+  "data": [],
+  "count": 0
+}

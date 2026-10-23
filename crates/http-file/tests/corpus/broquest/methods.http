@@ -1,0 +1,17 @@
+get https://example.com/lower
+###
+PROPFIND https://dav.example.com/files HTTP/1.1
+Depth: 1
+###
+OPTIONS * HTTP/1.1
+Host: example.com:8080
+###
+GET http://{{ host }}/a b HTTP/2
+###
+https://example.com/no-method
+###
+GRAPHQL https://example.com/graphql
+
+query { shipments { id } }
+###
+localhost:3000/health

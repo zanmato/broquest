@@ -1,0 +1,3 @@
+@host = api.example.com
+@port = 8080
+GET https://{{host}}:{{port}}/users

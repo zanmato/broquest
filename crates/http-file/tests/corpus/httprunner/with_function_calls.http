@@ -1,0 +1,13 @@
+# @name request1
+GET https://httpbin.org/uuid
+
+###
+
+# @name request2
+POST https://httpbin.org/post
+Content-Type: application/json
+
+{
+  "guid": "{{request1.response.body.$.json.uuid}}",
+  "guid_base64": "base64_encode('{{request1.response.body.$.json.uuid}}')"
+}

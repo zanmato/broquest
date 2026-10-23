@@ -1,0 +1,4 @@
+block 1
+  lines: Blank, RequestLine, Blank, Body x4
+  request POST "example.com"
+    body "< path/to/file\n\n\n< path/to/file"

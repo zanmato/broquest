@@ -1,0 +1,5 @@
+
+@query = "value"
+
+GET https://foo.com/api/users/create?query={{query}}&query2={{ query }}
+Content-Type: application/json

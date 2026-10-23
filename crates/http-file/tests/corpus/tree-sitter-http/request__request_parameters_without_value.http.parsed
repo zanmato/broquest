@@ -1,0 +1,3 @@
+block 1
+  lines: Blank, RequestLine
+  request GET "https://localhost:3000/api?page[number]=3&fields[available]&available"

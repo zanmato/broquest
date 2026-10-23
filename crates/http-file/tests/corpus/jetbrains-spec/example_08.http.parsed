@@ -1,0 +1,4 @@
+block 1
+  lines: RequestLine, Header
+  request GET "/api/get"
+    header Host: "example.com"

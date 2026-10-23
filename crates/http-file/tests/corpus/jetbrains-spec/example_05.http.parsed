@@ -1,0 +1,7 @@
+block 1
+  lines: RequestLine, Header, Blank, Body, ResponseHandler, ResponseRef
+  request POST "http://example.com/auth"
+    header Content-Type: "application/json"
+    body from file "input.json"
+    response handler "client.global.set(\"auth\", response.body.token);"
+    response ref "previous-response.200.json"

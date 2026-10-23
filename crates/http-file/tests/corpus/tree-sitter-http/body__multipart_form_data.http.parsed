@@ -1,0 +1,5 @@
+block 1
+  lines: Blank, RequestLine, Header, Blank, Body x16
+  request POST "https://example.com/api/upload" HTTP/1.1
+    header Content-Type: "multipart/form-data; boundary=boundary"
+    body "--boundary\nContent-Disposition: form-data; name=\"first\"; filename=\"input.txt\"\n\n// The 'input.txt' file will be uploaded\n< ./input.txt\n\n--boundary\nContent-Disposition: form-data; name=\"second\"; filename=\"input-second.txt\"\n\n// A temporary 'input-second.txt' file with the 'Text' content will be created and uploaded\nText\n--boundary\nContent-Disposition: form-data; name=\"third\";\n\n// The 'input.txt' file contents will be sent as plain text.\n< ./input.txt --boundary--"

@@ -1,0 +1,6 @@
+POST http://example.com/auth
+Content-Type: application/json
+
+< input.json 
+> {% client.global.set("auth", response.body.token); %} 
+<> previous-response.200.json

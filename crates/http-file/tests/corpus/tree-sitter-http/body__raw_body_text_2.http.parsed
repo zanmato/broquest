@@ -1,0 +1,4 @@
+block 1
+  lines: Blank, RequestLine, Blank, Body x3
+  request POST "https://example.com/api/v1/users/new"
+    body "blah\n# you can't put comments\n# @except=value declaration comments"

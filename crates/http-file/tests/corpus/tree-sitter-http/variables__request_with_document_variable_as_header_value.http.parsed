@@ -1,0 +1,6 @@
+block 1
+  lines: Blank, Variable, Blank, RequestLine, Header, Blank, Body x4
+  variable content = "\"application/json\""
+  request POST "https://foo.com/api/users/create"
+    header Content-Type: "{{ content }}"
+    body "{\n  \"username\": \"JohnDoe\",\n  \"is_admin\": false\n}"

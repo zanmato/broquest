@@ -1,0 +1,4 @@
+block 1
+  lines: RequestLine, Blank, ResponseRef
+  request GET "http://example.com"
+    response ref "previous-response.200.json"

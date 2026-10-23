@@ -1,0 +1,6 @@
+block 1
+  lines: Separator, RequestLine, Blank, Body
+  request POST "http://example.com/add"
+    body from file "input.txt"
+block 2
+  lines: Separator

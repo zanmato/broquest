@@ -1,0 +1,4 @@
+POST https://api.example.com/users
+Content-Type: application/json
+
+{"name": "Jane", "role": "admin"}

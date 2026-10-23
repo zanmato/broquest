@@ -1,0 +1,4 @@
+block 1
+  lines: Blank, RequestLine, Blank, Body x4
+  request POST "example.com"
+    body "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n{\n  \"foo\": \"bar\"\n}"

@@ -1,0 +1,11 @@
+### A First Request
+GET https://example.com/
+
+###
+# @name=A Second Request
+GET https://example.com/
+
+### not a request name
+###
+# @name A Third Request
+GET https://example.com/

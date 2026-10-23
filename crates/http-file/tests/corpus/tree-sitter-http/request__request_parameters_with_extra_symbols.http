@@ -1,0 +1,2 @@
+
+GET https://localhost:3000/api?id[]=1&id[]=2&email=foo@bar.com&statement=2+2=4

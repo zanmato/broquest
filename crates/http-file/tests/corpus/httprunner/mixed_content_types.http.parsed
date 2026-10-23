@@ -1,0 +1,16 @@
+block 1
+  lines: Directive, RequestLine, Header, Blank, Body x2
+  request POST "https://api.example.com/data"
+    @name "first"
+    header Content-Type: "application/json"
+    body "{\"id\": 1}"
+block 2
+  lines: Separator, Blank, Directive, RequestLine, Header, Blank
+  request GET "https://api.example.com/data/1"
+    @name "second"
+    header Accept: "application/json"
+block 3
+  lines: Separator, Blank, RequestLine, Header, Blank, Body
+  request GET "https://api.example.com/raw"
+    header Content-Type: "text/plain"
+    body "raw body content"

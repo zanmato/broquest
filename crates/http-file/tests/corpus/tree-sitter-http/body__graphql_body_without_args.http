@@ -1,0 +1,16 @@
+
+POST https://api.github.com/graphql
+Content-Type: application/json
+Authorization: Bearer xxx
+X-REQUEST-TYPE: GraphQL
+
+query Foo {
+  repository {
+    name
+  }
+}
+
+{
+    "name": "vscode-restclient",
+    "owner": "Huachao"
+}

@@ -1,0 +1,4 @@
+GET https://api.example.com/health
+EXPECTED_RESPONSE_STATUS 200
+EXPECTED_RESPONSE_BODY "healthy"
+EXPECTED_RESPONSE_HEADERS "Content-Type: application/json"

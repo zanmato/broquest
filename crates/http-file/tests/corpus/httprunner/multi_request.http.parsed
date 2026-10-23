@@ -1,0 +1,14 @@
+block 1
+  lines: Directive, RequestLine, Blank
+  request GET "https://api.example.com/first"
+    @name "first"
+block 2
+  lines: Separator, Blank, Directive, RequestLine, Header, Blank, Body x2
+  request POST "https://api.example.com/second"
+    @name "second"
+    header Content-Type: "text/plain"
+    body "second-body"
+block 3
+  lines: Separator, Blank, Directive, RequestLine
+  request DELETE "https://api.example.com/third"
+    @name "third"

@@ -1,0 +1,4 @@
+block 1
+  lines: Blank, RequestLine, Blank, Body x8
+  request POST "https://example.com/api/v1/users/new"
+    body "# you can't put comments\n// before the raw body\nblah\n< ./this/is/not/a/external/file.json\nblah\n# comments after the raw body\n// are also unavailable\n# @except=value declaration comments"

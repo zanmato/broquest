@@ -1,0 +1,8 @@
+block 1
+  lines: Blank, Variable x3, Blank, RequestLine, Header, Blank, Body x4
+  variable username = "\"NTBBloodbath\""
+  variable admin = "true"
+  variable address = "Neovim Land"
+  request POST "https://foo.com/api/users/create"
+    header Content-Type: "application/json"
+    body "{\n  \"username\": \"{{username}}\",\n  \"is_admin\": \"{{admin}}\"\n}"

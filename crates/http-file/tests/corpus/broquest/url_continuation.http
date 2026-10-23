@@ -1,0 +1,15 @@
+### JetBrains style, path split over lines
+GET http://example.com/
+    api
+    /get
+Accept: application/json
+
+### VS Code style query lines
+GET https://example.com/comments
+    ?page=2
+    &pageSize=10
+&sort=desc
+
+### Indented query after a full URL
+GET https://example.com/search?q=birds
+    &limit=5 HTTP/1.1

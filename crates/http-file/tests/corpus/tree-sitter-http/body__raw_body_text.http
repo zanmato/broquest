@@ -1,0 +1,11 @@
+
+POST https://example.com/api/v1/users/new
+
+# you can't put comments
+// before the raw body
+blah
+< ./this/is/not/a/external/file.json
+blah
+# comments after the raw body
+// are also unavailable
+# @except=value declaration comments

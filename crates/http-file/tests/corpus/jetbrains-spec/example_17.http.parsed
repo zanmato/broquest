@@ -1,0 +1,5 @@
+block 1
+  lines: RequestLine, Header, Blank, Body
+  request POST "http://example.com/api/add"
+    header Content-Type: "application/json"
+    body "{ “key”: “value” }"

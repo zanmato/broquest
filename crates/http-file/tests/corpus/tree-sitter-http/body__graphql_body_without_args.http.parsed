@@ -1,0 +1,7 @@
+block 1
+  lines: Blank, RequestLine, Header x3, Blank, Body x10
+  request POST "https://api.github.com/graphql"
+    header Content-Type: "application/json"
+    header Authorization: "Bearer xxx"
+    header X-REQUEST-TYPE: "GraphQL"
+    body "query Foo {\n  repository {\n    name\n  }\n}\n\n{\n    \"name\": \"vscode-restclient\",\n    \"owner\": \"Huachao\"\n}"

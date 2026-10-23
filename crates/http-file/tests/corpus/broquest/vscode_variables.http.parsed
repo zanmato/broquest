@@ -1,0 +1,24 @@
+block 1
+  lines: Variable x3, Unknown x2, Blank
+  variable baseUrl = "https://api.example.com"
+  variable contentType = "application/json"
+  variable createdAt = "{{$datetime iso8601}}"
+block 2 "Log in"
+  lines: Separator, Directive, RequestLine, Header, Blank, Body x2
+  request POST "{{baseUrl}}/login"
+    @name "login"
+    header Content-Type: "{{contentType}}"
+    body "{\"user\": \"kestrel\", \"password\": \"{{$dotenv PASSWORD}}\"}"
+block 3
+  lines: Separator, Directive x5, RequestLine, Header x3
+  request GET "{{baseUrl}}/users/{{username}}?ref={{refCode}}"
+    @prompt "username"
+    @prompt "refCode Your reference code, for example RC-1"
+    @name "Get profile"
+    @no-redirect
+    @no-cookie-jar
+    header Authorization: "Bearer {{login.response.body.$.token}}"
+    header X-Request-Id: "{{$guid}}"
+    header X-Time: "{{$timestamp -1 d}}"
+diagnostic "@ = no name": Expected a variable like @name = value
+diagnostic "@noEquals value": Expected a variable like @name = value

@@ -1,0 +1,8 @@
+block 1
+  lines: Blank, RequestLine, Header, Comment, Blank, Body x4
+  request GET "http://localhost:3000/api/v1/users/all"
+    header User-Agent: "neovim"
+    body "HTTP/1.1 200 OK\nContent-Length: 21\nContent-Type: application/json"
+block 2 "These are response section"
+  lines: Separator, Unknown x3, Blank, Unknown x4
+diagnostic "HTTP/1.1 200 OK": This looks like a response rather than a request

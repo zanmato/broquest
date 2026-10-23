@@ -1,0 +1,4 @@
+block 1
+  lines: Blank, RequestLine, Blank, Body x3
+  request POST "example.com"
+    body "# @_RES\nraw body\n# @_END"

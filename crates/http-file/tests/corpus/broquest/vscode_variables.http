@@ -1,0 +1,23 @@
+@baseUrl = https://api.example.com
+@contentType = application/json
+@createdAt = {{$datetime iso8601}}
+@ = no name
+@noEquals value
+
+### Log in
+# @name login
+POST {{baseUrl}}/login
+Content-Type: {{contentType}}
+
+{"user": "kestrel", "password": "{{$dotenv PASSWORD}}"}
+
+###
+# @prompt username
+# @prompt refCode Your reference code, for example RC-1
+// @name=Get profile
+# @no-redirect
+# @no-cookie-jar
+GET {{baseUrl}}/users/{{username}}?ref={{refCode}}
+Authorization: Bearer {{login.response.body.$.token}}
+X-Request-Id: {{$guid}}
+X-Time: {{$timestamp -1 d}}

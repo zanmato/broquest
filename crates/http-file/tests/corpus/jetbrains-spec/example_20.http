@@ -1,0 +1,3 @@
+GET http://example.com/auth
+
+> {% client.global.set("auth", response.body.token);%}

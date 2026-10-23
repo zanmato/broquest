@@ -1,0 +1,5 @@
+block 1
+  lines: RequestLine, Header, Blank, Body x9
+  request POST "http://example.com/api/upload"
+    header Content-Type: "multipart/form-data; boundary=abcd"
+    body "--abcd\nContent-Disposition: form-data; name=\"text\"\n\nText\n--abcd\nContent-Disposition: form-data; name=\"file_to_send\"; filename=\"input.txt\"\n\n< ./input.txt\n--abcd--"

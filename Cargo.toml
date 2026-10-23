@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/broquest", "crates/tree-sitter-url", "crates/vsx-themes", "crates/wsdl"]
+members = ["crates/broquest", "crates/http-file", "crates/tree-sitter-url", "crates/vsx-themes", "crates/wsdl"]
 exclude = ["vendor/llrt"]
 resolver = "2"
 

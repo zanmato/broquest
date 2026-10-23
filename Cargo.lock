@@ -3939,6 +3939,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-file"
+version = "0.1.0"
+
+[[package]]
 name = "http_client"
 version = "0.1.0"
 source = "git+https://github.com/longbridge/gpui-fast?rev=8e1e1987fdb512bb8b0ab27261906a598aff2ab8#8e1e1987fdb512bb8b0ab27261906a598aff2ab8"

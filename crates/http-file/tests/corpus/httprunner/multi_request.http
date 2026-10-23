@@ -1,0 +1,15 @@
+# @name first
+GET https://api.example.com/first
+
+###
+
+# @name second
+POST https://api.example.com/second
+Content-Type: text/plain
+
+second-body
+
+###
+
+# @name third
+DELETE https://api.example.com/third

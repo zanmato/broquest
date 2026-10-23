@@ -1,0 +1,10 @@
+block 1
+  lines: Directive, RequestLine, Blank
+  request GET "https://httpbin.org/uuid"
+    @name "request1"
+block 2
+  lines: Separator, Blank, Directive, RequestLine, Header, Blank, Body x4
+  request POST "https://httpbin.org/post"
+    @name "request2"
+    header Content-Type: "application/json"
+    body "{\n  \"guid\": \"{{request1.response.body.$.json.uuid}}\",\n  \"guid_base64\": \"base64_encode('{{request1.response.body.$.json.uuid}}')\"\n}"

@@ -1,0 +1,13 @@
+block 1 "A First Request"
+  lines: Separator, RequestLine, Blank
+  request GET "https://example.com/"
+block 2
+  lines: Separator, Directive, RequestLine, Blank
+  request GET "https://example.com/"
+    @name "A Second Request"
+block 3 "not a request name"
+  lines: Separator
+block 4
+  lines: Separator, Directive, RequestLine
+  request GET "https://example.com/"
+    @name "A Third Request"

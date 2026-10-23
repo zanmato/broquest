@@ -1,0 +1,7 @@
+block 1
+  lines: RequestLine, Header, Blank
+  request GET "https://api.example.com/a"
+    header Accept: "*/*"
+block 2
+  lines: Separator, RequestLine
+  request GET "https://api.example.com/b"

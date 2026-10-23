@@ -1,0 +1,3 @@
+block 1
+  lines: RequestLine
+  request GET "http://{{host}}/api/get?id={{ element-id }}"

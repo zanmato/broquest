@@ -1,0 +1,25 @@
+block 1 "Login"
+  lines: Separator, PreRequestScript, Script x2, RequestLine, Header, Blank, Body x2, ResponseHandler, Script x5, Blank
+  request POST "https://auth.example.com/token"
+    header Content-Type: "application/x-www-form-urlencoded"
+    body "grant_type=client_credentials&client_id={{clientId}}"
+    pre-request script "request.variables.set(\"nonce\", $random.uuid);"
+    response handler "client.global.set(\"token\", response.body.access_token);\n    client.test(\"ok\", function () {\n        client.assert(response.status === 200);\n    });"
+block 2 "Handler from a file, then a reference and redirects"
+  lines: Separator, PreRequestScript, RequestLine, Header, Blank, ResponseHandler, ResponseRef, ResponseRedirect x2, Blank
+  request GET "https://example.com/me"
+    header Authorization: "Bearer {{token}}"
+    pre-request script file "./before.js"
+    response handler file "./check-me.js"
+    response ref "2026-10-23T101010.200.json"
+    >> "./me.json"
+    >>! "./me-latest.json"
+block 3 "One line handler without a body"
+  lines: Separator, RequestLine, ResponseHandler, Blank
+  request GET "https://example.com/ping"
+    response handler "client.log(\"pong\");"
+block 4 "Unclosed script"
+  lines: Separator, RequestLine, Blank, ResponseHandler, Script
+  request GET "https://example.com/broken"
+    response handler "client.log(\"never closed\");"
+diagnostic "> {%\n    client.log(\"never closed\");": This script is missing its closing %}

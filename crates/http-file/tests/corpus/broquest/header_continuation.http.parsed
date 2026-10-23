@@ -1,0 +1,6 @@
+block 1
+  lines: RequestLine, Header, HeaderContinuation, Header, HeaderContinuation, Header
+  request GET "https://example.com/"
+    header Accept: "application/json, text/plain"
+    header X-Long: "first part second part"
+    header Authorization: "Bearer {{token}}"

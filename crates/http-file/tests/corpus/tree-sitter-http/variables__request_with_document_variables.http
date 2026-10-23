@@ -1,0 +1,12 @@
+
+@username = "NTBBloodbath"
+@admin = true
+@address = Neovim Land
+
+POST https://foo.com/api/users/create
+Content-Type: application/json
+
+{
+  "username": "{{username}}",
+  "is_admin": "{{admin}}"
+}

@@ -1,0 +1,3 @@
+# @if auth.response.status == 200
+# @if-not auth.response.body.$.blocked == "true"
+GET https://api.example.com/protected

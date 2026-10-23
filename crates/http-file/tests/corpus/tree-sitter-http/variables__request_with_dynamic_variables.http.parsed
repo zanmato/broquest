@@ -1,0 +1,5 @@
+block 1
+  lines: Blank, RequestLine, Header, Blank, Body x11
+  request POST "https://reqres.in/api/users"
+    header Content-Type: "application/json"
+    body "{\n    \"userid\" : \"{{$uuid}}\",\n    \"time\" : \"{{$timestamp}}\",\n    \"randomValue\": \"{{$randomInt}}\",\n    \"name\": \"morpheus\",\n    \"job\": \"leader\",\n    \"array\": [\"a\", \"b\", \"c\"],\n    \"object_ugly_closing\": {\n      \"some_key\": \"some_value\"\n    }\n}"

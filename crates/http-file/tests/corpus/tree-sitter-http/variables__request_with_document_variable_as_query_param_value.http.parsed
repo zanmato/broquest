@@ -1,0 +1,5 @@
+block 1
+  lines: Blank, Variable, Blank, RequestLine, Header
+  variable query = "\"value\""
+  request GET "https://foo.com/api/users/create?query={{query}}&query2={{ query }}"
+    header Content-Type: "application/json"

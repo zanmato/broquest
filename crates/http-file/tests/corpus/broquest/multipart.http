@@ -1,0 +1,13 @@
+POST https://example.com/api/upload
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="description"
+
+A parcel label
+--WebAppBoundary
+Content-Disposition: form-data; name="label"; filename="label.pdf"
+Content-Type: application/pdf
+
+< ./label.pdf
+--WebAppBoundary--

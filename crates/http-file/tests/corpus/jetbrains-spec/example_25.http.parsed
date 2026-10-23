@@ -1,0 +1,6 @@
+block 1
+  lines: Separator, RequestLine, Blank, Body x3
+  request POST "http://example.com/add"
+    body "message-body"
+block 2
+  lines: Separator

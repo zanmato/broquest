@@ -1,0 +1,10 @@
+block 1
+  lines: Blank, RequestLine, Header, Blank, Body x2, ResponseRedirect, Blank, ResponseHandler, Blank, ResponseRedirect, Blank, ResponseHandler, Script x3, Blank, ResponseRedirect
+  request POST "https://example.com/api/v1/users/new"
+    header Content-Type: "application/json"
+    body from file "./user.json"
+    response handler file "./response_script.js"
+    response handler "// this is an inline script\n  context.set_global('foo','bar');"
+    >> "./response_file.json"
+    >>! "./another_file.json"
+    >> "./one_more_file.json"

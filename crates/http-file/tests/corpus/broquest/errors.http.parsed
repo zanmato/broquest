@@ -1,0 +1,14 @@
+block 1 "Body without a blank line"
+  lines: Separator, RequestLine, Header, Body x2
+  request POST "https://example.com/items"
+    header Content-Type: "application/json"
+    body "{\"missing\": \"blank line\"}"
+block 2 "Stray text after the handler"
+  lines: Separator, RequestLine, Blank, ResponseHandler, Unknown, Blank
+  request GET "https://example.com/x"
+    response handler "client.log(1)"
+block 3 "Pasted response"
+  lines: Separator, Unknown x2, Blank, Unknown
+diagnostic "{\"missing\": \"blank line\"}": Expected a header, or a blank line before the body
+diagnostic "this line does not belong here": Expected a response handler, a >> redirect or a <> reference
+diagnostic "HTTP/1.1 200 OK": This looks like a response rather than a request

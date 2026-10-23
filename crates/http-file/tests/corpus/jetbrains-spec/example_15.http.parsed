@@ -1,0 +1,3 @@
+block 1
+  lines: RequestLine
+  request GET "http://example.com/api/get#q=hello+world" (no method)
