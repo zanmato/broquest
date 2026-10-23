@@ -375,33 +375,6 @@ impl RequestEditor {
         }
     }
 
-    /// Select the environment named `name` in the toolbar.
-    #[cfg(feature = "screenshots")]
-    pub(crate) fn select_environment(
-        &mut self,
-        name: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // Row 0 is "No environment", the collection's environments follow.
-        let row = self
-            .collection_path
-            .as_deref()
-            .and_then(|path| {
-                CollectionManager::global(cx)
-                    .read(cx)
-                    .get_collection_environments(path)
-            })
-            .and_then(|environments| environments.iter().position(|env| env.name == name))
-            .map(|index| index + 1);
-        if let Some(row) = row {
-            self.environment_select.update(cx, |state, cx| {
-                state.set_selected_index(Some(IndexPath::default().row(row)), window, cx);
-            });
-        }
-        cx.notify();
-    }
-
     /// Show the request tab labelled `label`.
     #[cfg(feature = "screenshots")]
     pub(crate) fn show_request_tab(&mut self, label: &str, cx: &mut Context<Self>) {
