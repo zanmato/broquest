@@ -11,8 +11,10 @@
 
 use std::ops::Range;
 
+pub mod edit;
 mod parser;
 
+pub use edit::{Change, NewRequest, RequestEdit, apply};
 pub use parser::parse;
 
 /// A byte range into the parsed source.
