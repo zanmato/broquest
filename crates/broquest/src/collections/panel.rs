@@ -4,7 +4,7 @@ use gpui::{
     ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable, StyledExt, WindowExt,
+    ActiveTheme as _, Icon, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     list::ListItem,
@@ -17,8 +17,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::app_database::{AppDatabase, CollectionData};
 use crate::app_events::AppEvent;
-use crate::domain::RequestData;
+use crate::domain::{HttpMethod, RequestData};
 use crate::ui::icon::IconName;
+use crate::ui::method_badge::MethodBadge;
 
 use super::manager::{CollectionInfo, CollectionManager};
 use crate::ui::draggable_tree::{
@@ -30,7 +31,7 @@ use crate::ui::draggable_tree::{
 #[derive(Clone)]
 pub struct TreeItemIcon {
     pub icon: Option<IconName>,
-    pub prefix: Option<SharedString>,
+    pub method: Option<HttpMethod>,
     pub color_fn: fn(&App) -> gpui::Hsla,
 }
 
@@ -65,7 +66,7 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
             .map(|metadata| metadata.icon.clone())
             .unwrap_or_else(|| TreeItemIcon {
                 icon: None,
-                prefix: None,
+                method: None,
                 color_fn: |cx: &App| cx.theme().foreground,
             });
 
@@ -77,7 +78,7 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
             // This is an expanded collection/group, change icon to FolderOpen but preserve the original color
             tree_item_icon = TreeItemIcon {
                 icon: Some(IconName::FolderOpen),
-                prefix: None,
+                method: None,
                 color_fn: metadata.icon.color_fn,
             };
         }
@@ -99,16 +100,8 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                     .when_some(tree_item_icon.icon, |this, icon_name| {
                         this.child(Icon::new(icon_name).text_color((tree_item_icon.color_fn)(cx)))
                     })
-                    .when_some(tree_item_icon.prefix, |this, prefix| {
-                        this.child(
-                            div()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .text_sm()
-                                .font_bold()
-                                .text_color((tree_item_icon.color_fn)(cx))
-                                .pt(px(3.))
-                                .child(prefix),
-                        )
+                    .when_some(tree_item_icon.method, |this, method| {
+                        this.child(MethodBadge::new(method).fixed_width())
                     })
                     .child(
                         div()
@@ -577,8 +570,8 @@ impl CollectionsPanel {
                     kind: TreeItemKind::Request,
                     icon: TreeItemIcon {
                         icon: None,
-                        prefix: Some(SharedString::from(request.method.as_str())),
-                        color_fn: request.method.get_color_fn(),
+                        method: Some(request.method),
+                        color_fn: |cx: &App| cx.theme().foreground,
                     },
                     collection_path: collection_data.path.clone(),
                     group_path: None, // Root level request
@@ -619,8 +612,8 @@ impl CollectionsPanel {
                         kind: TreeItemKind::Request,
                         icon: TreeItemIcon {
                             icon: None,
-                            prefix: Some(SharedString::from(request.method.as_str())),
-                            color_fn: request.method.get_color_fn(),
+                            method: Some(request.method),
+                            color_fn: |cx: &App| cx.theme().foreground,
                         },
                         collection_path: collection_data.path.clone(),
                         group_path: Some(group_info.path.clone()),
@@ -645,7 +638,7 @@ impl CollectionsPanel {
                     kind: TreeItemKind::Group,
                     icon: TreeItemIcon {
                         icon: Some(IconName::Folder),
-                        prefix: None,
+                        method: None,
                         color_fn: |cx: &App| cx.theme().magenta,
                     },
                     collection_path: collection_data.path.clone(),
@@ -672,7 +665,7 @@ impl CollectionsPanel {
                 kind: TreeItemKind::Collection,
                 icon: TreeItemIcon {
                     icon: Some(IconName::Folder),
-                    prefix: None,
+                    method: None,
                     color_fn: |cx: &App| cx.theme().blue,
                 },
                 collection_path: collection_data.path.clone(),

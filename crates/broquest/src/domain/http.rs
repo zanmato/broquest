@@ -1,8 +1,10 @@
 //! HTTP-related types and constants
 
-use gpui::{App, SharedString};
-use gpui_kit::component::{ActiveTheme, select::SelectItem};
+use gpui::{AnyElement, App, IntoElement, SharedString, Window};
+use gpui_kit::component::select::SelectItem;
 use serde::{Deserialize, Serialize};
+
+use crate::ui::method_badge::MethodBadge;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HttpMethod {
@@ -48,28 +50,12 @@ impl HttpMethod {
         }
     }
 
-    /// Get color for HTTP method
-    pub fn get_color(&self, cx: &App) -> gpui::Hsla {
+    /// Compact label for badges, at most five characters.
+    pub fn short_str(&self) -> &'static str {
         match self {
-            HttpMethod::Get => cx.theme().green,
-            HttpMethod::Post => cx.theme().blue,
-            HttpMethod::Put => cx.theme().yellow,
-            HttpMethod::Delete => cx.theme().red,
-            HttpMethod::Patch => cx.theme().yellow,
-            HttpMethod::Head => cx.theme().blue,
-            HttpMethod::Options => cx.theme().cyan,
-        }
-    }
-
-    pub fn get_color_fn(&self) -> fn(cx: &App) -> gpui::Hsla {
-        match self {
-            HttpMethod::Get => |cx| cx.theme().green,
-            HttpMethod::Post => |cx| cx.theme().blue,
-            HttpMethod::Put => |cx| cx.theme().yellow,
-            HttpMethod::Delete => |cx| cx.theme().red,
-            HttpMethod::Patch => |cx| cx.theme().yellow,
-            HttpMethod::Head => |cx| cx.theme().blue,
-            HttpMethod::Options => |cx| cx.theme().cyan,
+            HttpMethod::Delete => "DEL",
+            HttpMethod::Options => "OPT",
+            other => other.as_str(),
         }
     }
 }
@@ -159,6 +145,14 @@ impl SelectItem for HttpMethod {
 
     fn title(&self) -> SharedString {
         self.as_str().into()
+    }
+
+    fn display_title(&self) -> Option<AnyElement> {
+        Some(MethodBadge::new(*self).into_any_element())
+    }
+
+    fn render(&self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        MethodBadge::new(*self)
     }
 
     fn value(&self) -> &Self::Value {

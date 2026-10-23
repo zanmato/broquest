@@ -1349,14 +1349,6 @@ impl RequestEditor {
     }
 
     fn render_url_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected_method = self
-            .method_select
-            .read(cx)
-            .selected_value()
-            .unwrap_or(&HttpMethod::Get);
-
-        let method_color = selected_method.get_color(cx);
-
         h_flex()
             .gap_3()
             .w_full()
@@ -1365,13 +1357,7 @@ impl RequestEditor {
                 h_flex()
                     .flex_1()
                     .gap_3()
-                    .child(
-                        div()
-                            .w(px(120.))
-                            .font_bold()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(Select::new(&self.method_select).text_color(method_color)),
-                    )
+                    .child(div().w(px(120.)).child(Select::new(&self.method_select)))
                     .child(
                         div()
                             .flex_auto()

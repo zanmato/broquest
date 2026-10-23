@@ -4,7 +4,7 @@ use gpui::{
     actions, div, prelude::FluentBuilder, px,
 };
 use gpui_kit::component::{
-    ActiveTheme, Sizable, StyledExt,
+    ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
     input::InputEvent,
@@ -22,6 +22,7 @@ use crate::collections::{
 use crate::domain::{HttpMethod, RequestData};
 use crate::settings::SettingsView;
 use crate::ui::icon::IconName;
+use crate::ui::method_badge::MethodBadge;
 
 const EDITOR_PANEL_CONTEXT: &str = "editor_panel";
 
@@ -631,9 +632,6 @@ impl Render for EditorPanel {
                         .children(self.tabs.iter().enumerate().map(|(ix, tab)| match tab {
                             TabType::Request(request_tab) => {
                                 let tab_index = ix;
-                                // Segmented tabs keep the surface colour when
-                                // selected, so the method colours read normally.
-                                let method_color = request_tab.method.get_color(cx);
                                 let muted_color = cx.theme().muted_foreground;
 
                                 Tab::new()
@@ -646,8 +644,6 @@ impl Render for EditorPanel {
                                             // inner padding, so it needs its own
                                             // inset to match the label.
                                             .pl_3()
-                                            .font_family(cx.theme().mono_font_family.clone())
-                                            .font_bold()
                                             .when(request_tab.is_dirty, |this| {
                                                 this.child(
                                                     div()
@@ -657,8 +653,7 @@ impl Render for EditorPanel {
                                                         .bg(muted_color),
                                                 )
                                             })
-                                            .text_color(method_color)
-                                            .child(request_tab.method.as_str()),
+                                            .child(MethodBadge::new(request_tab.method)),
                                     )
                                     .suffix(
                                         h_flex()

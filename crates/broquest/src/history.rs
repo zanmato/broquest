@@ -3,7 +3,7 @@ use gpui::{
     ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_kit::component::{
-    ActiveTheme, Sizable, StyledExt,
+    ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
     scroll::ScrollableElement,
@@ -15,6 +15,7 @@ use crate::app_events::AppEvent;
 use crate::domain::HttpMethod;
 use crate::result_ext::ResultExt;
 use crate::ui::icon::IconName;
+use crate::ui::method_badge::MethodBadge;
 
 pub struct HistoryPanel {
     focus_handle: FocusHandle,
@@ -103,7 +104,6 @@ impl HistoryPanel {
             .find(|m| m.as_str() == entry.method)
             .copied()
             .unwrap_or(HttpMethod::Get);
-        let method_color = method.get_color(cx);
 
         let status_color = entry
             .status_code
@@ -131,15 +131,7 @@ impl HistoryPanel {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(
-                        div()
-                            .w(px(56.))
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .font_bold()
-                            .text_sm()
-                            .text_color(method_color)
-                            .child(entry.method.clone()),
-                    )
+                    .child(MethodBadge::new(method).fixed_width())
                     .child(
                         div()
                             .flex_1()
