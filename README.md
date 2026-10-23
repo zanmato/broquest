@@ -66,6 +66,20 @@ references such as `{{login.response.body.$.token}}`.
 request is sent, and `<@ ./file` (VS Code) sends its text with variables
 filled in. Comment lines in a body are sent as they are.
 
+These directives work before a request line:
+
+| Directive | Effect |
+|---|---|
+| `# @name login` | Names the request |
+| `# @prompt username [description]` | Asks for a value before sending. Names like `password` are masked |
+| `# @note [text]` | Asks for confirmation before sending |
+| `# @no-redirect` | Does not follow redirects |
+| `# @timeout 5s` | Sets the request's timeout, in `ms`, `s` or `m` |
+| `# @no-log` | Leaves the request out of the history |
+
+Authorization headers can use the VS Code shorthands `Basic user:password`,
+`Basic user password` and `Digest user password`.
+
 These collections are read-only for now. Requests can be edited and sent, but
 not saved.
 

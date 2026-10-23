@@ -18,7 +18,9 @@ use anyhow::{Context as _, Result};
 
 use super::manager::GroupInfo;
 use super::types::{CollectionMeta, CollectionToml, EnvironmentToml, EnvironmentVariable};
-use crate::domain::{HttpFileOptions, HttpMethod, KeyValuePair, RequestData, ScriptDialect};
+use crate::domain::{
+    HttpFileOptions, HttpMethod, KeyValuePair, Prompt, RequestData, ScriptDialect,
+};
 
 /// Folders that never hold a collection's request files.
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "dist", "build", "vendor"];
@@ -186,14 +188,63 @@ fn requests_from_file(
                 pre_request_script: script_text(&request.pre_request_scripts, base_dir),
                 post_response_script: script_text(&request.response_handlers, base_dir),
                 script_dialect: ScriptDialect::JetBrains,
-                http_file: Some(HttpFileOptions {
-                    dir: base_dir.to_path_buf(),
-                }),
+                http_file: Some(options(request, base_dir, relative_path)),
                 ..Default::default()
             },
         );
     }
     requests
+}
+
+/// The request's `.http` options, from its directives.
+fn options(request: &http_file::Request, base_dir: &Path, relative_path: &str) -> HttpFileOptions {
+    let mut options = HttpFileOptions {
+        dir: base_dir.to_path_buf(),
+        ..Default::default()
+    };
+    for directive in &request.directives {
+        let value = directive.value.as_ref().map(|v| v.text.as_str());
+        match directive.name.text.to_ascii_lowercase().as_str() {
+            "no-redirect" => options.no_redirect = true,
+            "no-log" => options.no_log = true,
+            "timeout" => match value.and_then(parse_duration) {
+                Some(timeout) => options.timeout = Some(timeout),
+                None => tracing::warn!("{relative_path}: could not read @timeout {value:?}"),
+            },
+            "note" => options.note = Some(value.unwrap_or_default().to_string()),
+            "prompt" => {
+                let Some(value) = value else { continue };
+                let (name, description) = match value.split_once(char::is_whitespace) {
+                    Some((name, description)) => (name, Some(description.trim().to_string())),
+                    None => (value, None),
+                };
+                options.prompts.push(Prompt {
+                    name: name.to_string(),
+                    description,
+                });
+            }
+            "connection-timeout" => tracing::info!(
+                "{relative_path}: @connection-timeout is not supported, the request timeout applies"
+            ),
+            _ => {}
+        }
+    }
+    options
+}
+
+/// `5000ms`, `30s`, `2 m` or a number of seconds.
+fn parse_duration(text: &str) -> Option<std::time::Duration> {
+    let text = text.trim();
+    let digits = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    let amount: u64 = text[..digits].parse().ok()?;
+    match text[digits..].trim() {
+        "ms" => Some(std::time::Duration::from_millis(amount)),
+        "" | "s" => Some(std::time::Duration::from_secs(amount)),
+        "m" => Some(std::time::Duration::from_secs(amount.checked_mul(60)?)),
+        _ => None,
+    }
 }
 
 /// The code of a request's scripts, read from their files where needed.
@@ -672,6 +723,101 @@ mod tests {
             .unwrap();
         assert_eq!(response.status_code, Some(201));
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn directives_become_options() {
+        let requests = requests_from_file(
+            "# @name Profile\n# @no-redirect\n# @no-log\n# @timeout 1500ms\n# @note\n# @prompt username\n# @prompt password Your password\n# @prompt refCode A code like RC-1\nGET /me\n###\n# @timeout 2 m\n# @note Deletes everything\nDELETE /all\n###\n# @timeout soon\nGET /x\n",
+            "me.http",
+            Path::new("/work"),
+        );
+        let request = |name: &str| {
+            requests
+                .values()
+                .find(|r| r.name == name)
+                .and_then(|r| r.http_file.clone())
+                .unwrap()
+        };
+
+        let profile = request("Profile");
+        assert_eq!(profile.dir, Path::new("/work"));
+        assert!(profile.no_redirect && profile.no_log);
+        assert_eq!(
+            profile.timeout,
+            Some(std::time::Duration::from_millis(1500))
+        );
+        assert_eq!(profile.note.as_deref(), Some(""));
+        let prompts: Vec<(&str, Option<&str>, bool)> = profile
+            .prompts
+            .iter()
+            .map(|p| (p.name.as_str(), p.description.as_deref(), p.is_secret()))
+            .collect();
+        assert_eq!(
+            prompts,
+            [
+                ("username", None, false),
+                ("password", Some("Your password"), true),
+                ("refCode", Some("A code like RC-1"), false),
+            ]
+        );
+
+        let delete = request("DELETE /all");
+        assert_eq!(delete.timeout, Some(std::time::Duration::from_secs(120)));
+        assert_eq!(delete.note.as_deref(), Some("Deletes everything"));
+        assert!(!delete.no_redirect);
+
+        assert_eq!(request("GET /x").timeout, None);
+    }
+
+    #[tokio::test]
+    async fn no_redirect_and_timeout_apply_when_sending() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/old"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/new"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/new"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("new"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/slow"))
+            .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(5)))
+            .mount(&server)
+            .await;
+
+        let source = format!(
+            "### Follow\nGET {uri}/old\n###\n# @no-redirect\n### Stay\n# @no-redirect\nGET {uri}/old\n###\n# @timeout 200ms\n### Slow\n# @timeout 200ms\nGET {uri}/slow\n",
+            uri = server.uri()
+        );
+        let requests = requests_from_file(&source, "r.http", Path::new("."));
+        let request = |name: &str| requests.values().find(|r| r.name == name).unwrap().clone();
+        let client = crate::http::HttpClientService::new(30).unwrap();
+
+        let (followed, _) = client
+            .send_request(request("Follow"), None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(followed.status_code, Some(200));
+
+        let (stayed, _) = client
+            .send_request(request("Stay"), None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(stayed.status_code, Some(302));
+
+        let started = std::time::Instant::now();
+        let slow = client
+            .send_request(request("Slow"), None, None, None, None)
+            .await;
+        assert!(slow.is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
     }
 
     #[test]

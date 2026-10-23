@@ -75,6 +75,8 @@ impl HttpError {
 #[allow(dead_code)]
 pub struct HttpClientService {
     client: reqwest::Client,
+    /// Like `client`, but does not follow redirects.
+    no_redirect_client: reqwest::Client,
     timeout: Duration,
     environment_resolver: EnvironmentResolver,
     script_execution_service: ScriptExecutionService,
@@ -86,11 +88,13 @@ impl HttpClientService {
     pub fn new(timeout_seconds: u32) -> Result<Self> {
         let timeout_duration = Duration::from_secs(timeout_seconds as u64);
         let client = Self::build_client(timeout_duration)?;
+        let no_redirect_client = Self::build_no_redirect_client(timeout_duration)?;
         let script_execution_service =
             ScriptExecutionService::new().context("Failed to create script execution service")?;
 
         Ok(Self {
             client,
+            no_redirect_client,
             timeout: timeout_duration,
             environment_resolver: EnvironmentResolver::new(),
             script_execution_service,
@@ -106,12 +110,24 @@ impl HttpClientService {
             .context("Failed to create HTTP client")
     }
 
+    fn build_no_redirect_client(timeout: Duration) -> Result<reqwest::Client> {
+        reqwest::Client::builder()
+            .timeout(timeout)
+            .user_agent(format!("broquest/{}", env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .context("Failed to create HTTP client")
+    }
+
     pub fn set_timeout(&mut self, seconds: u32) {
         let timeout_duration = Duration::from_secs(seconds as u64);
         // Keep the existing client if rebuilding fails rather than crashing.
-        match Self::build_client(timeout_duration) {
-            Ok(client) => {
+        match Self::build_client(timeout_duration)
+            .and_then(|client| Ok((client, Self::build_no_redirect_client(timeout_duration)?)))
+        {
+            Ok((client, no_redirect_client)) => {
                 self.client = client;
+                self.no_redirect_client = no_redirect_client;
                 self.timeout = timeout_duration;
             }
             Err(e) => {
@@ -523,9 +539,16 @@ impl HttpClientService {
         extra_auth_header: Option<String>,
     ) -> (reqwest::RequestBuilder, Vec<KeyValuePair>) {
         let url = Self::apply_query_parameters(&request_data.url, &request_data.query_params);
-        let mut request = self
-            .client
-            .request(map_http_method(request_data.method), &url);
+        let options = request_data.http_file.as_ref();
+        let client = if options.is_some_and(|o| o.no_redirect) {
+            &self.no_redirect_client
+        } else {
+            &self.client
+        };
+        let mut request = client.request(map_http_method(request_data.method), &url);
+        if let Some(timeout) = options.and_then(|o| o.timeout) {
+            request = request.timeout(timeout);
+        }
 
         let mut request_headers: Vec<KeyValuePair> = Vec::new();
 

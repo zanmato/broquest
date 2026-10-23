@@ -79,6 +79,33 @@ pub struct RequestData {
 pub struct HttpFileOptions {
     /// The folder of the `.http` file, which `< file` paths are relative to.
     pub dir: std::path::PathBuf,
+    /// `# @no-redirect`: do not follow redirects.
+    pub no_redirect: bool,
+    /// `# @no-log`: leave the request out of the history.
+    pub no_log: bool,
+    /// `# @timeout 5s`.
+    pub timeout: Option<std::time::Duration>,
+    /// `# @note`: ask before sending. Holds the note's text, which may be
+    /// empty.
+    pub note: Option<String>,
+    /// `# @prompt name description`: values to ask for before sending.
+    pub prompts: Vec<Prompt>,
+}
+
+/// A variable to ask for before sending, from `# @prompt`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Prompt {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+impl Prompt {
+    /// Whether to hide what is typed, as the VS Code REST Client does for
+    /// names like `password`.
+    pub fn is_secret(&self) -> bool {
+        let name = self.name.to_ascii_lowercase();
+        name.contains("password") || name.contains("passwd") || name == "pass"
+    }
 }
 
 /// The API a request's scripts use.

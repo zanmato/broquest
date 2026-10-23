@@ -8,6 +8,7 @@ use gpui::{
 use gpui_kit::component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
+    dialog::{DialogAction, DialogClose, DialogFooter},
     h_flex,
     input::{Editor, EditorState, Input, InputEvent, InputState},
     kbd::Kbd,
@@ -24,7 +25,10 @@ use std::sync::Arc;
 use super::auth_editor::{AuthEditor, AuthEditorEvent};
 use super::key_value_editor::{KeyValueConfig, KeyValueEditor, KeyValueEvent};
 use crate::app_settings::AppSettings;
-use crate::domain::{AuthType, ContentType, HttpMethod, KeyValuePair, RequestData, ResponseData};
+use crate::domain::{
+    AuthType, ContentType, HttpFileOptions, HttpMethod, KeyValuePair, Prompt, RequestData,
+    ResponseData,
+};
 use crate::http::ResponseFormat;
 use crate::http::curl;
 use crate::result_ext::ResultExt;
@@ -141,6 +145,8 @@ pub struct RequestEditor {
     active_response_tab: ResponseTab,
     is_loading: bool,
     current_request_task: Option<Task<Result<(), anyhow::Error>>>,
+    /// The last `# @prompt` values entered, to fill the next prompt.
+    prompt_values: HashMap<String, String>,
     collection_path: Option<String>,
     group_path: Option<String>,
     method_select: Entity<SelectState<Vec<HttpMethod>>>,
@@ -340,6 +346,7 @@ impl RequestEditor {
             active_response_tab: ResponseTab::Response,
             is_loading: false,
             current_request_task: None,
+            prompt_values: HashMap::new(),
             collection_path: None,
             group_path: None,
             method_select,
@@ -867,7 +874,129 @@ impl RequestEditor {
         cx.notify();
     }
 
+    /// Send the request, first asking for `# @prompt` values or confirming
+    /// a `# @note` when the request has them.
     pub fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_loading {
+            return;
+        }
+        match self
+            .request_data
+            .http_file
+            .clone()
+            .filter(|options| options.note.is_some() || !options.prompts.is_empty())
+        {
+            Some(options) => self.open_send_dialog(&options, window, cx),
+            None => self.send_request_with(HashMap::new(), window, cx),
+        }
+    }
+
+    /// Ask for the request's `# @prompt` values and show its `# @note`, then
+    /// send it.
+    fn open_send_dialog(
+        &mut self,
+        options: &HttpFileOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let inputs: Vec<(Prompt, Entity<InputState>)> = options
+            .prompts
+            .iter()
+            .map(|prompt| {
+                let last = self
+                    .prompt_values
+                    .get(&prompt.name)
+                    .cloned()
+                    .unwrap_or_default();
+                let input = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .masked(prompt.is_secret())
+                        .placeholder(prompt.description.clone().unwrap_or_default())
+                });
+                input.update(cx, |input, cx| input.set_value(last, window, cx));
+                (prompt.clone(), input)
+            })
+            .collect();
+        if let Some((_, first)) = inputs.first() {
+            first.update(cx, |input, cx| input.focus(window, cx));
+        }
+
+        let note = options.note.clone().map(|note| {
+            if note.is_empty() {
+                SharedString::from("This request is marked with @note. Send it?")
+            } else {
+                SharedString::from(note)
+            }
+        });
+        let title = if inputs.is_empty() {
+            "Send this request?"
+        } else {
+            "Values for this request"
+        };
+        let editor = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let fields = inputs.iter().map(|(prompt, input)| {
+                v_flex()
+                    .gap_1()
+                    .child(div().text_sm().font_medium().child(prompt.name.clone()))
+                    .child(Input::new(input))
+            });
+            let inputs = inputs.clone();
+            let editor = editor.clone();
+            dialog
+                .title(title)
+                .w(px(440.))
+                .child(
+                    v_flex()
+                        .gap_3()
+                        .when_some(note.clone(), |this, note| {
+                            this.child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(note),
+                            )
+                        })
+                        .children(fields),
+                )
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            DialogClose::new()
+                                .child(Button::new("cancel-send").label("Cancel").outline()),
+                        )
+                        .child(
+                            DialogAction::new()
+                                .child(Button::new("confirm-send").label("Send").primary()),
+                        ),
+                )
+                .on_ok(move |_, window, cx| {
+                    let values: HashMap<String, String> = inputs
+                        .iter()
+                        .map(|(prompt, input)| {
+                            (prompt.name.clone(), input.read(cx).value().to_string())
+                        })
+                        .collect();
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.prompt_values.extend(values.clone());
+                            editor.send_request_with(values, window, cx);
+                        })
+                        .log_err()
+                        .ok();
+                    true
+                })
+        });
+    }
+
+    /// Send the request. `prompted` holds `# @prompt` values, which apply as
+    /// request variables.
+    fn send_request_with(
+        &mut self,
+        prompted: HashMap<String, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_loading {
             return;
         }
@@ -918,6 +1047,25 @@ impl RequestEditor {
         // Create a copy of request data with the final URL
         let mut final_request_data = request_data.clone();
         final_request_data.url = final_url;
+
+        // Values asked for by `# @prompt` win over the request's variables.
+        for (name, value) in prompted {
+            match final_request_data
+                .vars
+                .iter_mut()
+                .find(|var| var.key == name)
+            {
+                Some(var) => {
+                    var.value = value;
+                    var.enabled = true;
+                }
+                None => final_request_data.vars.push(KeyValuePair {
+                    key: name,
+                    value,
+                    enabled: true,
+                }),
+            }
+        }
 
         // Load environment variables and secrets in the main thread
         let (variables, secrets) = if let Some(selected_env) = self.get_selected_environment(cx) {
@@ -1018,7 +1166,8 @@ impl RequestEditor {
         let raw_response_input = self.raw_response_input.clone();
         let editor_entity = cx.entity().clone();
 
-        // Capture data for history
+        // Capture data for history. `# @no-log` requests stay out of it.
+        let record_history = !request_data.http_file.as_ref().is_some_and(|o| o.no_log);
         let history_request_name = request_data.name.clone();
         let history_method = request_data.method.as_str().to_string();
         let history_url = request_data.url.clone();
@@ -1089,7 +1238,7 @@ impl RequestEditor {
                     // Successfully got response data
                     window.update(|window, cx| {
                         // Save to history
-                        {
+                        if record_history {
                             let history_entry = crate::app_database::HistoryEntry {
                                 id: None,
                                 method: history_method.clone(),
