@@ -1,5 +1,6 @@
 //! HTTP client service module
 
+mod auth_shorthand;
 mod body_files;
 mod client;
 pub mod curl;

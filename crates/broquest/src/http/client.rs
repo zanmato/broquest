@@ -10,6 +10,7 @@ use crate::domain::{
 use crate::environments::EnvironmentResolver;
 use crate::scripting::{ScriptExecutionService, VariableStore};
 
+use super::auth_shorthand;
 use super::body_files;
 use super::encoding;
 use super::jwt;
@@ -390,6 +391,11 @@ impl HttpClientService {
                 &variables,
                 &secrets,
             );
+        }
+
+        // `Authorization: Basic user password` and friends in .http files.
+        if request_data.http_file.is_some() {
+            auth_shorthand::apply(&mut request_data);
         }
 
         // Ensure auth tokens are valid (fetch/refresh if needed)
