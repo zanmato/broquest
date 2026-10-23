@@ -2404,27 +2404,17 @@ impl RequestEditor {
             .count()
     }
 
-    /// Calculate if Body tab should show a badge (has content)
+    /// Calculate if Body tab should show a badge (has content), from
+    /// whichever editor holds the body.
     fn has_body_content(&self, cx: &App) -> bool {
-        let selected_content_type = self.content_type_select.read(cx).selected_value().copied();
-
-        match selected_content_type {
-            Some(ContentType::Form) => {
-                // Check if form editor has any non-empty fields
-                self.form_editor.read(cx).get_pairs(cx).iter().any(|field| {
-                    field.enabled && (!field.key.is_empty() || !field.value.is_empty())
-                })
-            }
-            Some(ContentType::UrlEncoded) => {
-                // Check if form editor has any non-empty fields
-                self.form_editor.read(cx).get_pairs(cx).iter().any(|field| {
-                    field.enabled && (!field.key.is_empty() || !field.value.is_empty())
-                })
-            }
-            _ => {
-                // For other content types, check if body has content
-                !self.body_input.read(cx).value().trim().is_empty()
-            }
+        if self.uses_form_editor(cx) {
+            self.form_editor
+                .read(cx)
+                .get_pairs(cx)
+                .iter()
+                .any(|field| field.enabled && (!field.key.is_empty() || !field.value.is_empty()))
+        } else {
+            !self.body_input.read(cx).value().trim().is_empty()
         }
     }
 
