@@ -4,12 +4,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::domain::{
-    AuthType, HttpMethod, JwtAuth, KeyValuePair, OAuth2Auth, OAuth2GrantType, RequestData,
-    ResponseData,
+    AuthType, EncodedBody, HttpMethod, JwtAuth, KeyValuePair, OAuth2Auth, OAuth2GrantType,
+    RequestData, ResponseData,
 };
 use crate::environments::EnvironmentResolver;
 use crate::scripting::{ScriptExecutionService, VariableStore};
 
+use super::encoding;
 use super::jwt;
 use super::oauth2::{self, calculate_expires_at, is_oauth_token_expired};
 
@@ -505,6 +506,19 @@ impl HttpClientService {
             }
         }
 
+        // Ask for the encodings we decode, unless the request picks its own.
+        if !request_headers
+            .iter()
+            .any(|header| header.key.eq_ignore_ascii_case("accept-encoding"))
+        {
+            request = request.header("Accept-Encoding", encoding::ACCEPT_ENCODING);
+            request_headers.push(KeyValuePair {
+                key: "Accept-Encoding".to_string(),
+                value: encoding::ACCEPT_ENCODING.to_string(),
+                enabled: true,
+            });
+        }
+
         // Add extra auth header if provided (for digest retry)
         if let Some(auth_header) = extra_auth_header {
             request = request.header("Authorization", &auth_header);
@@ -615,48 +629,59 @@ impl HttpClientService {
             })
             .collect::<Vec<_>>();
 
+        let header_value = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string()
+        };
         // Detect response format to determine how to read the body
-        let content_type_str = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        let response_format = ResponseFormat::from_content_type(content_type_str);
+        let content_type = header_value("content-type");
+        let content_encoding = header_value("content-encoding");
+        let response_format = ResponseFormat::from_content_type(&content_type);
         let is_binary_response = matches!(
             response_format,
             ResponseFormat::Image(_) | ResponseFormat::Pdf | ResponseFormat::Binary
         );
 
-        // Read body as bytes for binary responses, text for everything else
-        let (response_body, body_bytes) = if is_binary_response {
-            let bytes = async_compat::Compat::new(response.bytes())
-                .await
-                .map_err(|e| {
-                    HttpError::new(
-                        "Failed to read response body",
-                        format!("Failed to read response body: {}", e),
-                    )
-                })?;
-            let body_vec = bytes.to_vec();
-            let placeholder = format!("[Binary data: {} bytes]", body_vec.len());
-            (placeholder, Some(body_vec))
+        // The body arrives as sent, compressed or not.
+        let raw_body = async_compat::Compat::new(response.bytes())
+            .await
+            .map_err(|e| {
+                HttpError::new(
+                    "Failed to read response body",
+                    format!("Failed to read response body: {}", e),
+                )
+            })?;
+
+        let (decoded_body, encoded) = if encoding::is_encoded(&content_encoding) {
+            let decoded = encoding::decode(&raw_body, &content_encoding).map_err(|e| {
+                HttpError::new(
+                    "Failed to decode response body",
+                    format!("Failed to decode response body: {}", e),
+                )
+            })?;
+            let encoded = EncodedBody {
+                encoding: content_encoding.clone(),
+                size: raw_body.len(),
+            };
+            (decoded, Some(encoded))
         } else {
-            let text = async_compat::Compat::new(response.text())
-                .await
-                .map_err(|e| {
-                    HttpError::new(
-                        "Failed to read response body",
-                        format!("Failed to read response body: {}", e),
-                    )
-                })?;
-            (text, None)
+            (raw_body.to_vec(), None)
         };
 
         let latency = start_time.elapsed();
-        let response_size = body_bytes
-            .as_ref()
-            .map(|b| b.len())
-            .unwrap_or(response_body.len());
+        let response_size = decoded_body.len();
+
+        // Keep bytes for binary responses, text for everything else
+        let (response_body, body_bytes) = if is_binary_response {
+            let placeholder = format!("[Binary data: {} bytes]", response_size);
+            (placeholder, Some(decoded_body))
+        } else {
+            (encoding::decode_text(&decoded_body, &content_type), None)
+        };
 
         let response_data = ResponseData {
             status_code: Some(status_code),
@@ -668,6 +693,7 @@ impl HttpClientService {
             body: response_body,
             body_bytes,
             url: Some(request_data.url.clone()),
+            encoded,
         };
 
         // Execute post-response script if present

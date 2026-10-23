@@ -58,7 +58,6 @@ reqwest = { version = "0.12", features = [
     "json",
     "multipart",
     "stream",
-    "gzip",
 ] }
 base64 = "0.22"
 async-compat = "0.2"

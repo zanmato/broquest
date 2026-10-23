@@ -98,4 +98,16 @@ pub struct ResponseData {
     pub body: String,
     pub body_bytes: Option<Vec<u8>>,
     pub url: Option<String>,
+    /// How the body arrived when it was compressed. `size` above is the
+    /// decoded size.
+    pub encoded: Option<EncodedBody>,
+}
+
+/// A compressed response body as it arrived.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EncodedBody {
+    /// The `Content-Encoding` header, such as `gzip` or `br`.
+    pub encoding: String,
+    /// Size of the body as sent, in bytes.
+    pub size: usize,
 }

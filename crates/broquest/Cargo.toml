@@ -63,6 +63,10 @@ semver = "1.0.27"
 minisign-verify = "0.2.5"
 sha2 = "0.10"
 hex = "0.4.3"
+flate2 = "1"
+brotli-decompressor = "5"
+ruzstd = "0.8"
+encoding_rs = "0.8"
 
 [features]
 # Stages scenes for the website screenshots; see script/screenshots/capture.
@@ -76,3 +80,4 @@ wiremock = "0.6"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 # Enable gpui's test harness (TestAppContext, #[gpui::test]) for unit tests.
 gpui = { workspace = true, features = ["test-support"] }
+brotli = "8"

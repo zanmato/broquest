@@ -2,11 +2,14 @@
 
 mod client;
 pub mod curl;
+pub mod encoding;
 pub mod jwt;
 pub mod oauth2;
 
 #[cfg(test)]
 mod auth_tests;
+#[cfg(test)]
+mod encoding_tests;
 
 pub use client::*;
 use std::time::{SystemTime, UNIX_EPOCH};

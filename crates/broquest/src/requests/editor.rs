@@ -1200,6 +1200,7 @@ impl RequestEditor {
                             body: http_error.details.clone(),
                             body_bytes: None,
                             url: None,
+                            encoded: None,
                         };
 
                         // Update the RequestEditor's response_data for status bar and reset loading state
@@ -1589,14 +1590,15 @@ impl RequestEditor {
             String::new()
         };
 
-        let size_text = if let Some(size) = self.response_data.size {
-            if size >= 1024 {
-                format!(" {:.1}KB", size as f64 / 1024.0)
-            } else {
-                format!(" {}B", size)
-            }
-        } else {
-            String::new()
+        let size_text = match (self.response_data.size, &self.response_data.encoded) {
+            (Some(size), Some(encoded)) => format!(
+                " {} ({} {})",
+                format_size(size),
+                format_size(encoded.size),
+                encoded.encoding
+            ),
+            (Some(size), None) => format!(" {}", format_size(size)),
+            (None, _) => String::new(),
         };
 
         h_flex()
@@ -2432,6 +2434,17 @@ impl Render for RequestEditor {
             // rounded border.
             .size_full()
             .child(content)
+    }
+}
+
+/// A byte count for the status bar, such as `412B` or `1.1KB`.
+fn format_size(bytes: usize) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1}KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{}B", bytes)
     }
 }
 
