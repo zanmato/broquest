@@ -529,7 +529,7 @@ impl BroquestApp {
             prompt: Some("Select collection directory".into()),
         });
 
-        cx.spawn_in(window, async move |_, window| {
+        cx.spawn_in(window, async move |this, window| {
             if let Some(path) = path.await.ok()?.ok()?
                 && let Some(dir_path) = path.first()
                 && let Some(dir_str) = dir_path.to_str()
@@ -596,6 +596,20 @@ impl BroquestApp {
                                     }
                                 }
                             });
+
+                            // Show the opened collection in the sidebar.
+                            if collection.is_some() {
+                                this.update(cx, |app, cx| {
+                                    app.sidebar_tab = SidebarTab::Collections;
+                                    app.sidebar_collapsed = false;
+                                    app.collections_panel.update(cx, |panel, cx| {
+                                        panel.reveal_collection(&dir_str, cx);
+                                    });
+                                    cx.notify();
+                                })
+                                .log_err()
+                                .ok();
+                            }
 
                             // Save the collection to the database and get its ID
                             if let Some(collection) = collection {

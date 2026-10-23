@@ -42,6 +42,8 @@ pub struct CollectionsPanel {
     request_data_map: HashMap<String, RequestData>,        // Map item_id -> RequestData
     /// Items to expand on the next tree build, from a restored session.
     restored_expanded_ids: HashSet<SharedString>,
+    /// A collection to reveal once the tree holds it.
+    pending_reveal: Option<String>,
 }
 
 struct CollectionsTreeDelegate {
@@ -489,6 +491,7 @@ impl CollectionsPanel {
             tree_item_metadata: HashMap::new(),
             request_data_map: HashMap::new(),
             restored_expanded_ids: HashSet::new(),
+            pending_reveal: None,
         }
     }
 
@@ -516,6 +519,23 @@ impl CollectionsPanel {
             })
             .map(|entry| entry.item().id.to_string())
             .collect()
+    }
+
+    /// Expand, select and scroll to the collection at `path`, now or as soon
+    /// as the tree holds it.
+    pub fn reveal_collection(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.pending_reveal = Some(path.to_string());
+        self.reveal_pending(cx);
+    }
+
+    fn reveal_pending(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.pending_reveal.clone() else {
+            return;
+        };
+        let id = format!("collection_{}", path.replace('/', "_"));
+        if self.tree_state.update(cx, |tree, cx| tree.reveal(&id, cx)) {
+            self.pending_reveal = None;
+        }
     }
 
     /// Expand the given items, typically from a restored session.
@@ -716,6 +736,7 @@ impl CollectionsPanel {
         self.tree_state.update(cx, |state, cx| {
             state.set_items(tree_items, cx);
         });
+        self.reveal_pending(cx);
     }
 
     /// Expand the whole tree and select the request named `name`.

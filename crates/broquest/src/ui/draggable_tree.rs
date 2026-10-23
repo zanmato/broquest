@@ -395,6 +395,21 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
         cx.notify();
     }
 
+    /// Expand, select and scroll to the item with `id`. Returns whether it
+    /// was found.
+    pub fn reveal(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
+        let Some(ix) = self.entries.iter().position(|e| e.item().id.as_ref() == id) else {
+            return false;
+        };
+        if self.entries[ix].is_folder() && !self.entries[ix].is_expanded() {
+            self.toggle_expand(ix);
+        }
+        self.selected_ix = Some(ix);
+        self.scroll_handle.scroll_to_item(ix, ScrollStrategy::Top);
+        cx.notify();
+        true
+    }
+
     /// Get the currently selected entry, if any.
     pub fn selected_entry(&self) -> Option<&TreeEntry> {
         self.selected_ix.and_then(|ix| self.entries.get(ix))
