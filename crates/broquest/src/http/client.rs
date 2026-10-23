@@ -694,6 +694,7 @@ impl HttpClientService {
             body_bytes,
             url: Some(request_data.url.clone()),
             encoded,
+            request_body: request_data.body.clone(),
         };
 
         // Execute post-response script if present

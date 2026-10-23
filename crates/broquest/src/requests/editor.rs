@@ -995,6 +995,16 @@ impl RequestEditor {
                 (None, None)
             };
 
+        // Resolve references to earlier exchanges, such as
+        // {{login.response.body.$.token}}, wherever the request or its
+        // variables use them, and pass them on as collection variables.
+        let collection_vars_for_request = self.with_exchange_references(
+            &final_request_data,
+            variables.as_ref(),
+            collection_vars_for_request,
+            cx,
+        );
+
         // Get the HTTP client after updating UI to avoid borrow issues
         let http_client = HttpClientService::global(cx);
         // Capture the manager entity so the async task can write back dirty env
@@ -1061,6 +1071,19 @@ impl RequestEditor {
                         })
                     {
                         tracing::error!("Failed to update runtime variables: {}", e);
+                    }
+
+                    // Remember the exchange for {{name.response...}} references.
+                    if let Some(collection_path) = collection_path.as_ref() {
+                        collection_manager
+                            .update(window, |collection_manager, _| {
+                                collection_manager.record_exchange(
+                                    collection_path,
+                                    &history_request_name,
+                                    response_data.clone(),
+                                );
+                            })
+                            ;
                     }
 
                     // Successfully got response data
@@ -1151,6 +1174,7 @@ impl RequestEditor {
                             body_bytes: None,
                             url: None,
                             encoded: None,
+                            request_body: String::new(),
                         };
 
                         // Update the RequestEditor's response_data for status bar and reset loading state
@@ -1178,6 +1202,61 @@ impl RequestEditor {
 
         // Store the task so it can be cancelled
         self.current_request_task = Some(task);
+    }
+
+    /// `collection_vars` with the values of any `{{name.response...}}`
+    /// references found in the request or the variables it may use.
+    fn with_exchange_references(
+        &self,
+        request: &RequestData,
+        environment: Option<&HashMap<String, String>>,
+        collection_vars: Option<HashMap<String, String>>,
+        cx: &App,
+    ) -> Option<HashMap<String, String>> {
+        use crate::environments::references;
+
+        let Some(exchanges) = self
+            .collection_path
+            .as_deref()
+            .and_then(|path| CollectionManager::global(cx).read(cx).exchanges(path))
+        else {
+            return collection_vars;
+        };
+
+        let pairs = request
+            .headers
+            .iter()
+            .chain(&request.query_params)
+            .chain(&request.path_params)
+            .chain(&request.vars);
+        let texts = [request.url.as_str(), request.body.as_str()]
+            .into_iter()
+            .chain(pairs.flat_map(|pair| [pair.key.as_str(), pair.value.as_str()]))
+            .chain(
+                environment
+                    .into_iter()
+                    .flat_map(|vars| vars.values().map(String::as_str)),
+            )
+            .chain(
+                collection_vars
+                    .iter()
+                    .flat_map(|vars| vars.values().map(String::as_str)),
+            );
+
+        let mut resolved = HashMap::new();
+        for text in texts {
+            for name in references::references_in(text) {
+                if let Some(value) = references::evaluate(&name, exchanges) {
+                    resolved.insert(name, value);
+                }
+            }
+        }
+        if resolved.is_empty() {
+            return collection_vars;
+        }
+        let mut vars = collection_vars.unwrap_or_default();
+        vars.extend(resolved);
+        Some(vars)
     }
 
     pub fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {

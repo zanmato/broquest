@@ -493,6 +493,64 @@ mod tests {
         fs::remove_dir_all(dir).ok();
     }
 
+    #[tokio::test]
+    async fn chained_requests_use_the_last_response() {
+        use crate::environments::references;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"token": "abc"}"#))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me"))
+            .and(header("authorization", "Bearer abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("me"))
+            .mount(&server)
+            .await;
+
+        let source = format!(
+            "@token = {{{{login.response.body.$.token}}}}\n\n# @name login\nPOST {uri}/login\n\n###\n# @name me\nGET {uri}/me\nAuthorization: Bearer {{{{token}}}}\n",
+            uri = server.uri()
+        );
+        let requests = requests_from_file(&source, "auth.http", Path::new("."));
+        let request = |name: &str| {
+            requests
+                .values()
+                .find(|request| request.name == name)
+                .unwrap()
+                .clone()
+        };
+        let client = crate::http::HttpClientService::new(30).unwrap();
+
+        let (login, _) = client
+            .send_request(request("login"), None, None, None, None)
+            .await
+            .unwrap();
+        let exchanges = HashMap::from([("login".to_string(), login)]);
+
+        // What the editor does before sending: resolve the references the
+        // request's variables make, and pass them on as collection variables.
+        let me = request("me");
+        let resolved: HashMap<String, String> = me
+            .vars
+            .iter()
+            .flat_map(|var| references::references_in(&var.value))
+            .filter_map(|name| Some((name.clone(), references::evaluate(&name, &exchanges)?)))
+            .collect();
+        assert_eq!(resolved.len(), 1);
+
+        let (response, _) = client
+            .send_request(me, None, None, None, Some(resolved))
+            .await
+            .unwrap();
+        assert_eq!(response.status_code, Some(200));
+        assert_eq!(response.body, "me");
+    }
+
     #[test]
     fn duplicate_names_get_numbers() {
         let requests = requests_from_file(

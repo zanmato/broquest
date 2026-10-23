@@ -101,6 +101,8 @@ pub struct ResponseData {
     /// How the body arrived when it was compressed. `size` above is the
     /// decoded size.
     pub encoded: Option<EncodedBody>,
+    /// The request body as sent, variables resolved.
+    pub request_body: String,
 }
 
 /// A compressed response body as it arrived.

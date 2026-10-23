@@ -2,6 +2,7 @@
 
 pub mod dynamic;
 mod editor;
+pub mod references;
 mod resolver;
 
 pub use editor::*;

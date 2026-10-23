@@ -5,7 +5,7 @@ use super::types::{
     CollectionMeta, CollectionToml, EnvironmentToml, EnvironmentVariable, RequestToml,
 };
 use crate::app_database::{AppDatabase, CollectionData};
-use crate::domain::RequestData;
+use crate::domain::{RequestData, ResponseData};
 use anyhow::{Context as _, Result};
 use gpui::{App, Context, Entity, EventEmitter, Global, SharedString};
 use std::collections::HashMap;
@@ -67,12 +67,16 @@ pub struct CollectionInfo {
 
 pub struct CollectionManager {
     collections: HashMap<String, CollectionInfo>, // collection_path -> CollectionInfo
+    /// The last exchange of each request this session, by collection path and
+    /// request name, for `{{name.response...}}` references.
+    exchanges: HashMap<String, HashMap<String, ResponseData>>,
 }
 
 impl CollectionManager {
     pub fn new() -> Self {
         Self {
             collections: HashMap::new(),
+            exchanges: HashMap::new(),
         }
     }
 
@@ -111,6 +115,19 @@ impl CollectionManager {
             None => &info.requests,
         };
         requests.values().find(|request| request.name == name)
+    }
+
+    /// Remember the last exchange of the request `name`.
+    pub fn record_exchange(&mut self, collection_path: &str, name: &str, response: ResponseData) {
+        self.exchanges
+            .entry(collection_path.to_string())
+            .or_default()
+            .insert(name.to_string(), response);
+    }
+
+    /// The last exchange of each request sent this session, by request name.
+    pub fn exchanges(&self, collection_path: &str) -> Option<&HashMap<String, ResponseData>> {
+        self.exchanges.get(collection_path)
     }
 
     /// Get all cached collections
