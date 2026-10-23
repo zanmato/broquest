@@ -18,7 +18,7 @@ use anyhow::{Context as _, Result};
 
 use super::manager::GroupInfo;
 use super::types::{CollectionMeta, CollectionToml, EnvironmentToml, EnvironmentVariable};
-use crate::domain::{HttpMethod, KeyValuePair, RequestData, ScriptDialect};
+use crate::domain::{HttpFileOptions, HttpMethod, KeyValuePair, RequestData, ScriptDialect};
 
 /// Folders that never hold a collection's request files.
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "dist", "build", "vendor"];
@@ -165,14 +165,11 @@ fn requests_from_file(
             })
             .collect();
 
+        // `< file` lines stay as written and are read when the request is sent.
         let body = request
             .body
             .as_ref()
-            .map_or_else(String::new, |body| match body.file_ref() {
-                Some(path) => read_body_file(&base_dir.join(path))
-                    .unwrap_or_else(|| body.content.text.clone()),
-                None => body.content.text.clone(),
-            });
+            .map_or_else(String::new, |body| body.content.text.clone());
 
         // The editor keeps the query in `query_params`, not in the URL.
         let (url, query_params) = crate::domain::split_query(&request.url());
@@ -189,6 +186,9 @@ fn requests_from_file(
                 pre_request_script: script_text(&request.pre_request_scripts, base_dir),
                 post_response_script: script_text(&request.response_handlers, base_dir),
                 script_dialect: ScriptDialect::JetBrains,
+                http_file: Some(HttpFileOptions {
+                    dir: base_dir.to_path_buf(),
+                }),
                 ..Default::default()
             },
         );
@@ -245,17 +245,6 @@ fn unique_name(base: &str, taken: &[String]) -> String {
         .map(|n| format!("{base} ({n})"))
         .find(|name| !taken.contains(name))
         .unwrap_or_default()
-}
-
-/// A body file as text. Binary files are not read.
-fn read_body_file(path: &Path) -> Option<String> {
-    match fs::read(path) {
-        Ok(bytes) => String::from_utf8(bytes).ok(),
-        Err(error) => {
-            tracing::warn!("Could not read body file {}: {}", path.display(), error);
-            None
-        }
-    }
 }
 
 /// Environments from the JetBrains env files and the VS Code settings.
@@ -457,7 +446,7 @@ mod tests {
             ]
         );
         let login = requests[1];
-        assert_eq!(login.body, "{\"user\": \"{{user}}\"}");
+        assert_eq!(login.body, "< ./login.json");
         assert_eq!(login.headers[0].key, "Content-Type");
         assert_eq!(login.vars[0].key, "user");
         assert_eq!(login.vars[0].value, "kestrel");
@@ -648,6 +637,40 @@ mod tests {
             .unwrap();
         assert_eq!(response.body, "me");
 
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn sends_body_files_at_send_time() {
+        use wiremock::matchers::{body_string, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/items"))
+            .and(body_string("{\"name\": \"kestrel\"}"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+
+        let dir = temp_dir();
+        write(&dir, "payload.json", "{\"name\": \"kestrel\"}");
+        let source = format!(
+            "POST {}/items\nContent-Type: application/json\n\n< ./payload.json\n",
+            server.uri()
+        );
+        let request = requests_from_file(&source, "items.http", &dir)
+            .into_values()
+            .next()
+            .unwrap();
+        assert_eq!(request.body, "< ./payload.json");
+
+        let client = crate::http::HttpClientService::new(30).unwrap();
+        let (response, _) = client
+            .send_request(request, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(response.status_code, Some(201));
         fs::remove_dir_all(dir).ok();
     }
 

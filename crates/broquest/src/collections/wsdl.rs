@@ -181,5 +181,6 @@ fn create_soap_request(op: &wsdl::WsdlOperationInfo) -> RequestData {
         post_response_script: None,
         vars: Vec::new(),
         script_dialect: Default::default(),
+        http_file: None,
     }
 }

@@ -62,8 +62,12 @@ Variables set with `client.global.set` or `request.variables.set` last for
 the session. Requests can use an earlier response with VS Code style
 references such as `{{login.response.body.$.token}}`.
 
+`< ./file` lines in a body, multipart parts included, send that file when the
+request is sent, and `<@ ./file` (VS Code) sends its text with variables
+filled in. Comment lines in a body are sent as they are.
+
 These collections are read-only for now. Requests can be edited and sent, but
-not saved. `< file` parts inside multipart bodies are not read yet.
+not saved.
 
 ## Built in variables
 

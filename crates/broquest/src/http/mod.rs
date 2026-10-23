@@ -1,5 +1,6 @@
 //! HTTP client service module
 
+mod body_files;
 mod client;
 pub mod curl;
 pub mod encoding;

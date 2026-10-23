@@ -351,6 +351,7 @@ impl From<RequestToml> for RequestData {
             post_response_script,
             vars: toml.vars,
             script_dialect: Default::default(),
+            http_file: None,
         }
     }
 }

@@ -69,6 +69,16 @@ pub struct RequestData {
     /// Which API the request's scripts are written against.
     #[serde(skip)]
     pub script_dialect: ScriptDialect,
+    /// Set for requests that come from a `.http` file.
+    #[serde(skip)]
+    pub http_file: Option<HttpFileOptions>,
+}
+
+/// What a request from a `.http` file needs beyond the request itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HttpFileOptions {
+    /// The folder of the `.http` file, which `< file` paths are relative to.
+    pub dir: std::path::PathBuf,
 }
 
 /// The API a request's scripts use.
@@ -97,6 +107,7 @@ impl Default for RequestData {
             auth: AuthType::None,
             vars: Vec::new(),
             script_dialect: ScriptDialect::default(),
+            http_file: None,
         }
     }
 }

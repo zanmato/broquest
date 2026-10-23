@@ -10,6 +10,7 @@ use crate::domain::{
 use crate::environments::EnvironmentResolver;
 use crate::scripting::{ScriptExecutionService, VariableStore};
 
+use super::body_files;
 use super::encoding;
 use super::jwt;
 use super::oauth2::{self, calculate_expires_at, is_oauth_token_expired};
@@ -255,6 +256,12 @@ impl HttpClientService {
         collection_vars: Option<HashMap<String, String>>,
     ) -> std::result::Result<(ResponseData, VariableStore), HttpError> {
         let start_time = std::time::Instant::now();
+
+        // `<@ file` body lines of .http requests bring in a file whose
+        // variables are resolved along with the rest of the request.
+        if let Some(options) = &request_data.http_file {
+            request_data.body = body_files::expand_text_refs(&request_data.body, &options.dir);
+        }
 
         // Create variable store for this request
         let variable_store = VariableStore::new();
@@ -565,6 +572,21 @@ impl HttpClientService {
         mut request: reqwest::RequestBuilder,
         request_data: &RequestData,
     ) -> reqwest::RequestBuilder {
+        // .http bodies are sent as written, with `< file` lines replaced by
+        // the files' bytes.
+        if let Some(options) = &request_data.http_file {
+            let multipart = request_data.headers.iter().any(|h| {
+                h.enabled
+                    && h.key.eq_ignore_ascii_case("content-type")
+                    && h.value.to_ascii_lowercase().starts_with("multipart/")
+            });
+            return request.body(body_files::body_bytes(
+                &request_data.body,
+                &options.dir,
+                multipart,
+            ));
+        }
+
         // Check if this is form data with file uploads
         if request_data.headers.iter().any(|h| {
             h.key.to_lowercase() == "content-type" && h.value == "application/x-www-form-urlencoded"
