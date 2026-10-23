@@ -1,7 +1,7 @@
 use crate::ui::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString, Subscription, Window,
-    actions, div, prelude::*, px,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString,
+    Subscription, Window, actions, div, prelude::*, px,
 };
 use gpui_kit::component::{
     ActiveTheme, Icon, IndexPath, Sizable as _, StyledExt, WindowExt,
@@ -484,7 +484,16 @@ impl CollectionEditor {
 
     /// The Collection tab: a horizontal split with the form on the left and the
     /// docs view/editor on the right.
-    fn render_collection_tab(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_collection_tab(&self, cx: &mut Context<Self>) -> AnyElement {
+        // A folder of .http files has nowhere to keep docs.
+        if !self.keeps_collection_settings(cx) {
+            return v_flex()
+                .size_full()
+                .max_w(px(560.))
+                .overflow_y_scrollbar()
+                .child(self.render_collection_form(cx))
+                .into_any_element();
+        }
         h_resizable("collection-docs")
             .with_state(&self.docs_split_state)
             .child(
@@ -499,6 +508,13 @@ impl CollectionEditor {
                     ),
             )
             .child(resizable_panel().child(v_flex().size_full().child(self.render_docs_pane(cx))))
+            .into_any_element()
+    }
+
+    /// Whether the collection's format stores docs, variables and auth. A
+    /// folder of .http files does not, so those parts are hidden.
+    fn keeps_collection_settings(&self, cx: &App) -> bool {
+        self.existing_format(cx) != Some(super::CollectionFormat::Http)
     }
 
     /// The docs pane: a toggle between a rendered markdown preview and a
@@ -590,12 +606,12 @@ impl CollectionEditor {
                 .on_click(cx.listener(|this, _ix: &usize, _window, cx| {
                     this.set_active_tab(*_ix, cx);
                 }))
-                .children(vec![
-                    Tab::new().label("Collection"),
-                    Tab::new().label("Environments"),
-                    Tab::new().label("Vars"),
-                    Tab::new().label("Auth"),
-                ]),
+                .child(Tab::new().label("Collection"))
+                .child(Tab::new().label("Environments"))
+                .when(self.keeps_collection_settings(cx), |this| {
+                    this.child(Tab::new().label("Vars"))
+                        .child(Tab::new().label("Auth"))
+                }),
         )
     }
 
