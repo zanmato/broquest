@@ -56,9 +56,14 @@ request in it. Environments come from `http-client.env.json` and
 `http-client.private.env.json`, or from `rest-client.environmentVariables` in
 `.vscode/settings.json`.
 
+Pre-request scripts (`< {% %}`) and response handlers (`> {% %}`), inline or
+from a file, run with the JetBrains `client`, `request` and `response` API.
+Variables set with `client.global.set` or `request.variables.set` last for
+the session. Requests can use an earlier response with VS Code style
+references such as `{{login.response.body.$.token}}`.
+
 These collections are read-only for now. Requests can be edited and sent, but
-not saved. Response handler scripts and `< file` parts inside multipart
-bodies are not run or read yet.
+not saved. `< file` parts inside multipart bodies are not read yet.
 
 ## Built in variables
 

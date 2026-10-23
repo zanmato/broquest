@@ -178,6 +178,7 @@ impl BroquestApp {
                         pre_request_script: None,
                         post_response_script: None,
                         vars: Vec::new(),
+                        script_dialect: Default::default(),
                     };
 
                     editor_panel_clone.update(cx, |editor_panel, cx| {
@@ -437,6 +438,7 @@ impl BroquestApp {
             pre_request_script: None,
             post_response_script: None,
             vars: Vec::new(),
+            script_dialect: Default::default(),
         };
 
         self.editor_panel.update(cx, |editor_panel, cx| {

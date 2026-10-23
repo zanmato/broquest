@@ -350,6 +350,7 @@ impl From<RequestToml> for RequestData {
             pre_request_script,
             post_response_script,
             vars: toml.vars,
+            script_dialect: Default::default(),
         }
     }
 }

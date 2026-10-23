@@ -309,7 +309,10 @@ impl HttpClientService {
         }
 
         // Initialize variable store with environment data if provided
-        if let (Some(variables), Some(secrets)) = (variables, secrets) {
+        let has_environment = variables.is_some() && secrets.is_some();
+        let variables = variables.unwrap_or_default();
+        let secrets = secrets.unwrap_or_default();
+        if has_environment {
             tracing::info!(
                 "Loaded {} variables and {} secrets for request",
                 variables.len(),
@@ -365,6 +368,21 @@ impl HttpClientService {
                     format!("Pre-request script execution failed: {}", e),
                 ));
             }
+
+            // Variables the script set can fill placeholders that were still
+            // unresolved, as in `request.variables.set("nonce", ...)`.
+            let runtime_after: HashMap<String, String> = variable_store
+                .get_all_vars()
+                .iter()
+                .map(|(k, v)| (k.clone(), value_to_string(v)))
+                .collect();
+            request_data = self.environment_resolver.resolve_request_data(
+                request_data,
+                &runtime_after,
+                &collection_str,
+                &variables,
+                &secrets,
+            );
         }
 
         // Ensure auth tokens are valid (fetch/refresh if needed)

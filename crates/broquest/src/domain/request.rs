@@ -66,6 +66,20 @@ pub struct RequestData {
     /// resolvable in this request via `{{name}}`.
     #[serde(default)]
     pub vars: Vec<KeyValuePair>,
+    /// Which API the request's scripts are written against.
+    #[serde(skip)]
+    pub script_dialect: ScriptDialect,
+}
+
+/// The API a request's scripts use.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScriptDialect {
+    /// Broquest's `bro`, `req` and `res`, with Bruno's `bru` API on top.
+    #[default]
+    Broquest,
+    /// The JetBrains HTTP Client's `client`, `request` and `response`, as in
+    /// `.http` files.
+    JetBrains,
 }
 
 impl Default for RequestData {
@@ -82,6 +96,7 @@ impl Default for RequestData {
             post_response_script: None,
             auth: AuthType::None,
             vars: Vec::new(),
+            script_dialect: ScriptDialect::default(),
         }
     }
 }

@@ -1,6 +1,6 @@
 use super::completion::ScriptContext;
 use super::variable_store::VariableStore;
-use crate::domain::{KeyValuePair, RequestData, ResponseData};
+use crate::domain::{KeyValuePair, RequestData, ResponseData, ScriptDialect};
 use anyhow::Result;
 use rquickjs::{Context, Ctx, Error, Function, Object, Runtime};
 use tracing::{debug, error};
@@ -157,6 +157,127 @@ const BRUNO_COMPAT_PRELUDE: &str = r#"
 })();
 "#;
 
+/// JavaScript prelude for scripts written against the JetBrains HTTP Client,
+/// as in `.http` files: `client`, `request`, `response` and `$random`, mapped
+/// onto broquest's `bro`, `req` and `res`. Variables set with
+/// `client.global.set` or `request.variables.set` are session variables.
+const JETBRAINS_PRELUDE: &str = r#"
+(function () {
+  var G = globalThis;
+
+  function log() {
+    var text = Array.prototype.map.call(arguments, function (a) {
+      return typeof a === 'string' ? a : JSON.stringify(a);
+    }).join(' ');
+    bro.__log(text);
+  }
+  if (typeof G.console === 'undefined') G.console = { log: log, info: log, warn: log, error: log };
+
+  function headerValues(headers, name) {
+    var target = String(name).toLowerCase();
+    return Object.keys(headers || {}).filter(function (k) { return k.toLowerCase() === target; })
+      .map(function (k) { return headers[k]; });
+  }
+
+  G.client = {
+    global: {
+      set: function (name, value) { bro.setVar(name, value); },
+      get: function (name) { var v = bro.getVar(name); return v === undefined ? null : v; },
+      isEmpty: function () { return Object.keys(bro.getAllVars()).length === 0; },
+      clear: function (name) { bro.deleteVar(name); },
+      clearAll: function () { Object.keys(bro.getAllVars()).forEach(function (k) { bro.deleteVar(k); }); }
+    },
+    test: function (name, fn) { test(name, fn); },
+    assert: function (condition, message) {
+      if (!condition) throw new Error(message || 'Assertion failed');
+    },
+    log: log,
+    exit: function () { throw new Error('client.exit() is not supported'); }
+  };
+
+  var variables = {
+    set: function (name, value) { bro.setVar(name, value); },
+    get: function (name) {
+      var v = bro.getVar(name);
+      if (v === undefined) v = bro.getRequestVar(name);
+      return v === undefined ? null : v;
+    }
+  };
+  G.request = {
+    method: req.method,
+    variables: variables,
+    environment: { get: function (name) { var v = bro.getEnvVar(name); return v === undefined ? null : v; } },
+    url: {
+      getRaw: function () { return req.url; },
+      tryGetSubstituted: function () { return bro.interpolate(req.url); }
+    },
+    body: {
+      getRaw: function () { return req.body; },
+      tryGetSubstituted: function () { return bro.interpolate(req.body); }
+    },
+    headers: {
+      all: function () {
+        return Object.keys(req.headers).map(function (k) {
+          return { name: k, getRawValue: function () { return req.headers[k]; },
+                   tryGetSubstitutedValue: function () { return bro.interpolate(req.headers[k]); } };
+        });
+      },
+      findByName: function (name) {
+        var values = headerValues(req.headers, name);
+        if (!values.length) return null;
+        return { name: name, getRawValue: function () { return values[0]; },
+                 tryGetSubstitutedValue: function () { return bro.interpolate(values[0]); } };
+      }
+    }
+  };
+
+  if (typeof res !== 'undefined') {
+    var contentType = (res.getHeader('content-type') || '').split(';');
+    var charset = contentType.slice(1).map(function (p) { return p.trim(); })
+      .filter(function (p) { return p.toLowerCase().indexOf('charset=') === 0; })
+      .map(function (p) { return p.slice(8); })[0] || '';
+    var body = res.body;
+    if (typeof body === 'string' && /[/+]json\b/i.test(contentType[0])) {
+      try { body = JSON.parse(body); } catch (e) {}
+    }
+    G.response = {
+      body: body,
+      status: res.status,
+      headers: {
+        valueOf: function (name) { var v = headerValues(res.headers, name); return v.length ? v[0] : null; },
+        valuesOf: function (name) { return headerValues(res.headers, name); }
+      },
+      contentType: { mimeType: contentType[0].trim(), charset: charset }
+    };
+  }
+
+  function randomString(length, alphabet) {
+    var out = '';
+    for (var i = 0; i < length; i++) out += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+    return out;
+  }
+  var letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  G.$random = {
+    integer: function (from, to) {
+      from = from === undefined ? 0 : from; to = to === undefined ? 1000 : to;
+      return Math.floor(from + Math.random() * (to - from));
+    },
+    float: function (from, to) {
+      from = from === undefined ? 0 : from; to = to === undefined ? 1000 : to;
+      return from + Math.random() * (to - from);
+    },
+    alphabetic: function (length) { return randomString(length, letters); },
+    alphanumeric: function (length) { return randomString(length, letters + '0123456789'); },
+    hexadecimal: function (length) { return randomString(length, '0123456789abcdef'); }
+  };
+  Object.defineProperty(G.$random, 'uuid', { get: function () { return crypto.randomUUID(); } });
+  Object.defineProperty(G, '$uuid', { get: function () { return crypto.randomUUID(); } });
+  Object.defineProperty(G, '$timestamp', { get: function () { return Math.floor(Date.now() / 1000); } });
+  Object.defineProperty(G, '$isoTimestamp', { get: function () { return new Date().toISOString(); } });
+  Object.defineProperty(G, '$randomInt', { get: function () { return Math.floor(Math.random() * 1001); } });
+})();
+"#;
+
 /// Represents a syntax error found in a script
 #[derive(Debug, Clone)]
 pub struct ScriptDiagnostic {
@@ -197,6 +318,7 @@ impl ScriptExecutionService {
             self.setup_bro_object(ctx.clone(), variable_store)?;
             self.setup_nodejs_compatibility(ctx.clone())?;
             self.setup_bruno_compat(ctx.clone())?;
+            self.setup_dialect(ctx.clone(), request)?;
 
             // Execute the script with better error handling
             if let Err(e) = ctx.eval::<(), _>(script) {
@@ -238,6 +360,7 @@ impl ScriptExecutionService {
             self.setup_bro_object(ctx.clone(), variable_store)?;
             self.setup_nodejs_compatibility(ctx.clone())?;
             self.setup_bruno_compat(ctx.clone())?;
+            self.setup_dialect(ctx.clone(), request)?;
 
             // Execute the script with better error handling
             if let Err(e) = ctx.eval::<(), _>(script) {
@@ -352,6 +475,13 @@ impl ScriptExecutionService {
     /// strings) to avoid engine-specific value conversions.
     fn setup_bro_object<'js>(&self, ctx: Ctx<'js>, variable_store: &VariableStore) -> Result<()> {
         let bro_obj = Object::new(ctx.clone())?;
+
+        bro_obj.set(
+            "__log",
+            Function::new(ctx.clone(), |text: String| {
+                tracing::info!(target: "script", "{}", text);
+            })?,
+        )?;
 
         // --- Environment variables ---
         let store = variable_store.clone();
@@ -483,6 +613,14 @@ impl ScriptExecutionService {
     /// to broquest's `bro` object.
     fn setup_bruno_compat<'js>(&self, ctx: Ctx<'js>) -> Result<()> {
         ctx.eval::<(), _>(BRUNO_COMPAT_PRELUDE)?;
+        Ok(())
+    }
+
+    /// Add the JetBrains HTTP Client API for requests whose scripts use it.
+    fn setup_dialect<'js>(&self, ctx: Ctx<'js>, request: &RequestData) -> Result<()> {
+        if request.script_dialect == ScriptDialect::JetBrains {
+            ctx.eval::<(), _>(JETBRAINS_PRELUDE)?;
+        }
         Ok(())
     }
 
@@ -1006,6 +1144,124 @@ mod tests {
 
         assert_eq!(store.get_var("passed"), Some(json!(2)));
         assert_eq!(store.get_var("failed"), Some(json!(0)));
+    }
+
+    fn jetbrains_request() -> RequestData {
+        RequestData {
+            url: "https://example.com/{{id}}".to_string(),
+            body: r#"{"id": "{{id}}"}"#.to_string(),
+            headers: vec![KeyValuePair {
+                key: "X-Client".to_string(),
+                value: "{{client}}".to_string(),
+                enabled: true,
+            }],
+            script_dialect: crate::domain::ScriptDialect::JetBrains,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn jetbrains_response_handler() {
+        let svc = service();
+        let store = VariableStore::new();
+        let response = ResponseData {
+            status_code: Some(201),
+            body: r#"{"token":"abc","user":{"id":7}}"#.to_string(),
+            headers: vec![
+                KeyValuePair {
+                    key: "Content-Type".to_string(),
+                    value: "application/problem+json; charset=utf-8".to_string(),
+                    enabled: true,
+                },
+                KeyValuePair {
+                    key: "Location".to_string(),
+                    value: "/users/7".to_string(),
+                    enabled: true,
+                },
+            ],
+            ..Default::default()
+        };
+
+        svc.execute_post_response_script(
+            r#"
+            client.global.set("token", response.body.token);
+            client.global.set("userId", response.body.user.id);
+            client.global.set("location", response.headers.valueOf("location"));
+            client.global.set("missing", response.headers.valueOf("x-nope"));
+            client.global.set("mime", response.contentType.mimeType);
+            client.global.set("charset", response.contentType.charset);
+            client.test("created", function () {
+                client.assert(response.status === 201, "status should be 201");
+            });
+            client.test("fails", function () { client.assert(false, "nope"); });
+            client.global.set("results", __testResults.map(function (t) { return t.status; }));
+            client.global.set("uuid", $random.uuid.length);
+            client.global.set("number", typeof $random.integer(1, 3));
+            client.log("handled", { status: response.status });
+            "#,
+            &jetbrains_request(),
+            &response,
+            &store,
+        )
+        .expect("script should run");
+
+        assert_eq!(store.get_var("token"), Some(json!("abc")));
+        assert_eq!(store.get_var("userId"), Some(json!(7)));
+        assert_eq!(store.get_var("location"), Some(json!("/users/7")));
+        assert_eq!(store.get_var("missing"), Some(json!(null)));
+        assert_eq!(
+            store.get_var("mime"),
+            Some(json!("application/problem+json"))
+        );
+        assert_eq!(store.get_var("charset"), Some(json!("utf-8")));
+        assert_eq!(store.get_var("results"), Some(json!(["pass", "fail"])));
+        assert_eq!(store.get_var("uuid"), Some(json!(36)));
+        assert_eq!(store.get_var("number"), Some(json!("number")));
+    }
+
+    #[test]
+    fn jetbrains_pre_request_script() {
+        let svc = service();
+        let store = VariableStore::new();
+        store.initialize_with_env(
+            &HashMap::from([("client".to_string(), "broquest".to_string())]),
+            &HashMap::new(),
+        );
+        let mut request = jetbrains_request();
+
+        svc.execute_pre_request_script(
+            r#"
+            request.variables.set("id", "42");
+            client.global.set("raw", request.url.getRaw());
+            client.global.set("header", request.headers.findByName("x-client").tryGetSubstitutedValue());
+            client.global.set("env", request.environment.get("client"));
+            client.global.set("method", request.method);
+            "#,
+            &mut request,
+            &store,
+        )
+        .expect("script should run");
+
+        assert_eq!(store.get_var("id"), Some(json!("42")));
+        assert_eq!(
+            store.get_var("raw"),
+            Some(json!("https://example.com/{{id}}"))
+        );
+        assert_eq!(store.get_var("header"), Some(json!("broquest")));
+        assert_eq!(store.get_var("env"), Some(json!("broquest")));
+        assert_eq!(store.get_var("method"), Some(json!("GET")));
+    }
+
+    #[test]
+    fn jetbrains_api_is_only_there_for_its_dialect() {
+        let svc = service();
+        let store = VariableStore::new();
+        let result = svc.execute_pre_request_script(
+            "client.global.set('x', 1);",
+            &mut RequestData::default(),
+            &store,
+        );
+        assert!(result.is_err());
     }
 
     #[test]

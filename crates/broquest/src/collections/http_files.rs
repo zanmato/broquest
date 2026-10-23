@@ -18,7 +18,7 @@ use anyhow::{Context as _, Result};
 
 use super::manager::GroupInfo;
 use super::types::{CollectionMeta, CollectionToml, EnvironmentToml, EnvironmentVariable};
-use crate::domain::{HttpMethod, KeyValuePair, RequestData};
+use crate::domain::{HttpMethod, KeyValuePair, RequestData, ScriptDialect};
 
 /// Folders that never hold a collection's request files.
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "dist", "build", "vendor"];
@@ -186,11 +186,47 @@ fn requests_from_file(
                 headers,
                 body,
                 vars: vars.clone(),
+                pre_request_script: script_text(&request.pre_request_scripts, base_dir),
+                post_response_script: script_text(&request.response_handlers, base_dir),
+                script_dialect: ScriptDialect::JetBrains,
                 ..Default::default()
             },
         );
     }
     requests
+}
+
+/// The code of a request's scripts, read from their files where needed.
+/// Several scripts each get a block of their own.
+fn script_text(scripts: &[http_file::Script], base_dir: &Path) -> Option<String> {
+    let parts: Vec<String> = scripts
+        .iter()
+        .map(|script| match script {
+            http_file::Script::Inline { code, .. } => {
+                code.text.trim_matches(['\n', '\r']).to_string()
+            }
+            http_file::Script::File { path, .. } => {
+                let file = base_dir.join(&path.text);
+                fs::read_to_string(&file).unwrap_or_else(|error| {
+                    tracing::warn!("Could not read script {}: {}", file.display(), error);
+                    format!(
+                        "throw new Error({:?});",
+                        format!("Could not read the script {}", path.text)
+                    )
+                })
+            }
+        })
+        .collect();
+    match parts.as_slice() {
+        [] => None,
+        [only] => Some(only.clone()),
+        many => Some(
+            many.iter()
+                .map(|part| format!("{{\n{part}\n}}"))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        ),
+    }
 }
 
 fn method(method: &str) -> Option<HttpMethod> {
@@ -549,6 +585,70 @@ mod tests {
             .unwrap();
         assert_eq!(response.status_code, Some(200));
         assert_eq!(response.body, "me");
+    }
+
+    #[tokio::test]
+    async fn jetbrains_scripts_run_around_the_request() {
+        use wiremock::matchers::{body_string, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/login"))
+            .and(body_string("nonce=n-42"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(r#"{"token": "abc"}"#, "application/json"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me"))
+            .and(header("authorization", "Bearer abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("me"))
+            .mount(&server)
+            .await;
+
+        let dir = temp_dir();
+        write(
+            &dir,
+            "check.js",
+            "client.test('token', function () { client.assert(response.body.token, 'no token'); });",
+        );
+        let source = format!(
+            "### Log in\n< {{% request.variables.set(\"nonce\", \"n-42\"); %}}\nPOST {uri}/login\n\nnonce={{{{nonce}}}}\n\n> {{%\n  client.global.set(\"token\", response.body.token);\n%}}\n> ./check.js\n\n### Me\nGET {uri}/me\nAuthorization: Bearer {{{{token}}}}\n",
+            uri = server.uri()
+        );
+        let requests = requests_from_file(&source, "auth.http", &dir);
+        let request = |name: &str| {
+            requests
+                .values()
+                .find(|request| request.name == name)
+                .unwrap()
+                .clone()
+        };
+        let login = request("Log in");
+        assert_eq!(login.script_dialect, ScriptDialect::JetBrains);
+        // Both handlers, the inline one and the one read from check.js.
+        let handlers = login.post_response_script.as_deref().unwrap();
+        assert!(handlers.contains("client.global.set") && handlers.contains("client.test"));
+
+        let client = crate::http::HttpClientService::new(30).unwrap();
+        let (response, store) = client
+            .send_request(login, None, None, None, None)
+            .await
+            .unwrap_or_else(|error| panic!("{}", error.details));
+        assert_eq!(response.status_code, Some(200), "{}", response.body);
+
+        assert_eq!(store.get_var("token"), Some(serde_json::json!("abc")));
+
+        // The editor carries the session variables on to the next request.
+        let (response, _) = client
+            .send_request(request("Me"), None, None, Some(store.get_all_vars()), None)
+            .await
+            .unwrap();
+        assert_eq!(response.body, "me");
+
+        fs::remove_dir_all(dir).ok();
     }
 
     #[test]

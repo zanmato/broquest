@@ -659,6 +659,7 @@ fn oc_item_to_request(item: &OcItem) -> Option<RequestData> {
         post_response_script,
         auth,
         vars: vars_from_runtime(item.runtime.as_ref()),
+        script_dialect: Default::default(),
     })
 }
 
