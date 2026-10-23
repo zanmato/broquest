@@ -154,3 +154,75 @@ async fn a_request_can_choose_its_own_accept_encoding() {
         .count();
     assert_eq!(accept_encodings, 1);
 }
+
+fn urlencoded_post(url: String, body: &str) -> RequestData {
+    RequestData {
+        method: HttpMethod::Post,
+        url,
+        headers: vec![KeyValuePair {
+            key: "Content-Type".to_string(),
+            value: "application/x-www-form-urlencoded".to_string(),
+            enabled: true,
+        }],
+        body: body.to_string(),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn urlencoded_bodies_with_an_at_sign_stay_urlencoded() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/signup"))
+        .and(header("content-type", "application/x-www-form-urlencoded"))
+        .and(wiremock::matchers::body_string(
+            "email=a@b.com&name=kestrel",
+        ))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let client = HttpClientService::new(30).unwrap();
+
+    let request = urlencoded_post(
+        format!("{}/signup", server.uri()),
+        "email=a@b.com&name=kestrel",
+    );
+    let (response, _) = client
+        .send_request(request, None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(response.status_code, Some(200));
+}
+
+#[tokio::test]
+async fn urlencoded_file_fields_still_upload_as_multipart() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/upload"))
+        .and(wiremock::matchers::body_string_contains("label-contents"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let file = std::env::temp_dir().join(format!("broquest-upload-{}.txt", std::process::id()));
+    std::fs::write(&file, "label-contents").unwrap();
+    let client = HttpClientService::new(30).unwrap();
+
+    let request = urlencoded_post(
+        format!("{}/upload", server.uri()),
+        &format!("label=@{}&note=hi", file.display()),
+    );
+    let (response, _) = client
+        .send_request(request, None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(response.status_code, Some(200));
+    let received = server.received_requests().await.unwrap();
+    let content_type = received[0].headers.get("content-type").unwrap();
+    assert!(
+        content_type
+            .to_str()
+            .unwrap()
+            .starts_with("multipart/form-data")
+    );
+    std::fs::remove_file(file).ok();
+}

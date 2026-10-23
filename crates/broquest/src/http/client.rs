@@ -597,9 +597,21 @@ impl HttpClientService {
 
         let mut request_headers: Vec<KeyValuePair> = Vec::new();
 
+        // A form with file fields goes out as multipart, which sets its own
+        // Content-Type with the boundary.
+        let multipart_form = request_data.http_file.is_none()
+            && request_data.headers.iter().any(|h| {
+                h.enabled
+                    && h.key.eq_ignore_ascii_case("content-type")
+                    && h.value == "application/x-www-form-urlencoded"
+            })
+            && has_file_fields(request_data);
+
         // Add headers
         for header in &request_data.headers {
-            if header.enabled {
+            if header.enabled
+                && !(multipart_form && header.key.eq_ignore_ascii_case("content-type"))
+            {
                 request = request.header(&header.key, &header.value);
                 request_headers.push(header.clone());
             }
@@ -665,8 +677,7 @@ impl HttpClientService {
         if request_data.headers.iter().any(|h| {
             h.key.to_lowercase() == "content-type" && h.value == "application/x-www-form-urlencoded"
         }) {
-            // Check if body contains file references (paths starting with @)
-            if request_data.body.contains('@') {
+            if has_file_fields(request_data) {
                 let mut form = reqwest::multipart::Form::new();
 
                 for pair in request_data.body.split('&') {
@@ -954,6 +965,15 @@ impl HttpClientService {
 
         (request, headers)
     }
+}
+
+/// Whether a urlencoded body has file fields (`name=@path`), which are sent
+/// as multipart. An `@` elsewhere, as in `email=a@b.com`, is plain data.
+fn has_file_fields(request_data: &RequestData) -> bool {
+    request_data.body.split('&').any(|pair| {
+        pair.split_once('=')
+            .is_some_and(|(_, value)| value.starts_with('@'))
+    })
 }
 
 /// Write a response body to `path`. Without `overwrite`, an existing file is
