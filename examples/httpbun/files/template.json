@@ -1,0 +1,5 @@
+{
+  "sentBy": "{{user}}",
+  "requestId": "{{$guid}}",
+  "sentAt": "{{$isoTimestamp}}"
+}

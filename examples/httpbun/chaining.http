@@ -1,0 +1,41 @@
+# Using one response in the next request. Send them in order.
+
+### VS Code style: send "login" first
+# @name login
+POST {{baseUrl}}/any
+Content-Type: application/json
+
+{"token": "vs-code-{{$nanoid 8}}"}
+
+### Uses the token from the last "login" response
+GET {{baseUrl}}/bearer/{{login.response.body.$.json.token}}
+Authorization: Bearer {{login.response.body.$.json.token}}
+X-From-Header: {{login.response.headers.Content-Type}}
+
+### JetBrains style: a response handler stores the token
+POST {{baseUrl}}/any
+Content-Type: application/json
+
+{"token": "jetbrains-{{$nanoid 8}}"}
+
+> {%
+    client.global.set("jbToken", response.body.json.token);
+    client.test("token came back", function () {
+        client.assert(response.body.json.token, "no token in the response");
+    });
+%}
+
+### Uses the stored token
+GET {{baseUrl}}/bearer/{{jbToken}}
+Authorization: Bearer {{jbToken}}
+
+> ./scripts/check-status.js
+
+### Pre-request script sets a variable the body uses
+< {%
+    request.variables.set("parcelId", "KS-" + $random.integer(10000, 99999));
+%}
+POST {{baseUrl}}/post
+Content-Type: application/json
+
+{"parcel": "{{parcelId}}"}

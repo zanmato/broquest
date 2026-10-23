@@ -1,0 +1,26 @@
+# Authorization headers, with the VS Code shorthands. user and password come
+# from the env files.
+
+### Basic, user:password shorthand
+GET {{baseUrl}}/basic-auth/{{user}}/{{password}}
+Authorization: Basic {{user}}:{{password}}
+
+### Basic, user password shorthand
+GET {{baseUrl}}/basic-auth/scott/tiger
+Authorization: Basic scott tiger
+
+### Basic with a wrong password, expect 401
+GET {{baseUrl}}/basic-auth/scott/tiger
+Authorization: Basic scott lion
+
+### Digest shorthand
+GET {{baseUrl}}/digest-auth/auth/scott/tiger
+Authorization: Digest scott tiger
+
+### Bearer token from the private env file
+GET {{baseUrl}}/bearer/{{token}}
+Authorization: Bearer {{token}}
+
+### API key from .env
+GET {{baseUrl}}/headers
+X-Api-Key: {{$dotenv API_KEY}}

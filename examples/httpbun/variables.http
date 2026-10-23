@@ -1,0 +1,36 @@
+# File variables, variables inside variables and built in variables.
+
+@shipments = {{baseUrl}}/any/{{apiVersion}}/shipments
+@reference = ORDER-20871
+@search = {{shipments}}?reference={{reference}}
+
+### Variables built from other variables
+GET {{search}}
+
+### Built in variables
+POST {{baseUrl}}/post
+Content-Type: application/json
+X-Request-Id: {{$guid}}
+
+{
+  "uuid": "{{$uuid}}",
+  "nanoid": "{{$nanoid 10}}",
+  "now": "{{$timestamp}}",
+  "nowMs": "{{$timestampMs}}",
+  "yesterday": "{{$timestamp -1 d}}",
+  "iso": "{{$isoTimestamp}}",
+  "utc": "{{$datetime iso8601}}",
+  "rfc1123": "{{$datetime rfc1123}}",
+  "local": "{{$localDatetime 'YYYY-MM-DD HH:mm'}}",
+  "nextWeek": "{{$date 1 w}}",
+  "today": "{{$today}}",
+  "dice": "{{$randomInt 1 7}}",
+  "jetbrainsDice": "{{$random.integer(1, 7)}}",
+  "zip": "{{$randomZipCode}}",
+  "digits": "{{$randomDigits 4}}",
+  "hex": "{{$random.hexadecimal(8)}}",
+  "name": "{{$randomFullName}}",
+  "email": "{{$randomEmail}}",
+  "home": "{{$processEnv HOME}}",
+  "apiKey": "{{$dotenv API_KEY}}"
+}

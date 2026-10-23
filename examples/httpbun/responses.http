@@ -1,0 +1,18 @@
+# Response handling.
+
+### Compressed: the status bar shows both sizes
+GET {{baseUrl}}/html
+
+### Ask for zstd only
+GET {{baseUrl}}/get
+Accept-Encoding: zstd
+
+### No compression
+GET {{baseUrl}}/get
+Accept-Encoding: identity
+
+### Binary
+GET {{baseUrl}}/bytes/64
+
+### Slow, cancel it from the send button
+GET {{baseUrl}}/delay/5

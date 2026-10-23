@@ -1,0 +1,49 @@
+# Request bodies. httpbun echoes form fields and files back.
+
+### Urlencoded form with an @ in a value
+POST {{baseUrl}}/post
+Content-Type: application/x-www-form-urlencoded
+
+email=parcels@example.com&name=Ann+Lee&city=Ume%C3%A5
+
+### Whole body from a file
+POST {{baseUrl}}/post
+Content-Type: application/json
+
+< ./files/shipment.json
+
+### Body from a file with its variables filled in
+POST {{baseUrl}}/post
+Content-Type: application/json
+
+<@ ./files/template.json
+
+### Multipart with a text field and a file
+POST {{baseUrl}}/post
+Content-Type: multipart/form-data; boundary=ParcelBoundary
+
+--ParcelBoundary
+Content-Disposition: form-data; name="description"
+
+A parcel label
+--ParcelBoundary
+Content-Disposition: form-data; name="label"; filename="label.txt"
+Content-Type: text/plain
+
+< ./files/label.txt
+--ParcelBoundary--
+
+### XML
+POST {{baseUrl}}/post
+Content-Type: application/xml
+
+<shipment reference="ORDER-20871">
+  <carrier>postnord</carrier>
+</shipment>
+
+### Plain text, comment lines in a body are sent as they are
+POST {{baseUrl}}/post
+Content-Type: text/plain
+
+# This line is part of the body
+Parcel picked up at 14:05

@@ -1,0 +1,35 @@
+# Directives before the request line.
+
+### Asks for a value before sending
+# @prompt code A status code, like 418 or 503
+GET {{baseUrl}}/status/{{code}}
+
+### Asks for confirmation
+# @note This would cancel a real shipment
+DELETE {{baseUrl}}/delete
+
+### Masked prompt for a password
+# @prompt password Your password, scott's is tiger
+GET {{baseUrl}}/basic-auth/scott/{{password}}
+Authorization: Basic scott:{{password}}
+
+### Redirect followed, expect 200 from /get
+GET {{baseUrl}}/redirect-to?url=/get
+
+### Redirect not followed, expect 302
+# @no-redirect
+GET {{baseUrl}}/redirect-to?url=/get
+
+### Times out after one second
+# @timeout 1s
+GET {{baseUrl}}/delay/3
+
+### Left out of the history
+# @no-log
+GET {{baseUrl}}/get?private=true
+
+### Saves the response next to this file
+GET {{baseUrl}}/get?saved=true
+
+>> ./out/response.json
+>>! ./out/latest.json

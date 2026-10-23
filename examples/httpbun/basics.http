@@ -1,0 +1,53 @@
+# Methods, URLs and headers. Pick the "httpbun" environment first.
+
+### Plain GET with a query
+GET {{baseUrl}}/get?carrier=postnord&limit=4
+Accept: application/json
+
+### No method means GET
+{{baseUrl}}/get
+
+### Query split over lines (JetBrains and VS Code styles)
+GET {{baseUrl}}/get
+    ?status=in_transit
+    &destination=SE
+&sort=desc
+
+### Header continued on the next line
+GET {{baseUrl}}/headers
+Accept: application/json,
+    text/plain
+X-Shipment-Note: fragile
+
+### POST JSON
+POST {{baseUrl}}/post
+Content-Type: application/json
+
+{
+  "reference": "ORDER-208712",
+  "weight_kg": 2.4
+}
+
+### PUT
+PUT {{baseUrl}}/put
+Content-Type: application/json
+
+{"status": "delivered"}
+
+### PATCH
+PATCH {{baseUrl}}/patch
+Content-Type: application/json
+
+{"weight_kg": 2.6}
+
+### DELETE
+DELETE {{baseUrl}}/delete
+
+### HEAD, no body in the response
+HEAD {{baseUrl}}/any
+
+### Status codes
+GET {{baseUrl}}/status/418
+
+### With an HTTP version on the request line
+GET {{baseUrl}}/get HTTP/1.1
