@@ -244,7 +244,7 @@ impl CollectionManager {
     }
 
     /// Build a `CollectionInfo` for a folder of `.http` files.
-    fn build_http_info(dir: &Path, mut data: CollectionData) -> Result<CollectionInfo> {
+    pub(crate) fn build_http_info(dir: &Path, mut data: CollectionData) -> Result<CollectionInfo> {
         let loaded = super::http_files::load(dir)?;
         data.name = loaded.toml.collection.name.clone();
         data.format = CollectionFormat::Http.as_db_str().to_string();
@@ -579,13 +579,6 @@ impl CollectionManager {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let now = chrono::Utc::now();
-
-        if let Some(info) = self.collections.get(path)
-            && info.format == CollectionFormat::Http
-        {
-            // Refuse before touching the in-memory model.
-            return storage_for(info.format).save_collection(info);
-        }
 
         // Update the in-memory model in place (preserving requests, groups,
         // runtime vars, and OpenCollection sources) or create a fresh native

@@ -19,7 +19,8 @@ use anyhow::{Context as _, Result};
 use super::manager::GroupInfo;
 use super::types::{CollectionMeta, CollectionToml, EnvironmentToml, EnvironmentVariable};
 use crate::domain::{
-    HttpFileOptions, HttpMethod, KeyValuePair, Prompt, RequestData, ResponseFile, ScriptDialect,
+    HttpFileOptions, HttpMethod, HttpSource, KeyValuePair, Prompt, RequestData, ResponseFile,
+    ScriptDialect,
 };
 
 /// Folders that never hold a collection's request files.
@@ -136,26 +137,18 @@ fn requests_from_file(
         .collect();
 
     let mut requests = HashMap::new();
-    let mut taken: Vec<String> = Vec::new();
+    let names = request_names(&file);
     for (index, block) in file.blocks.iter().enumerate() {
         let Some(request) = &block.request else {
             continue;
         };
-        let Some(method) = method(request.method()) else {
+        let (Some(method), Some(name)) = (method(request.method()), names[index].clone()) else {
             tracing::warn!(
                 "{relative_path}: skipping {} request, the method is not supported",
                 request.method()
             );
             continue;
         };
-
-        let base_name = request
-            .name()
-            .map(str::to_string)
-            .or_else(|| block.title.as_ref().map(|title| title.text.clone()))
-            .unwrap_or_else(|| format!("{} {}", request.method(), request.url()));
-        let name = unique_name(&base_name, &taken);
-        taken.push(name.clone());
 
         let headers = request
             .headers
@@ -178,7 +171,7 @@ fn requests_from_file(
         requests.insert(
             format!("{relative_path}#{index}"),
             RequestData {
-                name,
+                name: name.clone(),
                 method,
                 url,
                 query_params,
@@ -188,12 +181,40 @@ fn requests_from_file(
                 pre_request_script: script_text(&request.pre_request_scripts, base_dir),
                 post_response_script: script_text(&request.response_handlers, base_dir),
                 script_dialect: ScriptDialect::JetBrains,
-                http_file: Some(options(request, base_dir, relative_path)),
+                http_file: Some(HttpFileOptions {
+                    source: Some(HttpSource {
+                        file: relative_path.to_string(),
+                        name: name.clone(),
+                    }),
+                    ..options(request, base_dir, relative_path)
+                }),
                 ..Default::default()
             },
         );
     }
     requests
+}
+
+/// The name of each block's request, `None` for blocks without a request
+/// broquest can send. The `@name`, else the `###` title, else `METHOD url`,
+/// numbered when a name repeats.
+pub(crate) fn request_names(file: &http_file::HttpFile) -> Vec<Option<String>> {
+    let mut taken: Vec<String> = Vec::new();
+    file.blocks
+        .iter()
+        .map(|block| {
+            let request = block.request.as_ref()?;
+            method(request.method())?;
+            let base = request
+                .name()
+                .map(str::to_string)
+                .or_else(|| block.title.as_ref().map(|title| title.text.clone()))
+                .unwrap_or_else(|| format!("{} {}", request.method(), request.url()));
+            let name = unique_name(&base, &taken);
+            taken.push(name.clone());
+            Some(name)
+        })
+        .collect()
 }
 
 /// The request's `.http` options, from its directives.
@@ -306,6 +327,12 @@ fn unique_name(base: &str, taken: &[String]) -> String {
         .unwrap_or_default()
 }
 
+/// Whether the VS Code settings in `dir` define environments.
+pub(crate) fn has_vscode_environments(dir: &Path) -> bool {
+    read_json(&dir.join(".vscode/settings.json"))
+        .is_some_and(|settings| settings.get("rest-client.environmentVariables").is_some())
+}
+
 /// Environments from the JetBrains env files and the VS Code settings.
 fn environments(dir: &Path) -> Vec<EnvironmentToml> {
     let mut envs: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
@@ -355,7 +382,7 @@ fn plain_variable(value: &str) -> EnvironmentVariable {
     }
 }
 
-fn json_to_string(value: &serde_json::Value) -> String {
+pub(crate) fn json_to_string(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(text) => text.clone(),
         serde_json::Value::Null => String::new(),
@@ -373,7 +400,7 @@ fn read_json(path: &Path) -> Option<serde_json::Value> {
 }
 
 /// Remove `//` and `/* */` comments and trailing commas, outside strings.
-fn strip_jsonc(text: &str) -> String {
+pub(crate) fn strip_jsonc(text: &str) -> String {
     remove_trailing_commas(&remove_comments(text))
 }
 

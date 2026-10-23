@@ -761,8 +761,11 @@ impl RequestEditor {
         data.vars = vars;
 
         // Set Content-Type header from the dropdown only if the user hasn't set one
-        // in the headers editor.
-        if let Some(selected_content_type) = self.content_type_select.read(cx).selected_value() {
+        // in the headers editor. A request from a .http file sends the headers
+        // its file has.
+        if data.http_file.is_none()
+            && let Some(selected_content_type) = self.content_type_select.read(cx).selected_value()
+        {
             let has_content_type = data
                 .headers
                 .iter()
@@ -1415,6 +1418,39 @@ impl RequestEditor {
         Some(vars)
     }
 
+    /// After saving into a `.http` file, take on where the request is now
+    /// stored, so the next save updates it instead of adding it again.
+    fn adopt_http_source(
+        &mut self,
+        collection_path: &str,
+        name: &str,
+        request_data: &mut RequestData,
+        cx: &App,
+    ) {
+        let manager = CollectionManager::global(cx).read(cx);
+        let Some(info) = manager.get_collection_by_path(collection_path) else {
+            return;
+        };
+        if info.format != crate::collections::CollectionFormat::Http {
+            return;
+        }
+        let file = request_data
+            .http_file
+            .as_ref()
+            .and_then(|options| options.source.as_ref())
+            .map(|source| source.file.clone())
+            .or_else(|| self.group_path.clone())
+            .unwrap_or_else(|| crate::collections::HTTP_DEFAULT_FILE.to_string());
+        let Some(saved) = manager.find_request(collection_path, Some(&file), name) else {
+            return;
+        };
+        request_data.http_file = saved.http_file.clone();
+        request_data.script_dialect = saved.script_dialect;
+        self.request_data.http_file = saved.http_file.clone();
+        self.request_data.script_dialect = saved.script_dialect;
+        self.group_path = Some(file);
+    }
+
     pub fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Get current request data
         let request_data = self.get_request_data(cx);
@@ -1426,13 +1462,13 @@ impl RequestEditor {
             request_data.name.clone()
         };
 
-        if let Some(ref collection_path) = self.collection_path {
+        if let Some(collection_path) = self.collection_path.clone() {
             // Persist the request through the CollectionManager entity.
             let group_path_ref = self.group_path.as_deref();
             let manager = CollectionManager::global(cx);
             let save_result = manager.update(cx, |collection_manager, cx| {
                 collection_manager.save_request(
-                    collection_path,
+                    &collection_path,
                     &request_data,
                     &request_name,
                     group_path_ref,
@@ -1443,6 +1479,8 @@ impl RequestEditor {
             match save_result {
                 Ok(()) => {
                     tracing::info!("Request saved successfully");
+                    let mut request_data = request_data;
+                    self.adopt_http_source(&collection_path, &request_name, &mut request_data, cx);
                     // Reset dirty state after successful save
                     self.original_request_data = Some(request_data);
                     self._was_dirty = false;

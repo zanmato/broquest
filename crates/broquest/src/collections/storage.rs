@@ -70,51 +70,55 @@ pub(crate) fn storage_for(format: CollectionFormat) -> &'static dyn CollectionSt
     }
 }
 
-// -- .http files, read-only -------------------------------------------------
+// -- .http files -------------------------------------------------------------
 
-/// Folders of `.http` files are read-only for now, so every change is
-/// refused with a message saying so.
+/// A folder of `.http` files. Requests are written back into their files.
 pub(crate) struct HttpFileStorage;
 
-fn read_only<T>() -> Result<T> {
-    Err(anyhow::anyhow!(
-        "Collections of .http files are read-only for now, so changes can't be saved"
-    ))
-}
-
 impl CollectionStorage for HttpFileStorage {
-    fn save_collection(&self, _: &CollectionInfo) -> Result<()> {
-        read_only()
+    fn save_collection(&self, info: &CollectionInfo) -> Result<()> {
+        // Only environments have a place in a folder of .http files.
+        super::http_save::save_environments(info)
     }
 
     fn save_request(
         &self,
-        _: &mut CollectionInfo,
-        _: &RequestData,
-        _: &str,
-        _: Option<&str>,
+        info: &mut CollectionInfo,
+        request_data: &RequestData,
+        request_name: &str,
+        group_path: Option<&str>,
     ) -> Result<()> {
-        read_only()
+        super::http_save::save_request(info, request_data, request_name, group_path)
     }
 
-    fn delete_request(&self, _: &mut CollectionInfo, _: &RequestData) -> Result<()> {
-        read_only()
+    fn delete_request(&self, info: &mut CollectionInfo, request_data: &RequestData) -> Result<()> {
+        super::http_save::delete_request(info, request_data)
     }
 
-    fn move_request(&self, _: &mut CollectionInfo, _: &RequestData, _: Option<&str>) -> Result<()> {
-        read_only()
+    fn move_request(
+        &self,
+        info: &mut CollectionInfo,
+        request_data: &RequestData,
+        target_group_path: Option<&str>,
+    ) -> Result<()> {
+        super::http_save::move_request(info, request_data, target_group_path)
     }
 
-    fn create_group(&self, _: &mut CollectionInfo, _: &str) -> Result<()> {
-        read_only()
+    fn create_group(&self, info: &mut CollectionInfo, group_name: &str) -> Result<()> {
+        super::http_save::create_group(info, group_name)
     }
 
-    fn rename_group(&self, _: &mut CollectionInfo, _: &str, _: &str) -> Result<()> {
-        read_only()
+    fn rename_group(
+        &self,
+        info: &mut CollectionInfo,
+        old_group_name: &str,
+        new_group_name: &str,
+    ) -> Result<()> {
+        super::http_save::rename_group(info, old_group_name, new_group_name)
     }
 
-    fn delete_group(&self, _: &mut CollectionInfo, _: &str) -> Result<()> {
-        read_only()
+    fn delete_group(&self, info: &mut CollectionInfo, group_name: &str) -> Result<()> {
+        super::http_save::delete_group(info, group_name)
     }
 }
 

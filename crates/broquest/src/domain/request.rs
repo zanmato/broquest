@@ -92,6 +92,18 @@ pub struct HttpFileOptions {
     pub prompts: Vec<Prompt>,
     /// `>> path` and `>>! path`: files to save the response body to.
     pub response_files: Vec<ResponseFile>,
+    /// Where the request is stored. `None` for a request not saved yet, or a
+    /// duplicate, which is saved as a new request.
+    pub source: Option<HttpSource>,
+}
+
+/// Where a request of a `.http` file is stored.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HttpSource {
+    /// The file, relative to the collection folder.
+    pub file: String,
+    /// The request's name in that file when it was loaded.
+    pub name: String,
 }
 
 /// `>> path` saves the response body next to an existing file of the same

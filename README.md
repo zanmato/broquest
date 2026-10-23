@@ -84,8 +84,16 @@ folder. Authorization headers can use the VS Code shorthands `Basic user:passwor
 `Basic user password` and `Digest user password`.
 
 The collection reloads when its files change, so edits made in another
-editor show up right away. These collections are read-only for now. Requests
-can be edited and sent, but not saved.
+editor show up right away.
+
+Saving writes requests back into their files, changing only what was
+edited, so comments, blank lines and the rest of the file stay as they
+were. New requests are added at the end of their file, and groups are
+files: creating, renaming or deleting a group does the same to its file.
+Basic, Digest and API key auth are saved as headers. Environments are saved
+to `http-client.env.json`, with values that came from
+`http-client.private.env.json` kept there. Environments that come from
+`.vscode/settings.json` can't be saved yet.
 
 ## Built in variables
 

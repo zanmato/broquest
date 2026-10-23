@@ -632,25 +632,15 @@ impl CollectionEditor {
             return;
         }
 
+        // An existing collection keeps its format.
         let existing_format = CollectionManager::global(cx)
             .read(cx)
             .get_collection_by_path(&current_path)
             .map(|info| info.format);
-        if existing_format == Some(super::CollectionFormat::Http) {
-            window.push_notification(
-                (
-                    NotificationType::Info,
-                    "Collections of .http files are read-only for now, so changes can't be saved",
-                ),
-                cx,
-            );
-            return;
-        }
-
-        let format = if self.use_opencollection {
-            super::CollectionFormat::OpenCollection
-        } else {
-            super::CollectionFormat::Broquest
+        let format = match existing_format {
+            Some(super::CollectionFormat::Http) => super::CollectionFormat::Http,
+            _ if self.use_opencollection => super::CollectionFormat::OpenCollection,
+            _ => super::CollectionFormat::Broquest,
         };
 
         // Save to database first to get proper ID

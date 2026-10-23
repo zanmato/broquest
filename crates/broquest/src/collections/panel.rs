@@ -835,6 +835,10 @@ impl CollectionsPanel {
         // Requests are stored as `<name>.toml`, so the copy needs a name of its
         // own or the first save would overwrite the original.
         request_data.name = self.unique_request_name(&request_data.name, &metadata);
+        // A duplicate is a new request in its .http file, not the original.
+        if let Some(options) = request_data.http_file.as_mut() {
+            options.source = None;
+        }
 
         tracing::info!("Duplicating request as: {}", request_data.name);
 
