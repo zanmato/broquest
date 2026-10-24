@@ -36,6 +36,10 @@ actions!(collections_panel, [RenameItem, DuplicateItem]);
 /// The key context of the collections tree, where its shortcuts apply.
 pub(crate) const TREE_CONTEXT: &str = crate::ui::draggable_tree::CONTEXT;
 
+/// How far the rename field's text sits inside its box: an extra-small
+/// input's padding and its border.
+const RENAME_FIELD_INSET: gpui::Pixels = px(5.);
+
 /// A request or group being renamed in place.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenameTarget {
@@ -152,10 +156,32 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                         this.child(MethodBadge::new(method).fixed_width())
                     })
                     .child(match rename_input {
+                        // The field is laid over the hidden label, so the row
+                        // keeps its height and nothing in it moves. It is taller
+                        // than the label and overflows it evenly, and it starts
+                        // its padding and border to the left so the name stays
+                        // where it was.
                         Some(input) => div()
                             .flex_1()
                             .min_w_0()
-                            .child(Input::new(&input).xsmall())
+                            .relative()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .truncate()
+                                    .invisible()
+                                    .child(item.label.clone()),
+                            )
+                            .child(
+                                h_flex()
+                                    .absolute()
+                                    .top_0()
+                                    .bottom_0()
+                                    .left(-RENAME_FIELD_INSET)
+                                    .right_0()
+                                    .items_center()
+                                    .child(Input::new(&input).xsmall()),
+                            )
                             .into_any_element(),
                         None => div()
                             .flex_1()
