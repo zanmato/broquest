@@ -100,6 +100,25 @@ impl GroupEditor {
     }
 
     /// Get the name input entity for external subscriptions
+    /// Take the group's new name after it was renamed elsewhere, such as in
+    /// the sidebar. Returns whether this editor is of that group.
+    pub fn follow_rename(
+        &mut self,
+        old_name: &str,
+        new_name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.group_name.as_deref() != Some(old_name) {
+            return false;
+        }
+        self.group_name = Some(new_name.to_string());
+        self.name_input.update(cx, |input, cx| {
+            input.set_value(new_name.to_string(), window, cx);
+        });
+        true
+    }
+
     pub fn name_input(&self) -> &Entity<InputState> {
         &self.name_input
     }

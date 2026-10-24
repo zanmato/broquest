@@ -65,10 +65,6 @@ pub enum AppEvent {
     CollectionDeleted {
         collection_path: SharedString,
     },
-    NewRequest {
-        collection_path: SharedString,
-        group_path: Option<SharedString>,
-    },
     GroupCreated {
         collection_path: SharedString,
         group_name: SharedString,

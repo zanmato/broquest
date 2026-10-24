@@ -1,13 +1,14 @@
 use gpui::SharedString;
 use gpui::{
-    App, AppContext, ClickEvent, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
-    px,
+    App, AppContext, ClickEvent, Context, Entity, EventEmitter, Focusable as _, InteractiveElement,
+    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window,
+    actions, div, prelude::FluentBuilder, px,
 };
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
+    input::{Input, InputEvent, InputState},
     list::ListItem,
     menu::PopupMenuItem,
     notification::NotificationType,
@@ -30,6 +31,40 @@ use crate::ui::draggable_tree::{
     InsertPosition, TreeEntry, TreeItem,
 };
 
+actions!(collections_panel, [RenameItem, DuplicateItem]);
+
+/// The key context of the collections tree, where its shortcuts apply.
+pub(crate) const TREE_CONTEXT: &str = crate::ui::draggable_tree::CONTEXT;
+
+/// A request or group being renamed in place.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenameTarget {
+    pub kind: TreeItemKind,
+    pub collection_path: String,
+    /// The group's path for a group, or the path of the group a request is
+    /// in.
+    pub group_path: Option<String>,
+    pub name: String,
+}
+
+impl RenameTarget {
+    fn of(metadata: &TreeItemMetadata) -> Self {
+        Self {
+            kind: metadata.kind,
+            collection_path: metadata.collection_path.clone(),
+            group_path: metadata.group_path.clone(),
+            name: metadata.name.clone(),
+        }
+    }
+}
+
+/// The name field shown in place of an item's label while it is renamed.
+struct Renaming {
+    target: RenameTarget,
+    input: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
+}
+
 /// Icon and color combination for tree items
 #[derive(Clone)]
 pub struct TreeItemIcon {
@@ -47,6 +82,7 @@ pub struct CollectionsPanel {
     restored_expanded_ids: HashSet<SharedString>,
     /// A collection to reveal once the tree holds it.
     pending_reveal: Option<String>,
+    renaming: Option<Renaming>,
 }
 
 struct CollectionsTreeDelegate {
@@ -93,6 +129,7 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
         let format = connections_panel
             .get_tree_item_metadata(&item.id)
             .and_then(|metadata| metadata.format);
+        let rename_input = connections_panel.rename_input(&item.id);
 
         ListItem::new(ix)
             .selected(selected)
@@ -114,16 +151,22 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                     .when_some(tree_item_icon.method, |this, method| {
                         this.child(MethodBadge::new(method).fixed_width())
                     })
-                    .child(
-                        div()
+                    .child(match rename_input {
+                        Some(input) => div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Input::new(&input).xsmall())
+                            .into_any_element(),
+                        None => div()
                             .flex_1()
                             .text_sm()
                             // Never wraps: text less than a pixel too wide is
                             // not truncated, and would wrap its last
                             // character onto a second line instead.
                             .truncate()
-                            .child(item.label.clone()),
-                    )
+                            .child(item.label.clone())
+                            .into_any_element(),
+                    })
                     .when_some(
                         format.and_then(|format| Some((format, format.tag()?))),
                         |this, (format, tag)| {
@@ -163,6 +206,10 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
             .on_click(window.listener_for(&self.parent, {
                 let item = entry.item().clone();
                 move |this: &mut CollectionsPanel, event: &ClickEvent, _window, cx| {
+                    // Clicks in the name field place the caret, and open nothing.
+                    if this.rename_input(&item.id).is_some() {
+                        return;
+                    }
                     if event.click_count() == 2 {
                         // Double-click, open in tab
                         if let Some(metadata) = this.get_tree_item_metadata(&item.id) {
@@ -240,8 +287,8 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                             &self.parent,
                             {
                                 let collection_path = metadata.collection_path.clone();
-                                move |this, _, _, cx| {
-                                    this.new_request_tab(&collection_path, cx);
+                                move |this, _, window, cx| {
+                                    this.new_request(&collection_path, None, window, cx);
                                 }
                             },
                         )),
@@ -271,13 +318,14 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                         )),
                     ),
                 TreeItemKind::Request => menu
+                    .item(rename_item(&self.parent, metadata, window))
                     .item(
                         PopupMenuItem::new("Duplicate").on_click(window.listener_for(
                             &self.parent,
                             {
                                 let request_id_to_duplicate = item.id.clone();
-                                move |this, _, _, cx| {
-                                    this.duplicate_request(&request_id_to_duplicate, cx);
+                                move |this, _, window, cx| {
+                                    this.duplicate_request(&request_id_to_duplicate, window, cx);
                                 }
                             },
                         )),
@@ -306,17 +354,19 @@ impl DraggableTreeDelegate for CollectionsTreeDelegate {
                             &self.parent,
                             {
                                 let collection_path = metadata.collection_path.clone();
-                                let group_path = metadata.group_path.clone().unwrap_or_default();
-                                move |this, _, _, cx| {
-                                    this.new_request_in_group_tab(
+                                let group_path = metadata.group_path.clone();
+                                move |this, _, window, cx| {
+                                    this.new_request(
                                         &collection_path,
-                                        &group_path,
+                                        group_path.as_deref(),
+                                        window,
                                         cx,
                                     );
                                 }
                             },
                         )),
                     )
+                    .item(rename_item(&self.parent, metadata, window))
                     .separator()
                     .item(
                         PopupMenuItem::new("Delete Group").on_click(window.listener_for(
@@ -528,6 +578,7 @@ impl CollectionsPanel {
             request_data_map: HashMap::new(),
             restored_expanded_ids: HashSet::new(),
             pending_reveal: None,
+            renaming: None,
         }
     }
 
@@ -642,7 +693,7 @@ impl CollectionsPanel {
 
             // Add direct collection requests (root level)
             let mut sorted_requests: Vec<_> = collection_info.requests.iter().collect();
-            sorted_requests.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+            sorted_requests.sort_by_key(|(_, request)| request.name.to_lowercase());
 
             for (index, (_file_path, request)) in sorted_requests.into_iter().enumerate() {
                 let request_id = format!("request_{}_{}", collection_path.replace('/', "_"), index);
@@ -671,7 +722,7 @@ impl CollectionsPanel {
 
             // Add group folders and their requests
             let mut sorted_groups: Vec<_> = collection_info.groups.iter().collect();
-            sorted_groups.sort_by(|a, b| a.0.cmp(b.0));
+            sorted_groups.sort_by_key(|(name, _)| name.to_lowercase());
 
             for (group_name, group_info) in sorted_groups {
                 let group_id =
@@ -679,7 +730,7 @@ impl CollectionsPanel {
 
                 // Build child items for group requests
                 let mut sorted_group_requests: Vec<_> = group_info.requests.iter().collect();
-                sorted_group_requests.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+                sorted_group_requests.sort_by_key(|(_, request)| request.name.to_lowercase());
 
                 let mut group_child_items = Vec::new();
                 for (index, (_file_path, request)) in sorted_group_requests.into_iter().enumerate()
@@ -848,91 +899,367 @@ impl CollectionsPanel {
         });
     }
 
-    /// Create a new request tab for a collection
-    fn new_request_tab(&mut self, collection_path: &str, cx: &mut Context<Self>) {
-        tracing::info!(
-            "Creating new request tab for collection_path: {}",
-            collection_path
-        );
-
-        // Emit NewRequest event to create the new request tab
-        cx.emit(AppEvent::NewRequest {
-            collection_path: collection_path.to_string().into(),
-            group_path: None,
-        });
-    }
-
-    /// Create a new request tab for a specific group
-    fn new_request_in_group_tab(
+    /// Add a request named "New Request" (or "New Request 2" and so on) to
+    /// the collection or group, open it, and start renaming it.
+    fn new_request(
         &mut self,
         collection_path: &str,
-        group_path: &str,
+        group_path: Option<&str>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        tracing::info!(
-            "Creating new request tab for collection_path: {} in group: {}",
-            collection_path,
-            group_path
-        );
-
-        cx.emit(AppEvent::NewRequest {
+        let manager = CollectionManager::global(cx);
+        let name = manager
+            .read(cx)
+            .unique_request_name(collection_path, group_path, "New Request");
+        let request = RequestData {
+            name: name.clone(),
+            ..Default::default()
+        };
+        if !self.save_new_request(collection_path, group_path, &request, window, cx) {
+            return;
+        }
+        let Some((group_path, request)) =
+            self.locate_request(collection_path, group_path, &name, cx)
+        else {
+            return;
+        };
+        cx.emit(AppEvent::CreateNewRequestTab {
+            request_data: request,
             collection_path: collection_path.to_string().into(),
-            group_path: Some(group_path.to_string().into()),
+            group_path: group_path.clone().map(Into::into),
         });
+        self.rename_after_menu(
+            RenameTarget {
+                kind: TreeItemKind::Request,
+                collection_path: collection_path.to_string(),
+                group_path,
+                name,
+            },
+            window,
+            cx,
+        );
     }
 
-    /// Open an unsaved copy of a request in a new tab. Nothing is written to
-    /// disk until the tab is saved.
-    fn duplicate_request(&mut self, request_id: &str, cx: &mut Context<Self>) {
+    /// Save a copy of a request next to it, named "<name> copy", and start
+    /// renaming the copy.
+    fn duplicate_request(&mut self, request_id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(metadata) = self.get_tree_item_metadata(request_id).cloned() else {
             tracing::error!("Could not find metadata for ID: {}", request_id);
             return;
         };
-        let Some(mut request_data) = self.request_data_map.get(request_id).cloned() else {
+        let Some(mut copy) = self.request_data_map.get(request_id).cloned() else {
             tracing::error!("Could not find request data for ID: {}", request_id);
             return;
         };
-
-        // Requests are stored as `<name>.toml`, so the copy needs a name of its
-        // own or the first save would overwrite the original.
-        request_data.name = self.unique_request_name(&request_data.name, &metadata);
+        let group_path = metadata.group_path.as_deref();
+        copy.name = CollectionManager::global(cx).read(cx).unique_request_name(
+            &metadata.collection_path,
+            group_path,
+            &format!("{} copy", copy.name),
+        );
         // A duplicate is a new request in its .http file, not the original.
-        if let Some(options) = request_data.http_file.as_mut() {
+        if let Some(options) = copy.http_file.as_mut() {
             options.source = None;
         }
+        if !self.save_new_request(&metadata.collection_path, group_path, &copy, window, cx) {
+            return;
+        }
+        let group_path = self
+            .locate_request(&metadata.collection_path, group_path, &copy.name, cx)
+            .and_then(|(group_path, _)| group_path);
+        self.rename_after_menu(
+            RenameTarget {
+                kind: TreeItemKind::Request,
+                collection_path: metadata.collection_path.clone(),
+                group_path,
+                name: copy.name,
+            },
+            window,
+            cx,
+        );
+    }
 
-        tracing::info!("Duplicating request as: {}", request_data.name);
+    /// Write a request that doesn't exist yet. Returns whether it was saved.
+    fn save_new_request(
+        &mut self,
+        collection_path: &str,
+        group_path: Option<&str>,
+        request: &RequestData,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let result = CollectionManager::global(cx).update(cx, |manager, cx| {
+            manager.save_request(collection_path, request, &request.name, group_path, cx)
+        });
+        match result {
+            Ok(()) => {
+                self.load_collections(cx);
+                true
+            }
+            Err(error) => {
+                window.push_notification(
+                    (
+                        NotificationType::Error,
+                        SharedString::from(error.to_string()),
+                    ),
+                    cx,
+                );
+                false
+            }
+        }
+    }
 
-        cx.emit(AppEvent::CreateNewRequestTab {
-            request_data,
-            collection_path: metadata.collection_path.clone().into(),
-            group_path: metadata.group_path.clone().map(Into::into),
+    /// Where the request called `name` was stored, looked for in `group_path`
+    /// first. A request saved to a collection of .http files goes into a
+    /// file, which is its group.
+    fn locate_request(
+        &self,
+        collection_path: &str,
+        group_path: Option<&str>,
+        name: &str,
+        cx: &App,
+    ) -> Option<(Option<String>, RequestData)> {
+        let manager = CollectionManager::global(cx);
+        let manager = manager.read(cx);
+        if let Some(request) = manager.find_request(collection_path, group_path, name) {
+            return Some((group_path.map(str::to_string), request.clone()));
+        }
+        let info = manager.get_collection_by_path(collection_path)?;
+        info.groups.values().find_map(|group| {
+            group
+                .requests
+                .values()
+                .find(|request| request.name == name)
+                .map(|request| (Some(group.path.clone()), request.clone()))
+        })
+    }
+
+    /// Start renaming once the menu that asked for it has closed, since
+    /// closing it gives focus back to where it was.
+    fn rename_after_menu(
+        &mut self,
+        target: RenameTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.defer_in(window, move |this, window, cx| {
+            this.start_rename(target, window, cx);
         });
     }
 
-    /// Build a request name that no sibling request in the same collection and
-    /// group is using yet.
-    fn unique_request_name(&self, base: &str, metadata: &TreeItemMetadata) -> String {
-        let taken: HashSet<&str> = self
-            .tree_item_metadata
-            .values()
-            .filter(|other| {
-                other.kind == TreeItemKind::Request
-                    && other.collection_path == metadata.collection_path
-                    && other.group_path == metadata.group_path
-            })
-            .map(|other| other.name.as_str())
-            .collect();
+    /// Rename the request called `name` in place, revealing it first.
+    pub fn rename_request(
+        &mut self,
+        collection_path: &str,
+        group_path: Option<&str>,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rename_after_menu(
+            RenameTarget {
+                kind: TreeItemKind::Request,
+                collection_path: collection_path.to_string(),
+                group_path: group_path.map(str::to_string),
+                name: name.to_string(),
+            },
+            window,
+            cx,
+        );
+    }
 
-        let candidate = format!("{} copy", base);
-        if !taken.contains(candidate.as_str()) {
-            return candidate;
+    /// Rename the selected request or group.
+    fn rename_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self
+            .tree_state
+            .read(cx)
+            .selected_entry()
+            .and_then(|entry| self.get_tree_item_metadata(&entry.item().id))
+            .map(RenameTarget::of);
+        if let Some(target) = target {
+            self.start_rename(target, window, cx);
+        }
+    }
+
+    /// Duplicate the selected request.
+    fn duplicate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let id = self
+            .tree_state
+            .read(cx)
+            .selected_entry()
+            .map(|entry| entry.item().id.to_string())
+            .filter(|id| {
+                self.get_tree_item_metadata(id)
+                    .is_some_and(|metadata| metadata.kind == TreeItemKind::Request)
+            });
+        if let Some(id) = id {
+            self.duplicate_request(&id, window, cx);
+        }
+    }
+
+    /// The tree id of the item `target` names.
+    fn item_id(&self, target: &RenameTarget) -> Option<String> {
+        self.tree_item_metadata
+            .iter()
+            .find(|(_, metadata)| RenameTarget::of(metadata) == *target)
+            .map(|(id, _)| id.clone())
+    }
+
+    /// The name field of the item with `id`, while it is being renamed.
+    fn rename_input(&self, id: &str) -> Option<Entity<InputState>> {
+        let renaming = self.renaming.as_ref()?;
+        let metadata = self.get_tree_item_metadata(id)?;
+        (RenameTarget::of(metadata) == renaming.target).then(|| renaming.input.clone())
+    }
+
+    /// Show a name field in place of the item's label. Enter or leaving the
+    /// field renames it, and Escape leaves it as it was.
+    fn start_rename(&mut self, target: RenameTarget, window: &mut Window, cx: &mut Context<Self>) {
+        if target.kind == TreeItemKind::Collection {
+            return;
+        }
+        let Some(id) = self.item_id(&target) else {
+            return;
+        };
+        self.tree_state
+            .update(cx, |tree, cx| tree.select_item(&id, cx));
+
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(target.name.clone()));
+        input.update(cx, |input, cx| {
+            input.focus(window, cx);
+            input.select_all(window, cx);
+        });
+        let events =
+            cx.subscribe_in(
+                &input,
+                window,
+                |this, _, event: &InputEvent, window, cx| match event {
+                    InputEvent::PressEnter { .. } => this.commit_rename(true, window, cx),
+                    InputEvent::Blur => this.commit_rename(false, window, cx),
+                    InputEvent::Change | InputEvent::Focus => {}
+                },
+            );
+        // Escape belongs to the field itself, so it is caught before the
+        // field handles it.
+        let panel = cx.entity().downgrade();
+        let escape = cx.intercept_keystrokes(move |event, window, cx| {
+            if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
+                return;
+            }
+            let _ = panel.update(cx, |panel, cx| {
+                let focused = panel
+                    .renaming
+                    .as_ref()
+                    .is_some_and(|renaming| renaming.input.focus_handle(cx).is_focused(window));
+                if focused {
+                    cx.stop_propagation();
+                    panel.cancel_rename(window, cx);
+                }
+            });
+        });
+        self.renaming = Some(Renaming {
+            target,
+            input,
+            _subscriptions: vec![events, escape],
+        });
+        cx.notify();
+    }
+
+    fn focus_tree(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.tree_state
+            .update(cx, |tree, cx| tree.focus(window, cx));
+    }
+
+    fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.renaming = None;
+        self.focus_tree(window, cx);
+        cx.notify();
+    }
+
+    /// Rename the item to what the name field holds. A name that can't be
+    /// used is reported, and keeps the field open after Enter.
+    fn commit_rename(&mut self, from_enter: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(renaming) = self.renaming.take() else {
+            return;
+        };
+        let target = renaming.target.clone();
+        let new_name = renaming.input.read(cx).value().trim().to_string();
+        let was_expanded = self.item_id(&target).is_some_and(|id| {
+            self.tree_state
+                .read(cx)
+                .entries()
+                .iter()
+                .any(|entry| entry.item().id.as_ref() == id && entry.is_expanded())
+        });
+        if new_name.is_empty() || new_name == target.name {
+            if from_enter {
+                self.focus_tree(window, cx);
+            }
+            cx.notify();
+            return;
         }
 
-        (2..)
-            .map(|n| format!("{} copy {}", base, n))
-            .find(|candidate| !taken.contains(candidate.as_str()))
-            .expect("an unused name always exists")
+        let result = CollectionManager::global(cx).update(cx, |manager, cx| match target.kind {
+            TreeItemKind::Request => manager.rename_request(
+                &target.collection_path,
+                target.group_path.as_deref(),
+                &target.name,
+                &new_name,
+                cx,
+            ),
+            TreeItemKind::Group => {
+                manager.rename_group(&target.collection_path, &target.name, &new_name, cx)
+            }
+            TreeItemKind::Collection => Ok(()),
+        });
+
+        match result {
+            Ok(()) => {
+                self.load_collections(cx);
+                // Keep the renamed item selected. A group's path follows its
+                // name, so it is found by name.
+                let id = self
+                    .tree_item_metadata
+                    .iter()
+                    .find(|(_, metadata)| {
+                        metadata.kind == target.kind
+                            && metadata.collection_path == target.collection_path
+                            && metadata.name == new_name
+                            && (target.kind == TreeItemKind::Group
+                                || metadata.group_path == target.group_path)
+                    })
+                    .map(|(id, _)| id.clone());
+                if let Some(id) = id {
+                    self.tree_state.update(cx, |tree, cx| {
+                        tree.select_item(&id, cx);
+                        // A renamed folder stays open if it was.
+                        if was_expanded {
+                            tree.reveal(&id, cx);
+                        }
+                    });
+                }
+                if from_enter {
+                    self.focus_tree(window, cx);
+                }
+            }
+            Err(error) => {
+                window.push_notification(
+                    (
+                        NotificationType::Error,
+                        SharedString::from(error.to_string()),
+                    ),
+                    cx,
+                );
+                if from_enter {
+                    renaming
+                        .input
+                        .update(cx, |input, cx| input.focus(window, cx));
+                    self.renaming = Some(renaming);
+                }
+            }
+        }
+        cx.notify();
     }
 
     /// Delete a collection from CollectionManager and AppDatabase
@@ -1122,6 +1449,12 @@ impl Render for CollectionsPanel {
         // owns the surface colour so the rounded corners stay clean.
         v_flex()
             .size_full()
+            .on_action(cx.listener(|this, _: &RenameItem, window, cx| {
+                this.rename_selected(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &DuplicateItem, window, cx| {
+                this.duplicate_selected(window, cx);
+            }))
             // Keeps the rounded row selection off the sidebar card's border.
             .px(px(4.))
             .child(
@@ -1135,3 +1468,15 @@ impl Render for CollectionsPanel {
 }
 
 impl EventEmitter<AppEvent> for CollectionsPanel {}
+
+/// The context menu item that renames the item `metadata` describes.
+fn rename_item(
+    panel: &Entity<CollectionsPanel>,
+    metadata: &TreeItemMetadata,
+    window: &mut Window,
+) -> PopupMenuItem {
+    let target = RenameTarget::of(metadata);
+    PopupMenuItem::new("Rename").on_click(window.listener_for(panel, move |this, _, window, cx| {
+        this.rename_after_menu(target.clone(), window, cx);
+    }))
+}

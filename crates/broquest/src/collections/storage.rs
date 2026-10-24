@@ -38,6 +38,16 @@ pub(crate) trait CollectionStorage {
     /// Delete a request identified by name + method + url.
     fn delete_request(&self, info: &mut CollectionInfo, request_data: &RequestData) -> Result<()>;
 
+    /// Give a stored request, identified by name + method + url, a new name.
+    /// Everything else about it is kept.
+    fn rename_request(
+        &self,
+        info: &mut CollectionInfo,
+        request_data: &RequestData,
+        new_name: &str,
+        group_path: Option<&str>,
+    ) -> Result<()>;
+
     /// Move a request to a different group (or the root when `None`).
     fn move_request(
         &self,
@@ -93,6 +103,20 @@ impl CollectionStorage for HttpFileStorage {
 
     fn delete_request(&self, info: &mut CollectionInfo, request_data: &RequestData) -> Result<()> {
         super::http_save::delete_request(info, request_data)
+    }
+
+    fn rename_request(
+        &self,
+        info: &mut CollectionInfo,
+        request_data: &RequestData,
+        new_name: &str,
+        group_path: Option<&str>,
+    ) -> Result<()> {
+        // Saving a request from its file under another name renames its
+        // block in place.
+        let mut renamed = request_data.clone();
+        renamed.name = new_name.to_string();
+        super::http_save::save_request(info, &renamed, new_name, group_path)
     }
 
     fn move_request(
@@ -237,29 +261,50 @@ impl CollectionStorage for BroquestStorage {
     }
 
     fn delete_request(&self, info: &mut CollectionInfo, request_data: &RequestData) -> Result<()> {
-        let request_file_path = info
-            .requests
-            .iter()
-            .find(|(_, stored_request)| {
-                stored_request.name == request_data.name
-                    && stored_request.method == request_data.method
-                    && stored_request.url == request_data.url
-            })
-            .map(|(path, _)| path.clone());
-
-        let Some(request_file_path) = request_file_path else {
+        // Requests in a group are found too, not only those at the root.
+        let Some(request_file_path) = find_request_key(info, request_data) else {
             return Err(anyhow::anyhow!("Request file not found in collection"));
         };
 
         fs::remove_file(&request_file_path)
             .with_context(|| format!("Failed to delete request file {:?}", request_file_path))?;
-        info.requests.remove(&request_file_path);
+        remove_request_key(info, &request_file_path);
 
         tracing::info!(
             "Request '{}' deleted successfully from collection '{}'",
             request_data.name,
             info.data.name
         );
+        Ok(())
+    }
+
+    fn rename_request(
+        &self,
+        info: &mut CollectionInfo,
+        request_data: &RequestData,
+        new_name: &str,
+        _group_path: Option<&str>,
+    ) -> Result<()> {
+        let old_key = find_request_key(info, request_data)
+            .ok_or_else(|| anyhow::anyhow!("Request '{}' not found", request_data.name))?;
+        let old_path = Path::new(&old_key);
+        let new_path = old_path.with_file_name(format!("{new_name}.toml"));
+
+        // Moving the file first also handles a rename that only changes case.
+        if new_path != old_path {
+            fs::rename(old_path, &new_path)
+                .with_context(|| format!("Failed to rename {:?} to {:?}", old_path, new_path))?;
+        }
+        let mut renamed = request_data.clone();
+        renamed.name = new_name.to_string();
+        let request_toml: RequestToml = renamed.clone().into();
+        let toml_string = toml::to_string_pretty(&request_toml)
+            .with_context(|| "Failed to serialize request data to TOML")?;
+        fs::write(&new_path, toml_string)
+            .with_context(|| format!("Failed to write request file {:?}", new_path))?;
+
+        let new_key = new_path.to_string_lossy().to_string();
+        replace_request_key(info, &old_key, new_key, renamed);
         Ok(())
     }
 
@@ -675,6 +720,34 @@ impl CollectionStorage for OpenCollectionStorage {
         Self::persist(info)
     }
 
+    fn rename_request(
+        &self,
+        info: &mut CollectionInfo,
+        request_data: &RequestData,
+        new_name: &str,
+        _group_path: Option<&str>,
+    ) -> Result<()> {
+        let old_key = find_request_key(info, request_data)
+            .ok_or_else(|| anyhow::anyhow!("Request '{}' not found", request_data.name))?;
+        let dir = Path::new(&info.data.path).to_path_buf();
+        let group = info
+            .groups
+            .values()
+            .find(|group| group.requests.contains_key(&old_key))
+            .map(|group| group.path.clone());
+        let new_key = oc_request_key(&dir, group.as_deref(), new_name);
+
+        let mut renamed = request_data.clone();
+        renamed.name = new_name.to_string();
+        // The source item keeps the fields broquest does not model.
+        if let Some(item) = info.oc_items.remove(&old_key) {
+            info.oc_items.insert(new_key.clone(), item);
+        }
+        replace_request_key(info, &old_key, new_key, renamed);
+        // Writing the tree again removes the file under the old name.
+        Self::persist(info)
+    }
+
     fn rename_group(
         &self,
         info: &mut CollectionInfo,
@@ -724,6 +797,36 @@ fn find_request_key(info: &CollectionInfo, request_data: &RequestData) -> Option
         }
     }
     None
+}
+
+/// Forget the request stored under `key`, at the root or in a group.
+fn remove_request_key(info: &mut CollectionInfo, key: &str) {
+    if info.requests.remove(key).is_none() {
+        for group in info.groups.values_mut() {
+            if group.requests.remove(key).is_some() {
+                break;
+            }
+        }
+    }
+}
+
+/// Store `request` under `new_key` in place of `old_key`, in the same group.
+fn replace_request_key(
+    info: &mut CollectionInfo,
+    old_key: &str,
+    new_key: String,
+    request: RequestData,
+) {
+    if info.requests.remove(old_key).is_some() {
+        info.requests.insert(new_key, request);
+        return;
+    }
+    for group in info.groups.values_mut() {
+        if group.requests.remove(old_key).is_some() {
+            group.requests.insert(new_key, request);
+            return;
+        }
+    }
 }
 
 /// Derive the group name from the relative group path passed by the UI.

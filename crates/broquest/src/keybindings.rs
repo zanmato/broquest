@@ -5,7 +5,8 @@ use gpui::KeyBinding;
 
 use crate::app::{NewScratchRequest, OpenSettings, ToggleCommandPalette};
 use crate::collections::{
-    COLLECTION_EDITOR_CONTEXT, GROUP_EDITOR_CONTEXT, collection_editor, group_editor,
+    COLLECTION_EDITOR_CONTEXT, DuplicateItem, GROUP_EDITOR_CONTEXT, RenameItem, TREE_CONTEXT,
+    collection_editor, group_editor,
 };
 use crate::requests::{
     CloseAllTabs, CloseOtherTabs, CloseTab, CloseTabsToTheLeft, CloseTabsToTheRight, CopyResponse,
@@ -70,6 +71,18 @@ pub const CUSTOMIZABLE_BINDINGS: &[BindingDef] = &[
         label: "New request",
         group: "Request",
         default: "secondary-n",
+    },
+    BindingDef {
+        action: "Rename",
+        label: "Rename request or folder",
+        group: "Collection",
+        default: "f2",
+    },
+    BindingDef {
+        action: "Duplicate",
+        label: "Duplicate request in the sidebar",
+        group: "Collection",
+        default: "secondary-d",
     },
     BindingDef {
         action: "ToggleDocsEdit",
@@ -221,6 +234,10 @@ fn key_bindings(action: &str, keystrokes: &str) -> Vec<KeyBinding> {
         "FormatBody" => vec![KeyBinding::new(k, FormatBody, request)],
         "FilterResponse" => vec![KeyBinding::new(k, FilterResponse, request)],
         "NewRequest" => vec![KeyBinding::new(k, NewScratchRequest, None)],
+        // Anywhere: the sidebar renames its selection, elsewhere the app
+        // renames the active request.
+        "Rename" => vec![KeyBinding::new(k, RenameItem, None)],
+        "Duplicate" => vec![KeyBinding::new(k, DuplicateItem, Some(TREE_CONTEXT))],
         "ToggleDocsEdit" => vec![KeyBinding::new(
             k,
             collection_editor::ToggleDocsEdit,

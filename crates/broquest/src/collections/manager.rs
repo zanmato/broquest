@@ -25,6 +25,33 @@ pub enum CollectionManagerEvent {
     RequestsChanged { collection_path: SharedString },
     /// A collection's in-memory runtime variables changed.
     RuntimeVarsChanged { collection_path: SharedString },
+    /// A request was renamed. Open tabs of it take the new name.
+    RequestRenamed {
+        collection_path: SharedString,
+        group_path: Option<SharedString>,
+        old_name: SharedString,
+        new_name: SharedString,
+    },
+    /// A group was renamed. Open tabs in it move to its new path.
+    GroupRenamed {
+        collection_path: SharedString,
+        old_name: SharedString,
+        new_name: SharedString,
+        old_path: SharedString,
+        new_path: SharedString,
+    },
+}
+
+/// Whether `name` can name a request or group: not empty, and no path
+/// separator, since it names a file or folder.
+fn check_name(name: &str, what: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("A {what} needs a name");
+    }
+    if name.contains(['/', '\\']) || name == "." || name == ".." {
+        anyhow::bail!("A {what} name can't contain / or \\");
+    }
+    Ok(())
 }
 
 /// Handle to the global [`CollectionManager`] entity, following the Zed pattern
@@ -736,6 +763,76 @@ impl CollectionManager {
         Ok(())
     }
 
+    /// Rename the request `old_name` in the group at `group_path`, or at the
+    /// collection root. The name has to be free among its neighbours.
+    pub fn rename_request(
+        &mut self,
+        collection_path: &str,
+        group_path: Option<&str>,
+        old_name: &str,
+        new_name: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let new_name = new_name.trim();
+        if new_name == old_name {
+            return Ok(());
+        }
+        check_name(new_name, "request")?;
+        if self
+            .find_request(collection_path, group_path, new_name)
+            .is_some()
+        {
+            anyhow::bail!("A request named \"{new_name}\" already exists here");
+        }
+        let request = self
+            .find_request(collection_path, group_path, old_name)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Request \"{old_name}\" not found"))?;
+        let info = self
+            .collections
+            .get_mut(collection_path)
+            .ok_or_else(|| anyhow::anyhow!("Collection with path {} not found", collection_path))?;
+        storage_for(info.format).rename_request(info, &request, new_name, group_path)?;
+
+        // `{{name.response...}}` references follow the request.
+        if let Some(exchanges) = self.exchanges.get_mut(collection_path)
+            && let Some(exchange) = exchanges.remove(old_name)
+        {
+            exchanges.insert(new_name.to_string(), exchange);
+        }
+        cx.emit(CollectionManagerEvent::RequestsChanged {
+            collection_path: collection_path.to_string().into(),
+        });
+        cx.emit(CollectionManagerEvent::RequestRenamed {
+            collection_path: collection_path.to_string().into(),
+            group_path: group_path.map(|path| path.to_string().into()),
+            old_name: old_name.to_string().into(),
+            new_name: new_name.to_string().into(),
+        });
+        Ok(())
+    }
+
+    /// `base`, or `base 2`, `base 3` and so on: the first name no request in
+    /// the group at `group_path`, or at the collection root, has yet.
+    pub fn unique_request_name(
+        &self,
+        collection_path: &str,
+        group_path: Option<&str>,
+        base: &str,
+    ) -> String {
+        let taken = |name: &str| {
+            self.find_request(collection_path, group_path, name)
+                .is_some()
+        };
+        if !taken(base) {
+            return base.to_string();
+        }
+        (2..)
+            .map(|n| format!("{base} {n}"))
+            .find(|name| !taken(name))
+            .expect("an unused name always exists")
+    }
+
     /// Delete a request from a collection
     pub fn delete_request(
         &mut self,
@@ -935,16 +1032,37 @@ impl CollectionManager {
         new_group_name: &str,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        // Validate new group name
-        if new_group_name.is_empty() {
-            return Err(anyhow::anyhow!("Group name cannot be empty"));
+        let new_group_name = new_group_name.trim();
+        if new_group_name == old_group_name {
+            return Ok(());
         }
+        check_name(new_group_name, "group")?;
 
         let info = self.collections.get_mut(collection_path).ok_or_else(|| {
             anyhow::anyhow!("Collection with path '{}' not found", collection_path)
         })?;
+        if info.groups.contains_key(new_group_name) {
+            anyhow::bail!("A group named \"{new_group_name}\" already exists");
+        }
+        let old_path = info
+            .groups
+            .get(old_group_name)
+            .map(|group| group.path.clone())
+            .ok_or_else(|| anyhow::anyhow!("Group '{}' not found", old_group_name))?;
         storage_for(info.format).rename_group(info, old_group_name, new_group_name)?;
+        let new_path = info
+            .groups
+            .get(new_group_name)
+            .map(|group| group.path.clone())
+            .unwrap_or_else(|| sanitize_name(new_group_name));
         cx.emit(CollectionManagerEvent::CollectionsChanged);
+        cx.emit(CollectionManagerEvent::GroupRenamed {
+            collection_path: collection_path.to_string().into(),
+            old_name: old_group_name.to_string().into(),
+            new_name: new_group_name.to_string().into(),
+            old_path: old_path.into(),
+            new_path: new_path.into(),
+        });
         Ok(())
     }
 
@@ -1297,6 +1415,141 @@ items:
       method: GET
       url: https://example.com
 "#;
+
+    /// A native TOML collection at a new temporary path, with a request
+    /// "Root" at the root and "Inner" in the group "Users".
+    fn toml_collection_with_requests(
+        dir_name: &str,
+        cx: &mut gpui::TestAppContext,
+    ) -> (std::path::PathBuf, String, Entity<CollectionManager>) {
+        let temp_dir = std::env::temp_dir().join(dir_name);
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.to_string_lossy().to_string();
+        let manager = cx.new(|_| CollectionManager::new());
+        manager
+            .update(cx, |manager, cx| {
+                manager.save_collection(&make_collection_with_environments(), &path, cx)?;
+                manager.create_group(&path, "Users", cx)?;
+                let root = RequestData {
+                    name: "Root".into(),
+                    url: "https://example.com/root".into(),
+                    ..Default::default()
+                };
+                manager.save_request(&path, &root, "Root", None, cx)?;
+                let inner = RequestData {
+                    name: "Inner".into(),
+                    url: "https://example.com/inner".into(),
+                    ..Default::default()
+                };
+                manager.save_request(&path, &inner, "Inner", Some("Users"), cx)
+            })
+            .expect("set up the collection");
+        (temp_dir, path, manager)
+    }
+
+    #[gpui::test]
+    fn test_rename_request_moves_the_toml_file(cx: &mut gpui::TestAppContext) {
+        let (dir, path, manager) = toml_collection_with_requests("broquest_test_rename", cx);
+
+        manager
+            .update(cx, |manager, cx| {
+                manager.rename_request(&path, None, "Root", "Top", cx)?;
+                manager.rename_request(&path, Some("Users"), "Inner", "Nested", cx)
+            })
+            .expect("rename");
+
+        assert!(!dir.join("Root.toml").exists(), "no copy is left behind");
+        assert!(dir.join("Top.toml").exists());
+        assert!(!dir.join("Users/Inner.toml").exists());
+        assert!(
+            fs::read_to_string(dir.join("Users/Nested.toml"))
+                .unwrap()
+                .contains("Nested")
+        );
+        manager.read_with(cx, |manager, _| {
+            let top = manager.find_request(&path, None, "Top").expect("renamed");
+            assert_eq!(top.url, "https://example.com/root");
+            assert!(manager.find_request(&path, None, "Root").is_none());
+            assert!(
+                manager
+                    .find_request(&path, Some("Users"), "Nested")
+                    .is_some()
+            );
+        });
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[gpui::test]
+    fn test_rename_request_refuses_taken_and_bad_names(cx: &mut gpui::TestAppContext) {
+        let (dir, path, manager) = toml_collection_with_requests("broquest_test_rename_bad", cx);
+        manager.update(cx, |manager, cx| {
+            let saved = RequestData {
+                name: "Other".into(),
+                ..Default::default()
+            };
+            manager
+                .save_request(&path, &saved, "Other", None, cx)
+                .unwrap();
+            for name in ["Other", "", "  ", "a/b", "a\\b", ".."] {
+                assert!(
+                    manager
+                        .rename_request(&path, None, "Root", name, cx)
+                        .is_err(),
+                    "{name:?}"
+                );
+            }
+            // The same name elsewhere is fine.
+            manager
+                .rename_request(&path, Some("Users"), "Inner", "Other", cx)
+                .expect("a group has its own names");
+            assert_eq!(manager.unique_request_name(&path, None, "Root"), "Root 2");
+            assert_eq!(manager.unique_request_name(&path, None, "Fresh"), "Fresh");
+        });
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[gpui::test]
+    fn test_delete_request_in_a_toml_group(cx: &mut gpui::TestAppContext) {
+        let (dir, path, manager) = toml_collection_with_requests("broquest_test_delete_group", cx);
+        manager
+            .update(cx, |manager, cx| {
+                let inner = manager
+                    .find_request(&path, Some("Users"), "Inner")
+                    .cloned()
+                    .unwrap();
+                manager.delete_request(&path, &inner, cx)
+            })
+            .expect("a request in a group can be deleted");
+        assert!(!dir.join("Users/Inner.toml").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[gpui::test]
+    fn test_rename_request_in_opencollection(cx: &mut gpui::TestAppContext) {
+        let temp_dir = write_oc_fixture("broquest_test_oc_rename");
+        let dir_str = temp_dir.to_string_lossy().to_string();
+        let manager = cx.new(|_| CollectionManager::new());
+        manager
+            .update(cx, |manager, cx| {
+                manager.load_opencollection_dir(&temp_dir, cx)?;
+                manager.rename_request(&dir_str, None, "Existing", "Renamed", cx)
+            })
+            .expect("rename");
+
+        let reloaded = cx.new(|_| CollectionManager::new());
+        reloaded
+            .update(cx, |manager, cx| {
+                manager.load_opencollection_dir(&temp_dir, cx)
+            })
+            .expect("reload");
+        reloaded.read_with(cx, |manager, _| {
+            let info = manager.get_collection_by_path(&dir_str).unwrap();
+            assert!(info.requests.values().any(|r| r.name == "Renamed"));
+            assert!(!info.requests.values().any(|r| r.name == "Existing"));
+        });
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 
     fn write_oc_fixture(dir_name: &str) -> std::path::PathBuf {
         let temp_dir = std::env::temp_dir().join(dir_name);

@@ -21,6 +21,7 @@ use gpui_kit::component::{
 };
 use jsonpath_rust::JsonPath;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use super::auth_editor::{AuthEditor, AuthEditorEvent};
@@ -160,6 +161,52 @@ fn show_script_notifications(
     }
 }
 
+/// A collection, or a group in one, a new request can be saved in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SaveLocation {
+    label: SharedString,
+    collection_path: String,
+    group_path: Option<String>,
+}
+
+impl SelectItem for SaveLocation {
+    type Value = SaveLocation;
+
+    fn title(&self) -> SharedString {
+        self.label.clone()
+    }
+
+    fn value(&self) -> &Self::Value {
+        self
+    }
+}
+
+/// Every collection that can hold requests, each followed by its groups,
+/// sorted by name.
+fn save_locations(cx: &App) -> Vec<SaveLocation> {
+    let manager = CollectionManager::global(cx);
+    let mut collections: Vec<_> = manager.read(cx).get_all_collections();
+    collections.sort_by(|a, b| a.data.name.cmp(&b.data.name));
+    let mut locations = Vec::new();
+    for info in collections {
+        locations.push(SaveLocation {
+            label: info.data.name.clone().into(),
+            collection_path: info.data.path.clone(),
+            group_path: None,
+        });
+        let mut groups: Vec<_> = info.groups.values().collect();
+        groups.sort_by(|a, b| a.name.cmp(&b.name));
+        for group in groups {
+            locations.push(SaveLocation {
+                label: format!("{} / {}", info.data.name, group.name).into(),
+                collection_path: info.data.path.clone(),
+                group_path: Some(group.path.clone()),
+            });
+        }
+    }
+    locations
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnvironmentOption {
     None,
@@ -209,9 +256,16 @@ pub enum ResponseTab {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum RequestEditorEvent {
-    DirtyStateChanged { is_dirty: bool },
+    DirtyStateChanged {
+        is_dirty: bool,
+    },
     EnvironmentChanged,
+    /// The request was renamed or saved under another name.
+    NameChanged,
+    /// The request was saved into a collection for the first time.
+    LocationChanged,
 }
 
 pub struct RequestEditor {
@@ -234,7 +288,9 @@ pub struct RequestEditor {
     /// Whether the collection's environments were loaded into the dropdown.
     environments_loaded: bool,
     content_type_select: Entity<SelectState<Vec<ContentType>>>,
-    name_input: Entity<InputState>,
+    /// Whether the request has never been saved, such as a copy. Its first
+    /// save takes a name no other request has, so it can't overwrite one.
+    is_new: bool,
     /// A URL bar with tree-sitter highlighting: a code editor laid out as one line.
     url_input: Entity<EditorState>,
     body_input: Entity<EditorState>,
@@ -302,12 +358,6 @@ impl RequestEditor {
                 .language("url")
                 .single_line(true)
                 .placeholder("Enter request URL")
-        });
-
-        let name_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Request name")
-                .default_value("New Request")
         });
 
         let editor_settings = AppSettings::global(cx).settings.editor.clone();
@@ -432,7 +482,7 @@ impl RequestEditor {
             allows_no_environment: true,
             environments_loaded: false,
             content_type_select,
-            name_input,
+            is_new: false,
             url_input,
             body_input,
             response_input,
@@ -527,11 +577,33 @@ impl RequestEditor {
     /// Treat the request as not saved yet, as for a copy of another request,
     /// so it shows as changed and closing it asks to save.
     pub fn mark_unsaved(&mut self, cx: &mut Context<Self>) {
+        self.is_new = true;
         // Saved data under no name never matches the request's own.
         let mut original = self.get_request_data(cx);
         original.name.clear();
         self.original_request_data = Some(original);
         self.recompute_dirty(cx);
+    }
+
+    /// Take the name the request was renamed to, keeping unsaved changes.
+    pub fn apply_rename(&mut self, new_name: &str, cx: &mut Context<Self>) {
+        let rename = |data: &mut RequestData| {
+            data.name = new_name.to_string();
+            if let Some(source) = data
+                .http_file
+                .as_mut()
+                .and_then(|options| options.source.as_mut())
+            {
+                source.name = new_name.to_string();
+            }
+        };
+        rename(&mut self.request_data);
+        if let Some(original) = self.original_request_data.as_mut() {
+            rename(original);
+        }
+        cx.emit(RequestEditorEvent::NameChanged);
+        self.recompute_dirty(cx);
+        cx.notify();
     }
 
     pub fn collection_path(&self) -> Option<&str> {
@@ -595,11 +667,6 @@ impl RequestEditor {
         self.url_input.update(cx, |state, cx| {
             let url = self.build_url_with_query_params(&data.url, &data.query_params);
             state.set_value(url, window, cx);
-        });
-
-        // Update name input
-        self.name_input.update(cx, |state, cx| {
-            state.set_value(data.name.clone(), window, cx);
         });
 
         // Update path parameters
@@ -671,6 +738,12 @@ impl RequestEditor {
         self.auth_editor.update(cx, |editor, cx| {
             editor.set_auth(&data.auth, window, cx);
         });
+
+        // What the editor now holds counts as saved. Taken through the same
+        // path as the changes it is compared with, so details that path adds,
+        // such as the Content-Type header from the body type, don't count as
+        // a change.
+        self.original_request_data = Some(self.get_request_data(cx));
 
         cx.notify();
     }
@@ -807,9 +880,6 @@ impl RequestEditor {
         let raw_url = self.url_input.read(cx).value().to_string();
         let (base_url, url_query_params) = Self::strip_query_params_from_url(&raw_url);
         data.url = base_url;
-
-        // Update name from input
-        data.name = self.name_input.read(cx).value().to_string();
 
         let path_params = self
             .path_param_editor
@@ -1568,66 +1638,216 @@ impl RequestEditor {
         }
     }
 
-    /// Save the request to its collection. Returns whether it was saved.
+    /// Save the request to its collection. Returns whether it was saved. A
+    /// request in no collection asks where to save it first, and isn't saved
+    /// yet when this returns.
     pub fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        // Get current request data
-        let request_data = self.get_request_data(cx);
+        match self.collection_path.clone().filter(|path| !path.is_empty()) {
+            Some(collection_path) => self.save_to(&collection_path, window, cx),
+            None => {
+                self.open_save_dialog(window, cx);
+                false
+            }
+        }
+    }
 
-        // Get request name from the request data
-        let request_name = if request_data.name.is_empty() || request_data.name == "New Request" {
-            "untitled_request".to_string()
-        } else {
-            request_data.name.clone()
-        };
+    fn save_to(
+        &mut self,
+        collection_path: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut request_data = self.get_request_data(cx);
+        if self.is_new {
+            let base = match request_data.name.trim() {
+                "" => "New Request",
+                name => name,
+            };
+            request_data.name = CollectionManager::global(cx).read(cx).unique_request_name(
+                collection_path,
+                self.group_path.as_deref(),
+                base,
+            );
+        }
+        let request_name = request_data.name.clone();
 
-        if let Some(collection_path) = self.collection_path.clone() {
-            // Persist the request through the CollectionManager entity.
-            let group_path_ref = self.group_path.as_deref();
-            let manager = CollectionManager::global(cx);
-            let save_result = manager.update(cx, |collection_manager, cx| {
-                collection_manager.save_request(
-                    &collection_path,
-                    &request_data,
-                    &request_name,
-                    group_path_ref,
-                    cx,
-                )
-            });
+        let group_path = self.group_path.clone();
+        let save_result = CollectionManager::global(cx).update(cx, |collection_manager, cx| {
+            collection_manager.save_request(
+                collection_path,
+                &request_data,
+                &request_name,
+                group_path.as_deref(),
+                cx,
+            )
+        });
 
-            match save_result {
-                Ok(()) => {
-                    tracing::info!("Request saved successfully");
-                    let mut request_data = request_data;
-                    self.adopt_http_source(&collection_path, &request_name, &mut request_data, cx);
-                    // Reset dirty state after successful save
-                    self.original_request_data = Some(request_data);
-                    self._was_dirty = false;
+        match save_result {
+            Ok(()) => {
+                tracing::info!("Request saved successfully");
+                let mut request_data = request_data;
+                self.adopt_http_source(collection_path, &request_name, &mut request_data, cx);
+                let renamed = self.request_data.name != request_name;
+                self.request_data.name = request_name.clone();
+                self.is_new = false;
+                // Reset dirty state after successful save
+                self.original_request_data = Some(request_data);
+                self._was_dirty = false;
 
-                    // Emit clean state event
-                    cx.emit(RequestEditorEvent::DirtyStateChanged { is_dirty: false });
-
-                    cx.notify();
-
-                    window.push_notification(
-                        (
-                            NotificationType::Success,
-                            SharedString::from(format!("Saved {}", request_name).to_string()),
-                        ),
-                        cx,
-                    );
-                    true
+                cx.emit(RequestEditorEvent::DirtyStateChanged { is_dirty: false });
+                if renamed {
+                    cx.emit(RequestEditorEvent::NameChanged);
                 }
-                Err(e) => {
-                    tracing::error!("Failed to save request: {}", e);
-                    window.push_notification(
-                        (NotificationType::Error, SharedString::from(e.to_string())),
-                        cx,
-                    );
-                    false
+                cx.notify();
+
+                window.push_notification(
+                    (
+                        NotificationType::Success,
+                        SharedString::from(format!("Saved {}", request_name)),
+                    ),
+                    cx,
+                );
+                true
+            }
+            Err(e) => {
+                tracing::error!("Failed to save request: {}", e);
+                window.push_notification(
+                    (NotificationType::Error, SharedString::from(e.to_string())),
+                    cx,
+                );
+                false
+            }
+        }
+    }
+
+    /// Ask for the name of a request in no collection, and the collection or
+    /// group to save it in, then save it there.
+    fn open_save_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let locations = save_locations(cx);
+        if locations.is_empty() {
+            window.push_notification(
+                (
+                    NotificationType::Info,
+                    "Open or create a collection to save the request in.",
+                ),
+                cx,
+            );
+            return;
+        }
+        let name = self.request_data.name.clone();
+        let name_input = cx.new(|cx| InputState::new(window, cx).default_value(name));
+        let location_select =
+            cx.new(|cx| SelectState::new(locations, Some(IndexPath::default().row(0)), window, cx));
+        name_input.update(cx, |input, cx| input.focus(window, cx));
+
+        let editor = cx.entity().downgrade();
+        let save = Rc::new({
+            let name_input = name_input.clone();
+            let location_select = location_select.clone();
+            move |window: &mut Window, cx: &mut App| {
+                let name = name_input.read(cx).value().trim().to_string();
+                let Some(location) = location_select.read(cx).selected_value().cloned() else {
+                    return;
+                };
+                let saved = editor
+                    .update(cx, |editor, cx| {
+                        editor.save_into(&location, &name, window, cx)
+                    })
+                    .unwrap_or(false);
+                if saved {
+                    window.close_dialog(cx);
                 }
             }
+        });
+
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let label = |text: &'static str| {
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(text)
+            };
+            let save = save.clone();
+            dialog
+                .title("Save Request")
+                .child(
+                    v_flex()
+                        .gap_3()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(label("Name"))
+                                .child(Input::new(&name_input)),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(label("Save in"))
+                                .child(Select::new(&location_select)),
+                        ),
+                )
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            DialogClose::new().child(
+                                Button::new("save-request-cancel").label("Cancel").outline(),
+                            ),
+                        )
+                        // Saving can fail, such as for a taken name, and the
+                        // dialog stays open then, so the button closes it.
+                        .child(
+                            Button::new("save-request-confirm")
+                                .primary()
+                                .label("Save")
+                                .on_click(move |_, window, cx| save(window, cx)),
+                        ),
+                )
+        });
+    }
+
+    /// Save the request as `name` in `location`, which makes it the
+    /// request's collection and group.
+    fn save_into(
+        &mut self,
+        location: &SaveLocation,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if name.is_empty() {
+            window.push_notification((NotificationType::Error, "The request needs a name."), cx);
+            return false;
+        }
+        let taken = CollectionManager::global(cx)
+            .read(cx)
+            .find_request(
+                &location.collection_path,
+                location.group_path.as_deref(),
+                name,
+            )
+            .is_some();
+        if taken {
+            window.push_notification(
+                (
+                    NotificationType::Error,
+                    SharedString::from(format!("A request named \"{name}\" already exists there.")),
+                ),
+                cx,
+            );
+            return false;
+        }
+        let previous = (self.collection_path.clone(), self.group_path.clone());
+        self.collection_path = Some(location.collection_path.clone());
+        self.group_path = location.group_path.clone();
+        self.request_data.name = name.to_string();
+        self.is_new = true;
+        if self.save_to(&location.collection_path, window, cx) {
+            self.set_collection_path(Some(location.collection_path.clone()), cx);
+            cx.emit(RequestEditorEvent::LocationChanged);
+            cx.emit(RequestEditorEvent::NameChanged);
+            true
         } else {
-            tracing::warn!("Cannot save request: no collection_id set");
+            (self.collection_path, self.group_path) = previous;
             false
         }
     }
@@ -2004,26 +2224,18 @@ impl RequestEditor {
             )
             .child(div().flex_1())
             .child(
-                h_flex()
-                    .gap_3()
-                    .items_center()
-                    .child(
-                        div()
-                            .w(px(200.))
-                            .child(Input::new(&self.name_input).text_sm()),
-                    )
-                    .child(
-                        Button::new("save-request")
-                            .primary()
-                            .compact()
-                            .label("Save Request")
-                            .icon(IconName::Save)
-                            // The shortcut as bound, which the user can change.
-                            .children(Kbd::binding_for_action(&Save, Some(CONTEXT), window))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.save_request(window, cx);
-                            })),
-                    ),
+                h_flex().gap_3().items_center().child(
+                    Button::new("save-request")
+                        .primary()
+                        .compact()
+                        .label("Save Request")
+                        .icon(IconName::Save)
+                        // The shortcut as bound, which the user can change.
+                        .children(Kbd::binding_for_action(&Save, Some(CONTEXT), window))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.save_request(window, cx);
+                        })),
+                ),
             )
     }
 
@@ -2366,16 +2578,6 @@ impl RequestEditor {
         });
         self._subscriptions.push(query_param_subscription);
 
-        // Set up subscription for name input changes (for dirty state)
-        let name_input = self.name_input.clone();
-        let name_subscription =
-            cx.subscribe(&name_input, |this, _input, event: &InputEvent, cx| {
-                if let InputEvent::Change = event {
-                    this.recompute_dirty(cx);
-                }
-            });
-        self._subscriptions.push(name_subscription);
-
         // Set up subscription for method select changes (for dirty state)
         let method_select = self.method_select.clone();
         let method_subscription = cx.subscribe(
@@ -2565,9 +2767,14 @@ impl RequestEditor {
         &self.method_select
     }
 
-    /// Get the name input entity for external subscriptions
-    pub fn name_input(&self) -> &Entity<InputState> {
-        &self.name_input
+    /// The request's name.
+    pub fn name(&self) -> &str {
+        &self.request_data.name
+    }
+
+    /// Whether the request has never been saved.
+    pub fn is_new(&self) -> bool {
+        self.is_new || self.collection_path.as_deref().is_none_or(str::is_empty)
     }
 }
 

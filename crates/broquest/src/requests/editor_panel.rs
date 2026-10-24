@@ -128,6 +128,40 @@ impl EditorPanel {
             &manager,
             window,
             move |this, _manager, event: &CollectionManagerEvent, window, cx| {
+                match event {
+                    CollectionManagerEvent::RequestRenamed {
+                        collection_path,
+                        group_path,
+                        old_name,
+                        new_name,
+                    } => {
+                        this.follow_request_rename(
+                            collection_path,
+                            group_path.as_deref(),
+                            old_name,
+                            new_name,
+                            cx,
+                        );
+                        return;
+                    }
+                    CollectionManagerEvent::GroupRenamed {
+                        collection_path,
+                        old_name,
+                        new_name,
+                        old_path,
+                        new_path,
+                    } => {
+                        this.follow_group_rename(
+                            collection_path,
+                            (old_name, old_path),
+                            (new_name, new_path),
+                            window,
+                            cx,
+                        );
+                        return;
+                    }
+                    _ => {}
+                }
                 if let CollectionManagerEvent::EnvironmentsChanged { collection_path } = event {
                     let path = collection_path.to_string();
                     let editors: Vec<Entity<RequestEditor>> = this
@@ -186,6 +220,7 @@ impl EditorPanel {
             active_tab: self.active_tab_ix,
             request_tab: request.is_some(),
             json_response: request.is_some_and(|editor| editor.has_json_response()),
+            saved_request_tab: request.is_some_and(|editor| !editor.is_new()),
         }
     }
 
@@ -310,39 +345,7 @@ impl EditorPanel {
             is_dirty: false,
         };
 
-        // Set up subscriptions to update tab title when request name or method changes
-        let name_input = request_editor.read(cx).name_input().clone();
-        let name_input_for_closure = name_input.clone();
-        let name_subscription = cx.subscribe_in(&name_input, window, {
-            move |editor_panel: &mut Self, _input_state, event: &InputEvent, _window, cx| {
-                if let InputEvent::Change = event {
-                    // Find the request tab that corresponds to this request editor
-                    for tab in editor_panel.tabs.iter_mut() {
-                        if let TabType::Request(request_tab) = tab {
-                            // Check if this is the same request editor by comparing the name_input entity
-                            if request_tab.request_editor.read(cx).name_input().clone()
-                                == name_input_for_closure
-                            {
-                                let current_name = request_tab
-                                    .request_editor
-                                    .read(cx)
-                                    .name_input()
-                                    .read(cx)
-                                    .value()
-                                    .to_string();
-
-                                if request_tab.title != current_name {
-                                    request_tab.title = current_name;
-                                    cx.notify();
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        self._subscriptions.push(name_subscription);
+        // Set up a subscription to update the tab when the request's method changes
 
         let method_select = request_editor.read(cx).method_select().clone();
         let method_select_for_closure = method_select.clone();
@@ -391,6 +394,10 @@ impl EditorPanel {
                         cx.notify();
                         return;
                     }
+                    RequestEditorEvent::NameChanged | RequestEditorEvent::LocationChanged => {
+                        editor_panel.sync_request_tab(&request_editor_for_closure, _window, cx);
+                        return;
+                    }
                 };
                 for tab in editor_panel.tabs.iter_mut() {
                     if let TabType::Request(request_tab) = tab
@@ -411,6 +418,107 @@ impl EditorPanel {
         self.active_tab_ix = self.tabs.len() - 1;
         self.scroll_tabbar_to_active();
 
+        cx.notify();
+    }
+
+    /// Bring the tab of `editor` up to date with its request's name and, after
+    /// its first save, its collection.
+    fn sync_request_tab(
+        &mut self,
+        editor: &Entity<RequestEditor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (name, collection_path) = {
+            let editor = editor.read(cx);
+            (
+                editor.name().to_string(),
+                editor.collection_path().unwrap_or_default().to_string(),
+            )
+        };
+        let collection_name = CollectionManager::global(cx)
+            .read(cx)
+            .get_collection_by_path(&collection_path)
+            .map(|info| info.data.name.clone())
+            .unwrap_or_default();
+        let mut moved = false;
+        for tab in &mut self.tabs {
+            if let TabType::Request(tab) = tab
+                && &tab.request_editor == editor
+            {
+                tab.title = name;
+                if tab.collection_path != collection_path {
+                    tab.collection_path = collection_path.clone();
+                    tab.collection_name = collection_name;
+                    moved = true;
+                }
+                break;
+            }
+        }
+        if moved {
+            self.load_environments_for_request(Some(&collection_path), editor, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Give open tabs of a renamed request its new name.
+    fn follow_request_rename(
+        &mut self,
+        collection_path: &str,
+        group_path: Option<&str>,
+        old_name: &str,
+        new_name: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let editors: Vec<Entity<RequestEditor>> = self
+            .tabs
+            .iter()
+            .filter_map(|tab| match tab {
+                TabType::Request(tab) if tab.collection_path == collection_path => {
+                    let editor = tab.request_editor.read(cx);
+                    (!editor.is_new()
+                        && editor.group_path() == group_path
+                        && editor.name() == old_name)
+                        .then(|| tab.request_editor.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        for editor in editors {
+            // The editor's NameChanged event updates the tab's title.
+            editor.update(cx, |editor, cx| editor.apply_rename(new_name, cx));
+        }
+    }
+
+    /// Move open tabs in a renamed group to its new path and name.
+    fn follow_group_rename(
+        &mut self,
+        collection_path: &str,
+        (old_name, old_path): (&str, &str),
+        (new_name, new_path): (&str, &str),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for tab in &mut self.tabs {
+            match tab {
+                TabType::Request(tab) if tab.collection_path == collection_path => {
+                    tab.request_editor.update(cx, |editor, _| {
+                        if editor.group_path() == Some(old_path) {
+                            editor.set_group_path(Some(new_path.to_string()));
+                        }
+                    });
+                }
+                TabType::Group(tab) if tab.collection_path == collection_path => {
+                    let renamed = tab.group_editor.update(cx, |editor, cx| {
+                        editor.follow_rename(old_name, new_name, window, cx)
+                    });
+                    if renamed {
+                        tab.title = new_name.to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
         cx.notify();
     }
 

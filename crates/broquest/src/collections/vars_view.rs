@@ -60,6 +60,9 @@ impl VarsView {
                     | CollectionManagerEvent::RuntimeVarsChanged { collection_path } => {
                         this.collection_path.as_deref() == Some(collection_path.as_ref())
                     }
+                    // A rename changes no variables.
+                    CollectionManagerEvent::RequestRenamed { .. }
+                    | CollectionManagerEvent::GroupRenamed { .. } => false,
                 };
                 if relevant {
                     this.refresh_from_manager(cx);

@@ -46,6 +46,8 @@ pub struct PaletteContext {
     pub request_tab: bool,
     /// The active request has a JSON response to filter.
     pub json_response: bool,
+    /// The active tab is a request that was saved, which can be renamed.
+    pub saved_request_tab: bool,
 }
 
 impl PaletteContext {
@@ -57,6 +59,7 @@ impl PaletteContext {
             | CommandType::CopyResponse
             | CommandType::FormatBody => self.request_tab,
             CommandType::FilterResponse => self.json_response,
+            CommandType::RenameRequest => self.saved_request_tab,
             CommandType::CloseTab | CommandType::CloseAllTabs => self.tab_count > 0,
             CommandType::CloseOtherTabs | CommandType::NextTab | CommandType::PrevTab => {
                 self.tab_count > 1
@@ -82,6 +85,7 @@ pub enum CommandType {
     CopyResponse,
     FormatBody,
     FilterResponse,
+    RenameRequest,
     CloseTab,
     CloseOtherTabs,
     CloseTabsToTheLeft,
@@ -408,6 +412,7 @@ fn keybinding_for_command(
         CommandType::CopyResponse => (Box::new(crate::requests::CopyResponse), request),
         CommandType::FormatBody => (Box::new(crate::requests::FormatBody), request),
         CommandType::FilterResponse => (Box::new(crate::requests::FilterResponse), request),
+        CommandType::RenameRequest => (Box::new(crate::collections::RenameItem), None),
         CommandType::NewRequest => (Box::new(crate::app::NewScratchRequest), None),
         CommandType::NewCollection => (Box::new(crate::app::OpenNewCollectionTab), None),
         CommandType::OpenCollection => (Box::new(crate::app::OpenCollection), None),
@@ -449,6 +454,9 @@ fn execute_command(cmd: &CommandType, window: &mut Window, cx: &mut App) {
         }
         CommandType::FilterResponse => {
             window.dispatch_action(Box::new(crate::requests::FilterResponse), cx);
+        }
+        CommandType::RenameRequest => {
+            window.dispatch_action(Box::new(crate::collections::RenameItem), cx);
         }
         CommandType::CloseTab => {
             window.dispatch_action(Box::new(crate::requests::CloseTab), cx);
@@ -640,6 +648,12 @@ fn build_commands(context: PaletteContext, cx: &App) -> Vec<CommandItem> {
             "Request",
             CommandType::FilterResponse,
             &["search", "query", "find"],
+        ),
+        command(
+            "Rename Request",
+            "Request",
+            CommandType::RenameRequest,
+            &["name"],
         ),
         command(
             "New Request",
@@ -1009,6 +1023,7 @@ mod tests {
             active_tab: 0,
             request_tab: true,
             json_response: false,
+            saved_request_tab: true,
         };
         assert!(context.allows(&CommandType::SendRequest));
         assert!(!context.allows(&CommandType::FilterResponse));

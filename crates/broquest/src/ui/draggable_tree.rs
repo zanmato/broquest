@@ -30,7 +30,8 @@ use gpui_kit::component::{
 
 use crate::ui::actions::{Confirm, SelectDown, SelectLeft, SelectRight, SelectUp};
 
-const CONTEXT: &str = "BroDraggableTree";
+/// The key context of a draggable tree.
+pub(crate) const CONTEXT: &str = "BroDraggableTree";
 
 struct TreeItemState {
     expanded: bool,
@@ -373,14 +374,17 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
         &self.entries
     }
 
-    /// Set the tree items.
+    /// Set the tree items. The selected item stays selected when the new
+    /// items still hold it.
     pub fn set_items(&mut self, items: impl Into<Vec<TreeItem>>, cx: &mut Context<Self>) {
+        let selected_id = self.selected_entry().map(|entry| entry.item().id.clone());
         let items = items.into();
         self.entries.clear();
         for item in items.into_iter() {
             self.add_entry(item, 0);
         }
-        self.selected_ix = None;
+        self.selected_ix =
+            selected_id.and_then(|id| self.entries.iter().position(|entry| entry.item().id == id));
         cx.notify();
     }
 
@@ -408,6 +412,44 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
         self.scroll_handle.scroll_to_item(ix, ScrollStrategy::Top);
         cx.notify();
         true
+    }
+
+    /// Select and scroll to the item with `id`, expanding the folders that
+    /// hold it. Returns whether it was found.
+    pub fn select_item(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
+        fn open_path(item: &TreeItem, id: &str) -> bool {
+            if item.id.as_ref() == id {
+                return true;
+            }
+            let holds = item.children.iter().any(|child| open_path(child, id));
+            if holds {
+                item.state.borrow_mut().expanded = true;
+            }
+            holds
+        }
+        let roots: Vec<TreeItem> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.is_root())
+            .map(|entry| entry.item().clone())
+            .collect();
+        if !roots.iter().any(|root| open_path(root, id)) {
+            return false;
+        }
+        self.rebuild_entries();
+        let Some(ix) = self.entries.iter().position(|e| e.item().id.as_ref() == id) else {
+            return false;
+        };
+        self.selected_ix = Some(ix);
+        self.scroll_handle
+            .scroll_to_item(ix, ScrollStrategy::Center);
+        cx.notify();
+        true
+    }
+
+    /// Give the tree keyboard focus.
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.focus_handle.focus(window, cx);
     }
 
     /// Get the currently selected entry, if any.

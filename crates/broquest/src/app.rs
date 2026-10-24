@@ -162,45 +162,6 @@ impl BroquestApp {
                     });
                 }
 
-                if let AppEvent::NewRequest {
-                    collection_path,
-                    group_path,
-                } = event
-                {
-                    tracing::info!(
-                        "Received NewRequest event for collection_path: {:?}, group_path: {:?}",
-                        collection_path,
-                        group_path
-                    );
-
-                    // Create a new empty request
-                    let request_data = RequestData {
-                        name: "New Request".to_string(),
-                        method: HttpMethod::Get,
-                        url: "".to_string(),
-                        path_params: Vec::new(),
-                        query_params: Vec::new(),
-                        headers: Vec::new(),
-                        body: "".to_string(),
-                        auth: AuthType::None,
-                        pre_request_script: None,
-                        post_response_script: None,
-                        vars: Vec::new(),
-                        script_dialect: Default::default(),
-                        http_file: None,
-                    };
-
-                    editor_panel_clone.update(cx, |editor_panel, cx| {
-                        editor_panel.create_and_add_request_tab(
-                            request_data.clone(),
-                            collection_path.to_string(),
-                            group_path.as_ref().map(|gp| gp.to_string()),
-                            window,
-                            cx,
-                        );
-                    });
-                }
-
                 if let AppEvent::CreateNewCollectionTab {
                     collection_data,
                     collection_path,
@@ -370,6 +331,33 @@ impl BroquestApp {
         editor_panel.update(cx, |panel, cx| {
             panel.restore_tabs(&session.tabs, session.active_tab, window, cx);
         });
+    }
+
+    /// Rename the active request in the sidebar, showing the sidebar first.
+    fn rename_active_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor_panel.read(cx).active_request_editor() else {
+            return;
+        };
+        let editor = editor.read(cx);
+        if editor.is_new() {
+            window.push_notification(
+                (
+                    NotificationType::Info,
+                    "Save the request first, then it can be renamed.",
+                ),
+                cx,
+            );
+            return;
+        }
+        let collection_path = editor.collection_path().unwrap_or_default().to_string();
+        let group_path = editor.group_path().map(str::to_string);
+        let name = editor.name().to_string();
+        self.sidebar_tab = SidebarTab::Collections;
+        self.sidebar_collapsed = false;
+        self.collections_panel.update(cx, |panel, cx| {
+            panel.rename_request(&collection_path, group_path.as_deref(), &name, window, cx);
+        });
+        cx.notify();
     }
 
     /// Run `f` on the active tab's request editor, when the active tab is a
@@ -992,6 +980,13 @@ impl Render for BroquestApp {
                     this.with_active_request(cx, |editor, cx| {
                         editor.focus_response_filter(window, cx)
                     });
+                }),
+            )
+            // F2 outside the sidebar renames the active request there. In the
+            // sidebar, the sidebar renames its selection itself.
+            .on_action(
+                cx.listener(|this, _: &crate::collections::RenameItem, window, cx| {
+                    this.rename_active_request(window, cx);
                 }),
             )
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
