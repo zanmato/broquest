@@ -8,7 +8,8 @@ use gpui_kit::component::{ActiveTheme, StyledExt, h_flex};
 use crate::domain::HttpMethod;
 
 /// Wide enough for the longest label, so request names line up.
-const SLOT_WIDTH: f32 = 42.;
+/// The width of a fixed width badge, for icons that line up with badges.
+pub(crate) const SLOT_WIDTH: f32 = 42.;
 
 #[derive(IntoElement)]
 pub struct MethodBadge {

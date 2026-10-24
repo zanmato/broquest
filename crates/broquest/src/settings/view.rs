@@ -152,7 +152,12 @@ impl SettingsView {
     }
 
     /// Save a setting with debouncing
-    fn save_setting_debounced(&mut self, key: String, value: String, cx: &mut Context<Self>) {
+    pub(super) fn save_setting_debounced(
+        &mut self,
+        key: String,
+        value: String,
+        cx: &mut Context<Self>,
+    ) {
         // Cancel any existing save task for this key
         self.save_tasks.remove(&key);
 
@@ -482,6 +487,7 @@ impl SettingsView {
                     self.theme_browser.clone().expect("created before the pages"),
                 ),
             ]),
+            super::keybindings_page::keybindings_page(view_handle),
         ]
     }
 }

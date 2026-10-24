@@ -17,7 +17,10 @@ use gpui_kit::component::{
 };
 
 #[allow(unused_imports)]
-use crate::requests::{CloseTab, NextTab, PrevTab};
+use crate::requests::{
+    CloseAllTabs, CloseOtherTabs, CloseScope, CloseTab, CloseTabsToTheLeft, CloseTabsToTheRight,
+    NextTab, PrevTab,
+};
 use crate::{
     app_database::{AppDatabase, CollectionData, UserSetting},
     app_events::AppEvent,
@@ -25,7 +28,7 @@ use crate::{
     collections::{CollectionManager, CollectionManagerEvent, CollectionsPanel},
     domain::{AuthType, HttpMethod, RequestData},
     history::HistoryPanel,
-    requests::EditorPanel,
+    requests::{EditorPanel, OpenTabsPanel},
     result_ext::ResultExt,
     session::{SESSION_KEY, Session},
     update_manager::{UpdateManager, UpdateState},
@@ -70,16 +73,18 @@ pub(crate) struct OpenRequestFromPalette {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarTab {
     Collections,
+    OpenTabs,
     History,
 }
 
 impl SidebarTab {
     /// Rail order, top to bottom.
-    const ALL: [SidebarTab; 2] = [Self::Collections, Self::History];
+    const ALL: [SidebarTab; 3] = [Self::Collections, Self::OpenTabs, Self::History];
 
     fn label(self) -> &'static str {
         match self {
             Self::Collections => "Collections",
+            Self::OpenTabs => "Open Tabs",
             Self::History => "History",
         }
     }
@@ -87,6 +92,7 @@ impl SidebarTab {
     fn icon(self) -> crate::ui::icon::IconName {
         match self {
             Self::Collections => crate::ui::icon::IconName::Folder,
+            Self::OpenTabs => crate::ui::icon::IconName::Files,
             Self::History => crate::ui::icon::IconName::History,
         }
     }
@@ -98,6 +104,7 @@ pub struct BroquestApp {
     sidebar_tab: SidebarTab,
     collections_panel: Entity<CollectionsPanel>,
     history_panel: Entity<HistoryPanel>,
+    open_tabs_panel: Entity<OpenTabsPanel>,
     editor_panel: Entity<EditorPanel>,
     command_palette: Entity<crate::ui::command_palette::CommandPalette>,
     app_menu_bar: Option<Entity<AppMenuBar>>,
@@ -120,6 +127,7 @@ impl BroquestApp {
         let history_panel = cx.new(|cx| HistoryPanel::new(window, cx));
 
         let editor_panel = cx.new(|cx| EditorPanel::new(window, cx));
+        let open_tabs_panel = cx.new(|cx| OpenTabsPanel::new(editor_panel.clone(), cx));
         let command_palette =
             cx.new(|cx| crate::ui::command_palette::CommandPalette::new(window, cx));
         let app_menu_bar = (!cfg!(target_os = "macos")).then(|| AppMenuBar::new(cx));
@@ -331,6 +339,7 @@ impl BroquestApp {
             sidebar_tab: SidebarTab::Collections,
             collections_panel,
             history_panel,
+            open_tabs_panel,
             editor_panel,
             command_palette,
             app_menu_bar,
@@ -360,6 +369,13 @@ impl BroquestApp {
         });
         editor_panel.update(cx, |panel, cx| {
             panel.restore_tabs(&session.tabs, session.active_tab, window, cx);
+        });
+    }
+
+    /// Close the tabs `scope` names around the active tab.
+    fn close_tabs(&mut self, scope: CloseScope, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor_panel.update(cx, |panel, cx| {
+            panel.close_tabs_around_active(scope, window, cx);
         });
     }
 
@@ -630,6 +646,8 @@ impl BroquestApp {
                                             path: dir_str.to_string(),
                                             position: 1,
                                             format: format.as_db_str().to_string(),
+                                            default_environment: None,
+                                            require_environment: false,
                                             created_at: chrono::Utc::now(),
                                             updated_at: chrono::Utc::now(),
                                         })
@@ -940,10 +958,22 @@ impl Render for BroquestApp {
                     panel.save_active_request(window, cx);
                 });
             }))
-            .on_action(cx.listener(|this, _: &CloseTab, _, cx| {
+            .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 this.editor_panel.update(cx, |panel, cx| {
-                    panel.close_active_tab(cx);
+                    panel.close_active_tab(window, cx);
                 });
+            }))
+            .on_action(cx.listener(|this, _: &CloseOtherTabs, window, cx| {
+                this.close_tabs(CloseScope::Others, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &CloseTabsToTheLeft, window, cx| {
+                this.close_tabs(CloseScope::Left, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &CloseTabsToTheRight, window, cx| {
+                this.close_tabs(CloseScope::Right, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &CloseAllTabs, window, cx| {
+                this.close_tabs(CloseScope::All, window, cx);
             }))
             .on_action(cx.listener(|this, _: &NextTab, _, cx| {
                 this.editor_panel.update(cx, |panel, cx| {
@@ -1040,6 +1070,11 @@ impl Render for BroquestApp {
                                                                 self.collections_panel.clone(),
                                                             )
                                                         }
+                                                        SidebarTab::OpenTabs => div()
+                                                            .flex_1()
+                                                            .min_h_0()
+                                                            .pt_2()
+                                                            .child(self.open_tabs_panel.clone()),
                                                         SidebarTab::History => div()
                                                             .flex_1()
                                                             .min_h_0()
@@ -1093,20 +1128,19 @@ const LOGO_ASPECT_RATIO: f32 = 4.75;
 
 const PALETTE_TRIGGER_HEIGHT: gpui::Pixels = px(26.);
 
+/// Bind the app's keys and install its menus. Called once at startup.
 fn init_menus(cx: &mut App) {
+    // User-customizable shortcuts, resolved from settings (defaults overlaid
+    // with any user overrides).
+    let settings = AppSettings::global(cx).settings.clone();
+    cx.bind_keys(crate::keybindings::customizable_key_bindings(&settings));
+
+    // Quit is platform-fixed and not user-configurable.
     cx.bind_keys([
         #[cfg(target_os = "macos")]
         gpui::KeyBinding::new("cmd-q", Quit, None),
         #[cfg(not(target_os = "macos"))]
         gpui::KeyBinding::new("alt-f4", Quit, None),
-        #[cfg(target_os = "macos")]
-        gpui::KeyBinding::new("cmd-,", OpenSettings, None),
-        #[cfg(not(target_os = "macos"))]
-        gpui::KeyBinding::new("ctrl-,", OpenSettings, None),
-        gpui::KeyBinding::new("secondary-k", ToggleCommandPalette, None),
-        gpui::KeyBinding::new("secondary-n", NewScratchRequest, None),
-        gpui::KeyBinding::new("ctrl-tab", NextTab, None),
-        gpui::KeyBinding::new("ctrl-shift-tab", PrevTab, None),
     ]);
 
     cx.set_menus(build_menu());

@@ -518,6 +518,8 @@ Accept: application/json
             path: dir.to_string_lossy().to_string(),
             position: 0,
             format: "http".to_string(),
+            default_environment: None,
+            require_environment: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

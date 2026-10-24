@@ -1,9 +1,9 @@
 use crate::ui::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
-    InteractiveElement as _, IntoElement, KeyBinding, ObjectFit, ParentElement as _, Render,
-    SharedString, StyleRefinement, Styled as _, StyledImage as _, Subscription, Task, Window,
-    actions, div, img, prelude::FluentBuilder, px,
+    InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _, Render, SharedString,
+    StyleRefinement, Styled as _, StyledImage as _, Subscription, Task, Window, actions, div, img,
+    prelude::FluentBuilder, px,
 };
 use gpui_kit::component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt, WindowExt,
@@ -38,14 +38,15 @@ use crate::ui::icon::IconName;
 use crate::ui::tab_badge::TabBadge;
 use crate::{app_events::AppEvent, environments::EnvironmentResolver};
 use crate::{
-    collections::{CollectionManager, EnvironmentToml},
+    collections::{CollectionManager, EnvironmentSettings, EnvironmentToml},
     http::HttpClientService,
 };
 use std::time::Duration;
 
-const CONTEXT: &str = "request_editor";
+/// The key context of the request editor, where its shortcuts apply.
+pub(crate) const CONTEXT: &str = "request_editor";
 
-actions!(request_editor, [Save, Send, CopyResponse]);
+actions!(request_editor, [Save, Send, CopyResponse, FormatBody]);
 
 /// Percent-encode text for a URL or form body. `{{variables}}` stay as they
 /// are, so they can still be resolved.
@@ -107,6 +108,34 @@ fn form_body(fields: &[KeyValuePair]) -> String {
         })
         .collect::<Vec<_>>()
         .join("&")
+}
+
+/// Which environment a request tab's dropdown selects, and whether it has a
+/// "No environment" choice.
+///
+/// `previous` is the selection before the environments were loaded again,
+/// `Some(None)` for "No environment", or `None` for a new tab. The returned
+/// index is into `environments`, `None` meaning "No environment".
+fn pick_environment(
+    environments: &[EnvironmentToml],
+    settings: &EnvironmentSettings,
+    previous: Option<Option<String>>,
+) -> (bool, Option<usize>) {
+    let position = |name: &str| environments.iter().position(|env| env.name == name);
+    let default = settings.default_environment.as_deref().and_then(position);
+    let selected = match previous {
+        // A new tab, or one whose environment is gone, gets the default.
+        None => default,
+        Some(Some(name)) => position(&name).or(default),
+        Some(None) => None,
+    };
+    // A collection without environments still needs one choice.
+    let allows_none = !settings.require_environment || environments.is_empty();
+    if allows_none {
+        (true, selected)
+    } else {
+        (false, selected.or(default).or(Some(0)))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -178,6 +207,10 @@ pub struct RequestEditor {
     group_path: Option<String>,
     method_select: Entity<SelectState<Vec<HttpMethod>>>,
     environment_select: Entity<SelectState<Vec<EnvironmentOption>>>,
+    /// Whether the environment dropdown has the "No environment" row.
+    allows_no_environment: bool,
+    /// Whether the collection's environments were loaded into the dropdown.
+    environments_loaded: bool,
     content_type_select: Entity<SelectState<Vec<ContentType>>>,
     name_input: Entity<InputState>,
     /// A URL bar with tree-sitter highlighting: a code editor laid out as one line.
@@ -211,14 +244,6 @@ pub struct RequestEditor {
 }
 
 impl RequestEditor {
-    pub fn init(cx: &mut App) {
-        cx.bind_keys([
-            KeyBinding::new("secondary-s", Save, Some(CONTEXT)),
-            KeyBinding::new("secondary-enter", Send, Some(CONTEXT)),
-            KeyBinding::new("secondary-shift-c", CopyResponse, Some(CONTEXT)),
-        ]);
-    }
-
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let method_select = cx.new(|cx| {
             SelectState::new(
@@ -378,6 +403,8 @@ impl RequestEditor {
             group_path: None,
             method_select,
             environment_select,
+            allows_no_environment: true,
+            environments_loaded: false,
             content_type_select,
             name_input,
             url_input,
@@ -468,6 +495,16 @@ impl RequestEditor {
 
     pub fn set_group_path(&mut self, group_path: Option<String>) {
         self.group_path = group_path;
+    }
+
+    /// Treat the request as not saved yet, as for a copy of another request,
+    /// so it shows as changed and closing it asks to save.
+    pub fn mark_unsaved(&mut self, cx: &mut Context<Self>) {
+        // Saved data under no name never matches the request's own.
+        let mut original = self.get_request_data(cx);
+        original.name.clear();
+        self.original_request_data = Some(original);
+        self.recompute_dirty(cx);
     }
 
     pub fn collection_path(&self) -> Option<&str> {
@@ -611,38 +648,53 @@ impl RequestEditor {
         cx.notify();
     }
 
+    /// Fill the environment dropdown with the collection's environments.
+    ///
+    /// A new tab selects the collection's default environment. Later calls,
+    /// after the environments changed elsewhere, keep the current selection
+    /// when it still exists. When the collection requires an environment the
+    /// "No environment" choice is left out.
     pub fn set_environments(
         &mut self,
         environments: &[EnvironmentToml],
+        settings: &EnvironmentSettings,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Preserve the currently-selected environment across the refresh so an
-        // external change (e.g. adding another environment in the collection
-        // editor) doesn't silently reset the dropdown to "No environment".
-        let selected_name = self.get_selected_environment(cx).map(|env| env.name);
+        let previous = self
+            .environments_loaded
+            .then(|| self.selected_environment_name(cx));
+        let (allows_none, selected) = pick_environment(environments, settings, previous);
 
-        let mut env_options = vec![EnvironmentOption::None];
-
-        // Add each environment to the options
-        for env in environments {
-            env_options.push(EnvironmentOption::Environment(env.clone()));
+        let mut env_options = Vec::with_capacity(environments.len() + 1);
+        if allows_none {
+            env_options.push(EnvironmentOption::None);
         }
+        env_options.extend(
+            environments
+                .iter()
+                .cloned()
+                .map(EnvironmentOption::Environment),
+        );
 
-        // Row 0 is the "No environment" option; environments follow in order.
-        // Fall back to row 0 if the previous selection no longer exists.
-        let selected_row = selected_name
-            .and_then(|name| environments.iter().position(|env| env.name == name))
-            .map_or(0, |index| index + 1);
+        self.allows_no_environment = allows_none;
+        self.environments_loaded = true;
+        let row = selected.map_or(0, |index| self.environment_row(index));
 
         // Mutate the existing SelectState (rather than replacing the entity) so
         // the selection-change subscription set up in `new` stays intact.
         self.environment_select.update(cx, |state, cx| {
             state.set_items(env_options, window, cx);
-            state.set_selected_index(Some(IndexPath::default().row(selected_row)), window, cx);
+            state.set_selected_index(Some(IndexPath::default().row(row)), window, cx);
         });
 
         cx.notify();
+    }
+
+    /// The dropdown row of the environment at `index`, after the "No
+    /// environment" row when there is one.
+    fn environment_row(&self, index: usize) -> usize {
+        index + usize::from(self.allows_no_environment)
     }
 
     /// Name of the selected environment, if one is selected.
@@ -656,8 +708,6 @@ impl RequestEditor {
     /// Select the environment called `name`. Does nothing when the request's
     /// collection has no environment by that name.
     pub fn select_environment(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
-        // Rows match `set_environments`: "No environment" first, then the
-        // collection's environments in order.
         let Some(collection_path) = self.collection_path.as_deref() else {
             return;
         };
@@ -665,7 +715,7 @@ impl RequestEditor {
             .read(cx)
             .get_collection_environments(collection_path)
             .and_then(|envs| envs.iter().position(|env| env.name == name))
-            .map(|index| index + 1);
+            .map(|index| self.environment_row(index));
         if let Some(row) = row {
             self.environment_select.update(cx, |state, cx| {
                 state.set_selected_index(Some(IndexPath::default().row(row)), window, cx);
@@ -691,6 +741,34 @@ impl RequestEditor {
     }
 
     pub fn get_request_data(&self, cx: &Context<Self>) -> RequestData {
+        let mut data = self.edited_request_data(cx);
+
+        // Set Content-Type header from the dropdown only if the user hasn't set one
+        // in the headers editor. A request from a .http file sends the headers
+        // its file has.
+        if data.http_file.is_none()
+            && let Some(selected_content_type) = self.content_type_select.read(cx).selected_value()
+        {
+            let has_content_type = data
+                .headers
+                .iter()
+                .any(|h| h.key.to_lowercase() == "content-type" && h.enabled);
+
+            if !has_content_type {
+                data.headers.push(KeyValuePair {
+                    key: "Content-Type".to_string(),
+                    value: selected_content_type.as_str().to_string(),
+                    enabled: true,
+                });
+            }
+        }
+        data
+    }
+
+    /// The request as edited, without the Content-Type header the body type
+    /// dropdown adds when the request is sent or saved. A copy of the request
+    /// starts from this, so it shows the same headers as the original.
+    pub fn edited_request_data(&self, cx: &Context<Self>) -> RequestData {
         let mut data = self.request_data.clone();
 
         // Update method from select
@@ -759,26 +837,6 @@ impl RequestEditor {
         data.pre_request_script = pre_request_script;
         data.post_response_script = post_response_script;
         data.vars = vars;
-
-        // Set Content-Type header from the dropdown only if the user hasn't set one
-        // in the headers editor. A request from a .http file sends the headers
-        // its file has.
-        if data.http_file.is_none()
-            && let Some(selected_content_type) = self.content_type_select.read(cx).selected_value()
-        {
-            let has_content_type = data
-                .headers
-                .iter()
-                .any(|h| h.key.to_lowercase() == "content-type" && h.enabled);
-
-            if !has_content_type {
-                data.headers.push(KeyValuePair {
-                    key: "Content-Type".to_string(),
-                    value: selected_content_type.as_str().to_string(),
-                    enabled: true,
-                });
-            }
-        }
 
         // Update auth from auth editor
         data.auth = self.auth_editor.read(cx).get_auth(cx);
@@ -1451,7 +1509,32 @@ impl RequestEditor {
         self.group_path = Some(file);
     }
 
-    pub fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Prettify the body when it is JSON or XML. The change can be undone in
+    /// the body editor. A body that can't be formatted is left as it is.
+    pub fn format_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.uses_form_editor(cx) {
+            return;
+        }
+        let body = self.body_input.read(cx).value().to_string();
+        if body.trim().is_empty() {
+            return;
+        }
+        let content_type = self.content_type_select.read(cx).selected_value().copied();
+        match super::format_body::format_body(&body, content_type) {
+            Ok(formatted) if formatted != body => {
+                self.body_input.update(cx, |state, cx| {
+                    state.replace_all(formatted, window, cx);
+                });
+            }
+            Ok(_) => {}
+            Err(error) => {
+                window.push_notification((NotificationType::Warning, error.message()), cx);
+            }
+        }
+    }
+
+    /// Save the request to its collection. Returns whether it was saved.
+    pub fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         // Get current request data
         let request_data = self.get_request_data(cx);
 
@@ -1497,6 +1580,7 @@ impl RequestEditor {
                         ),
                         cx,
                     );
+                    true
                 }
                 Err(e) => {
                     tracing::error!("Failed to save request: {}", e);
@@ -1504,10 +1588,12 @@ impl RequestEditor {
                         (NotificationType::Error, SharedString::from(e.to_string())),
                         cx,
                     );
+                    false
                 }
             }
         } else {
             tracing::warn!("Cannot save request: no collection_id set");
+            false
         }
     }
 
@@ -1729,13 +1815,14 @@ impl RequestEditor {
         )
     }
 
-    fn render_tab_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_tab_content(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         match self.active_tab {
             RequestTab::Path => div().size_full().child(self.path_param_editor.clone()),
             RequestTab::Query => div().size_full().child(self.query_param_editor.clone()),
             RequestTab::Body => {
                 let selected_content_type =
                     self.content_type_select.read(cx).selected_value().copied();
+                let shows_text = !self.uses_form_editor(cx);
 
                 div().size_full().child(
                     v_flex()
@@ -1757,7 +1844,26 @@ impl RequestEditor {
                                     div()
                                         .w(px(150.))
                                         .child(Select::new(&self.content_type_select).small()),
-                                ),
+                                )
+                                .when(shows_text, |this| {
+                                    this.child(div().flex_1()).child(
+                                        Button::new("format-body")
+                                            .ghost()
+                                            .small()
+                                            .icon(IconName::Braces)
+                                            .label("Format")
+                                            .tooltip("Prettify a JSON or XML body")
+                                            // The shortcut as bound, which the user can change.
+                                            .children(Kbd::binding_for_action(
+                                                &FormatBody,
+                                                Some(CONTEXT),
+                                                window,
+                                            ))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.format_body(window, cx);
+                                            })),
+                                    )
+                                }),
                         )
                         .child(match selected_content_type {
                             Some(ContentType::Form) if self.request_data.http_file.is_none() => {
@@ -1801,7 +1907,7 @@ impl RequestEditor {
         }
     }
 
-    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_status_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status_text = if let Some(status) = self.response_data.status_code {
             let text = format!(
                 "{} {}",
@@ -1877,10 +1983,8 @@ impl RequestEditor {
                             .compact()
                             .label("Save Request")
                             .icon(IconName::Save)
-                            .children(vec![
-                                Kbd::new(crate::ui::keybinding::parse_keystroke("secondary-s"))
-                                    .into_any_element(),
-                            ])
+                            // The shortcut as bound, which the user can change.
+                            .children(Kbd::binding_for_action(&Save, Some(CONTEXT), window))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.save_request(window, cx);
                             })),
@@ -2566,7 +2670,7 @@ impl RequestEditor {
                             resizable_panel()
                                 .size(px(200.))
                                 .size_range(px(100.)..gpui::Pixels::MAX)
-                                .child(self.render_tab_content(cx)),
+                                .child(self.render_tab_content(window, cx)),
                         )
                         .child(resizable_panel().child(self.render_response_area(
                             EditorLayout::Vertical,
@@ -2575,7 +2679,7 @@ impl RequestEditor {
                         ))),
                 ),
             )
-            .child(self.render_status_bar(cx))
+            .child(self.render_status_bar(window, cx))
     }
 
     fn render_horizontal_layout(
@@ -2610,7 +2714,7 @@ impl RequestEditor {
                                             div()
                                                 .flex_1()
                                                 .min_h_0()
-                                                .child(self.render_tab_content(cx)),
+                                                .child(self.render_tab_content(window, cx)),
                                         ),
                                 ),
                         )
@@ -2621,7 +2725,7 @@ impl RequestEditor {
                         ))),
                 ),
             )
-            .child(self.render_status_bar(cx))
+            .child(self.render_status_bar(window, cx))
     }
 }
 
@@ -2643,6 +2747,11 @@ impl Render for RequestEditor {
             .on_action(cx.listener(|this: &mut RequestEditor, &Send, window, cx| {
                 this.send_request(window, cx);
             }))
+            .on_action(
+                cx.listener(|this: &mut RequestEditor, &FormatBody, window, cx| {
+                    this.format_body(window, cx);
+                }),
+            )
             .on_action(
                 cx.listener(|this: &mut RequestEditor, &CopyResponse, window, cx| {
                     this.copy_response(window, cx);
@@ -2757,5 +2866,76 @@ mod form_tests {
         );
         assert_eq!(form_body(&[field("token", "{{token}}")]), "token={{token}}");
         assert!(parse_form_body("").is_empty());
+    }
+
+    fn environments(names: &[&str]) -> Vec<EnvironmentToml> {
+        names
+            .iter()
+            .map(|name| EnvironmentToml {
+                name: name.to_string(),
+                variables: HashMap::new(),
+            })
+            .collect()
+    }
+
+    fn settings(default: Option<&str>, require: bool) -> EnvironmentSettings {
+        EnvironmentSettings {
+            default_environment: default.map(str::to_string),
+            require_environment: require,
+        }
+    }
+
+    #[test]
+    fn new_tab_selects_the_default_environment() {
+        let envs = environments(&["dev", "prod"]);
+        assert_eq!(
+            pick_environment(&envs, &settings(Some("prod"), false), None),
+            (true, Some(1))
+        );
+        // Without a default a new tab has no environment.
+        assert_eq!(
+            pick_environment(&envs, &settings(None, false), None),
+            (true, None)
+        );
+        // A default that no longer exists is ignored.
+        assert_eq!(
+            pick_environment(&envs, &settings(Some("gone"), false), None),
+            (true, None)
+        );
+    }
+
+    #[test]
+    fn reload_keeps_the_selection() {
+        let envs = environments(&["dev", "prod"]);
+        let prod = settings(Some("prod"), false);
+        assert_eq!(
+            pick_environment(&envs, &prod, Some(Some("dev".into()))),
+            (true, Some(0))
+        );
+        // "No environment" stays chosen.
+        assert_eq!(pick_environment(&envs, &prod, Some(None)), (true, None));
+        // A removed environment falls back to the default.
+        assert_eq!(
+            pick_environment(&envs, &prod, Some(Some("gone".into()))),
+            (true, Some(1))
+        );
+    }
+
+    #[test]
+    fn required_environment_hides_no_environment() {
+        let envs = environments(&["dev", "prod"]);
+        assert_eq!(
+            pick_environment(&envs, &settings(None, true), None),
+            (false, Some(0))
+        );
+        assert_eq!(
+            pick_environment(&envs, &settings(Some("prod"), true), Some(None)),
+            (false, Some(1))
+        );
+        // A collection without environments keeps "No environment".
+        assert_eq!(
+            pick_environment(&[], &settings(None, true), None),
+            (true, None)
+        );
     }
 }

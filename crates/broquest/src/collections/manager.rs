@@ -65,6 +65,15 @@ pub struct CollectionInfo {
     pub runtime_vars: HashMap<String, serde_json::Value>,
 }
 
+/// How a collection's request tabs pick an environment.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnvironmentSettings {
+    /// The environment a request tab selects when it opens.
+    pub default_environment: Option<String>,
+    /// Hide the "No environment" choice, so a request always has one.
+    pub require_environment: bool,
+}
+
 pub struct CollectionManager {
     collections: HashMap<String, CollectionInfo>, // collection_path -> CollectionInfo
     /// The last exchange of each request this session, by collection path and
@@ -96,6 +105,45 @@ impl CollectionManager {
         self.collections
             .get(collection_path)
             .map(|info| info.toml.environments.clone())
+    }
+
+    /// How request tabs of the collection pick an environment.
+    pub fn environment_settings(&self, collection_path: &str) -> EnvironmentSettings {
+        self.collections
+            .get(collection_path)
+            .map(|info| EnvironmentSettings {
+                default_environment: info.data.default_environment.clone(),
+                require_environment: info.data.require_environment,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Change how request tabs of the collection pick an environment. Only
+    /// the cached collection changes, the caller saves it to the database.
+    pub fn set_environment_settings(
+        &mut self,
+        collection_path: &str,
+        settings: EnvironmentSettings,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(info) = self.collections.get_mut(collection_path) else {
+            return;
+        };
+        info.data.default_environment = settings.default_environment;
+        info.data.require_environment = settings.require_environment;
+        cx.emit(CollectionManagerEvent::EnvironmentsChanged {
+            collection_path: collection_path.to_string().into(),
+        });
+    }
+
+    /// Cache a collection that was just read from disk. Opening a collection
+    /// that is already open keeps its environment settings.
+    fn insert_loaded(&mut self, mut info: CollectionInfo) {
+        if let Some(existing) = self.collections.get(&info.data.path) {
+            info.data.default_environment = existing.data.default_environment.clone();
+            info.data.require_environment = existing.data.require_environment;
+        }
+        self.collections.insert(info.data.path.clone(), info);
     }
 
     /// Find a saved request by its name, at the collection root or in the
@@ -271,12 +319,14 @@ impl CollectionManager {
             path: dir.to_string_lossy().to_string(),
             position: 0,
             format: CollectionFormat::Http.as_db_str().to_string(),
+            default_environment: None,
+            require_environment: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
         let info = Self::build_http_info(dir, data)?;
         let toml = info.toml.clone();
-        self.collections.insert(info.data.path.clone(), info);
+        self.insert_loaded(info);
         self.sync_http_watches(cx);
         cx.emit(CollectionManagerEvent::CollectionsChanged);
         Ok(toml)
@@ -368,6 +418,8 @@ impl CollectionManager {
                 path: path.to_string(),
                 position: 0,
                 format: CollectionFormat::OpenCollection.as_db_str().to_string(),
+                default_environment: None,
+                require_environment: false,
                 created_at: now,
                 updated_at: now,
             },
@@ -404,12 +456,14 @@ impl CollectionManager {
             path: dir.to_string_lossy().to_string(),
             position: 0,
             format: CollectionFormat::OpenCollection.as_db_str().to_string(),
+            default_environment: None,
+            require_environment: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
         let info = self.build_opencollection_info(dir, data)?;
         let toml = info.toml.clone();
-        self.collections.insert(info.data.path.clone(), info);
+        self.insert_loaded(info);
         cx.emit(CollectionManagerEvent::CollectionsChanged);
         Ok(toml)
     }
@@ -460,6 +514,8 @@ impl CollectionManager {
                 path: collection_path.to_string_lossy().to_string(),
                 position: 0,
                 format: CollectionFormat::Broquest.as_db_str().to_string(),
+                default_environment: None,
+                require_environment: false,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },
@@ -474,8 +530,7 @@ impl CollectionManager {
             runtime_vars: HashMap::new(),
         };
 
-        self.collections
-            .insert(collection_info.data.path.clone(), collection_info);
+        self.insert_loaded(collection_info);
 
         cx.emit(CollectionManagerEvent::CollectionsChanged);
         Ok(collection_toml)
@@ -599,6 +654,8 @@ impl CollectionManager {
                         path: path.to_string(),
                         position: 0,
                         format: CollectionFormat::Broquest.as_db_str().to_string(),
+                        default_environment: None,
+                        require_environment: false,
                         created_at: now,
                         updated_at: now,
                     },

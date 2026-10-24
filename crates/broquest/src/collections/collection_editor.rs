@@ -1,7 +1,7 @@
 use crate::ui::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString,
-    Subscription, Window, actions, div, prelude::*, px,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Window,
+    actions, div, prelude::*, px,
 };
 use gpui_kit::component::{
     ActiveTheme, Icon, IndexPath, Sizable as _, StyledExt, WindowExt,
@@ -17,7 +17,7 @@ use gpui_kit::component::{
     text, v_flex,
 };
 
-use super::manager::{CollectionManager, CollectionManagerEvent};
+use super::manager::{CollectionManager, CollectionManagerEvent, EnvironmentSettings};
 use super::openapi::OpenAPIImporter;
 use super::types::{CollectionMeta, CollectionToml};
 
@@ -30,7 +30,8 @@ use crate::{
     ui::icon::IconName,
 };
 
-const CONTEXT: &str = "collection_editor";
+/// The key context of the collection editor, where its shortcuts apply.
+pub(crate) const CONTEXT: &str = "collection_editor";
 
 /// What to import into a newly-created collection.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -95,17 +96,12 @@ pub struct CollectionEditor {
     // Save this collection in Bruno's OpenCollection (YAML) format instead of
     // broquest's native TOML.
     use_opencollection: bool,
+    /// Hide "No environment" on this collection's request tabs.
+    require_environment: bool,
     _subscriptions: Vec<Subscription>,
 }
 
 impl CollectionEditor {
-    pub fn init(cx: &mut App) {
-        cx.bind_keys([
-            KeyBinding::new("secondary-s", Save, Some(CONTEXT)),
-            KeyBinding::new("secondary-e", ToggleDocsEdit, Some(CONTEXT)),
-        ]);
-    }
-
     fn on_toggle_docs_edit(
         &mut self,
         _: &ToggleDocsEdit,
@@ -207,7 +203,7 @@ impl CollectionEditor {
             },
         );
 
-        let editor = Self {
+        let mut editor = Self {
             active_tab: 0, // Collection tab
             collection_data,
             collection_path,
@@ -226,6 +222,7 @@ impl CollectionEditor {
             openapi_spec_path: None,
             wsdl_spec_input,
             use_opencollection: false,
+            require_environment: false,
             _subscriptions: vec![manager_subscription],
         };
 
@@ -240,7 +237,7 @@ impl CollectionEditor {
         // Always load from CollectionManager cache since we're using path-based approach.
         // Extract all needed data up front so the immutable borrow of `cx` ends
         // before we mutate the editor below.
-        let (environments, collection_vars) = {
+        let (environments, collection_vars, environment_settings) = {
             let collection_manager = CollectionManager::global(cx);
             let collection_manager = collection_manager.read(cx);
             let envs = collection_manager.get_collection_environments(&collection_path_for_lookup);
@@ -248,8 +245,10 @@ impl CollectionEditor {
                 .get_collection_by_path(&collection_path_for_lookup)
                 .map(|info| info.toml.collection.vars.clone())
                 .unwrap_or_default();
-            (envs, vars)
+            let settings = collection_manager.environment_settings(&collection_path_for_lookup);
+            (envs, vars, settings)
         };
+        editor.require_environment = environment_settings.require_environment;
 
         if let Some(environments) = &environments {
             tracing::info!(
@@ -259,7 +258,12 @@ impl CollectionEditor {
                 environments.iter().map(|e| &e.name).collect::<Vec<_>>()
             );
             editor.environment_editor.update(cx, |env_editor, cx| {
-                env_editor.load_environments(environments, window, cx);
+                env_editor.load_environments(
+                    environments,
+                    environment_settings.default_environment.as_deref(),
+                    window,
+                    cx,
+                );
             });
         } else {
             tracing::warn!(
@@ -327,14 +331,22 @@ impl CollectionEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let environments = CollectionManager::global(cx)
-            .read(cx)
-            .get_collection_environments(collection_path);
+        let manager = CollectionManager::global(cx);
+        let manager = manager.read(cx);
+        let environments = manager.get_collection_environments(collection_path);
+        let settings = manager.environment_settings(collection_path);
+        self.require_environment = settings.require_environment;
         if let Some(environments) = environments {
             self.environment_editor.update(cx, |env_editor, cx| {
-                env_editor.load_environments(&environments, window, cx);
+                env_editor.load_environments(
+                    &environments,
+                    settings.default_environment.as_deref(),
+                    window,
+                    cx,
+                );
             });
         }
+        cx.notify();
     }
 
     /// Show the Environments tab with the environment named `name`, its
@@ -480,6 +492,28 @@ impl CollectionEditor {
                     ),
                 ),
             })
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Switch::new("require-environment")
+                            .small()
+                            .label("Require an environment")
+                            .checked(self.require_environment)
+                            .on_click(cx.listener(|this, checked, _window, cx| {
+                                this.require_environment = *checked;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(
+                                "Requests can't use No environment. They open with the default environment, or the first one.",
+                            ),
+                    ),
+            )
     }
 
     /// The Collection tab: a horizontal split with the form on the left and the
@@ -684,10 +718,19 @@ impl CollectionEditor {
             _ => super::CollectionFormat::Broquest,
         };
 
+        let environment_settings = EnvironmentSettings {
+            default_environment: self
+                .environment_editor
+                .read(cx)
+                .default_environment_name(cx),
+            require_environment: self.require_environment,
+        };
+
         // Save to database first to get proper ID
         let app_database = AppDatabase::global(cx).clone();
         let collection_data_clone = collection_data.clone();
         let current_path_clone = current_path.clone();
+        let settings_for_db = environment_settings.clone();
 
         cx.spawn(async move |_, _| {
             app_database
@@ -697,9 +740,19 @@ impl CollectionEditor {
                     path: current_path_clone.clone(),
                     position: 2,
                     format: format.as_db_str().to_string(),
+                    default_environment: None,
+                    require_environment: false,
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
                 })
+                .await?;
+            // The row exists now, also for a new collection.
+            app_database
+                .save_environment_settings(
+                    &current_path_clone,
+                    settings_for_db.default_environment.as_deref(),
+                    settings_for_db.require_environment,
+                )
                 .await
         })
         .detach();
@@ -714,10 +767,12 @@ impl CollectionEditor {
                 .is_none()
                 && use_opencollection
             {
-                collection_manager.create_opencollection(&collection_data, &current_path, cx)
+                collection_manager.create_opencollection(&collection_data, &current_path, cx)?;
             } else {
-                collection_manager.save_collection(&collection_data, &current_path, cx)
+                collection_manager.save_collection(&collection_data, &current_path, cx)?;
             }
+            collection_manager.set_environment_settings(&current_path, environment_settings, cx);
+            anyhow::Ok(())
         });
 
         match save_result {
@@ -1105,7 +1160,7 @@ impl Focusable for CollectionEditor {
 }
 
 impl Render for CollectionEditor {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context(CONTEXT)
@@ -1143,10 +1198,8 @@ impl Render for CollectionEditor {
                             .compact()
                             .icon(IconName::Save)
                             .label("Save Collection")
-                            .children(vec![
-                                Kbd::new(crate::ui::keybinding::parse_keystroke("secondary-s"))
-                                    .into_any_element(),
-                            ])
+                            // The shortcut as bound, which the user can change.
+                            .children(Kbd::binding_for_action(&Save, Some(CONTEXT), window))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.handle_save_collection(window, cx)
                             })),

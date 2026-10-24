@@ -1152,7 +1152,8 @@ impl ResponseFormat {
     }
 }
 
-fn format_xml(content: &str) -> Option<String> {
+/// The XML indented by two spaces, or `None` when it is not well formed.
+pub(crate) fn format_xml(content: &str) -> Option<String> {
     use quick_xml::events::Event;
     use quick_xml::reader::Reader;
     use quick_xml::writer::Writer;

@@ -1,3 +1,4 @@
+mod keybindings_page;
 mod view;
 
 pub use view::SettingsView;
@@ -6,6 +7,7 @@ use crate::app_settings::AppSettings;
 use gpui::{App, SharedString};
 use gpui_kit::component::{Theme, ThemeConfig, ThemeRegistry};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Apply a theme config together with the user's font overrides.
@@ -81,6 +83,10 @@ pub struct Settings {
     pub connection: ConnectionSettings,
     pub editor: EditorSettings,
     pub appearance: AppearanceSettings,
+    /// Shortcuts the user rebound, by action, saved as `keybinding.<action>`.
+    /// An empty value unbinds the action. See [`crate::keybindings`].
+    #[serde(default)]
+    pub keybindings: HashMap<String, String>,
 }
 
 impl Settings {
@@ -119,6 +125,10 @@ impl Settings {
                 }
                 "appearance.mono_font_family" => {
                     settings.appearance.mono_font_family = value.clone();
+                }
+                key if key.starts_with("keybinding.") => {
+                    let action = key.trim_start_matches("keybinding.").to_string();
+                    settings.keybindings.insert(action, value.clone());
                 }
                 _ => {}
             }

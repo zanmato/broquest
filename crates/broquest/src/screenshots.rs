@@ -115,6 +115,8 @@ async fn seed_database(scene: Scene, database: &AppDatabase) -> anyhow::Result<(
             path,
             position: 0,
             format: CollectionFormat::Broquest.as_db_str().to_string(),
+            default_environment: None,
+            require_environment: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         })

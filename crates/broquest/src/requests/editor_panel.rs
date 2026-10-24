@@ -1,13 +1,14 @@
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, KeyBinding, MouseButton, ParentElement, Render, ScrollHandle, Styled, Window,
-    actions, div, prelude::FluentBuilder, px,
+    IntoElement, MouseButton, ParentElement, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, Styled, Window, actions, div, prelude::FluentBuilder, px,
 };
 use gpui_kit::component::{
     ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
     input::InputEvent,
+    menu::ContextMenuExt as _,
     scroll::ScrollableElement,
     select::SelectEvent,
     tab::{Tab, TabBar},
@@ -25,9 +26,27 @@ use crate::settings::SettingsView;
 use crate::ui::icon::IconName;
 use crate::ui::method_badge::MethodBadge;
 
-const EDITOR_PANEL_CONTEXT: &str = "editor_panel";
+mod open_tabs;
+mod tab_actions;
 
-actions!(editor_panel, [CloseTab, NextTab, PrevTab]);
+pub use open_tabs::OpenTabsPanel;
+pub use tab_actions::CloseScope;
+
+/// The key context of the tab panel, where the tab shortcuts apply.
+pub(crate) const EDITOR_PANEL_CONTEXT: &str = "editor_panel";
+
+actions!(
+    editor_panel,
+    [
+        CloseTab,
+        CloseOtherTabs,
+        CloseTabsToTheLeft,
+        CloseTabsToTheRight,
+        CloseAllTabs,
+        NextTab,
+        PrevTab
+    ]
+);
 
 pub enum TabType {
     Request(RequestTab),
@@ -77,18 +96,13 @@ pub struct EditorPanel {
     tabs: Vec<TabType>,
     active_tab_ix: usize,
     tabbar_scroll_handle: ScrollHandle,
+    /// The tab last right clicked in the strip, whose menu the strip's
+    /// context menu shows. The gpui-kit `Tab` has no context menu of its own.
+    context_menu_tab: Option<usize>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
 impl EditorPanel {
-    pub fn init(cx: &mut App) {
-        cx.bind_keys([KeyBinding::new(
-            "secondary-w",
-            CloseTab,
-            Some(EDITOR_PANEL_CONTEXT),
-        )]);
-    }
-
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let this = cx.entity().downgrade();
         let settings_subscription = window.observe_global::<AppSettings>(cx, move |window, cx| {
@@ -140,14 +154,21 @@ impl EditorPanel {
             tabs: vec![],
             active_tab_ix: 0,
             tabbar_scroll_handle: ScrollHandle::default(),
+            context_menu_tab: None,
             _subscriptions: vec![settings_subscription, manager_subscription],
         }
     }
 
     fn close_tab(&mut self, tab_index: usize, cx: &mut Context<Self>) {
+        if tab_index >= self.tabs.len() {
+            return;
+        }
         self.tabs.remove(tab_index);
 
-        if self.active_tab_ix >= self.tabs.len() || tab_index == self.active_tab_ix {
+        if tab_index < self.active_tab_ix {
+            // The active tab shifted left, keep it active.
+            self.active_tab_ix -= 1;
+        } else if self.active_tab_ix >= self.tabs.len() || tab_index == self.active_tab_ix {
             self.active_tab_ix = self.tabs.len().saturating_sub(1);
         }
 
@@ -168,10 +189,8 @@ impl EditorPanel {
         }
     }
 
-    pub fn close_active_tab(&mut self, cx: &mut Context<Self>) {
-        if !self.tabs.is_empty() {
-            self.close_tab(self.active_tab_ix, cx);
-        }
+    pub fn close_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_tabs_around_active(CloseScope::This, window, cx);
     }
 
     pub fn select_next_tab(&mut self, cx: &mut Context<Self>) {
@@ -392,16 +411,17 @@ impl EditorPanel {
     ) {
         if let Some(collection_path) = collection_path {
             // Read the current environments from the global CollectionManager.
-            let environments = CollectionManager::global(cx)
-                .read(cx)
-                .get_collection_environments(collection_path);
+            let manager = CollectionManager::global(cx);
+            let manager = manager.read(cx);
+            let environments = manager.get_collection_environments(collection_path);
+            let settings = manager.environment_settings(collection_path);
             if let Some(environments) = environments {
                 tracing::info!(
                     "Loading {} environments for request editor",
                     environments.len()
                 );
                 request_editor.update(cx, |editor, cx| {
-                    editor.set_environments(&environments, window, cx);
+                    editor.set_environments(&environments, &settings, window, cx);
                 });
             } else {
                 tracing::warn!(
@@ -719,6 +739,145 @@ impl EditorPanel {
         }
     }
 
+    /// The tab's title, as the strip and the open tabs list show it.
+    fn tab_title(tab: &TabType) -> SharedString {
+        match tab {
+            TabType::Request(tab) => tab.title.clone().into(),
+            TabType::Collection(tab) => tab.title.clone().into(),
+            TabType::Group(tab) => tab.title.clone().into(),
+            TabType::Settings(_) => "Settings".into(),
+        }
+    }
+
+    /// The collection the tab belongs to, `None` for settings and requests
+    /// that were never saved.
+    fn tab_collection_path(tab: &TabType) -> Option<&str> {
+        let path = match tab {
+            TabType::Request(tab) => &tab.collection_path,
+            TabType::Collection(tab) => &tab.collection_path,
+            TabType::Group(tab) => &tab.collection_path,
+            TabType::Settings(_) => return None,
+        };
+        (!path.is_empty()).then_some(path.as_str())
+    }
+
+    /// Show the tab at `ix`.
+    fn activate_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if ix < self.tabs.len() {
+            self.active_tab_ix = ix;
+            self.scroll_tabbar_to_active();
+            cx.notify();
+        }
+    }
+
+    /// Move the tab at `from` to `to`, keeping the same tab active.
+    fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to || from >= self.tabs.len() || to >= self.tabs.len() {
+            return;
+        }
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.active_tab_ix = moved_index(self.active_tab_ix, from, to);
+        cx.notify();
+    }
+
+    /// A button that closes the tab at `ix`.
+    fn close_tab_button(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        ix: usize,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        Button::new(id)
+            .ghost()
+            .xsmall()
+            .icon(IconName::Close)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.close_tabs(CloseScope::This, ix, window, cx);
+            }))
+    }
+
+    /// The tab's item in the strip. Tabs can be dragged along the strip to
+    /// reorder them, and closed with the middle mouse button.
+    fn render_tab_bar_item(&self, ix: usize, tab: &TabType, cx: &mut Context<Self>) -> Tab {
+        let muted_color = cx.theme().muted_foreground;
+        let close = self.close_tab_button(("close-tab", ix), ix, cx);
+        let item = match tab {
+            TabType::Request(request_tab) => Tab::new()
+                .label(request_tab.title.clone())
+                .prefix(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        // The prefix sits outside the tab's inner padding, so
+                        // it needs its own inset to match the label.
+                        .pl_3()
+                        .when(request_tab.is_dirty, |this| {
+                            this.child(div().w(px(6.)).h(px(6.)).rounded_full().bg(muted_color))
+                        })
+                        .child(MethodBadge::new(request_tab.method)),
+                )
+                .suffix(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(muted_color)
+                                .pr_1()
+                                .child(request_tab.collection_name.clone()),
+                        )
+                        .child(close),
+                ),
+            _ => Tab::new()
+                .label(Self::tab_title(tab))
+                .suffix(h_flex().gap_2().items_center().child(close)),
+        };
+        let dragged = DraggedTab {
+            ix,
+            label: Self::tab_title(tab),
+        };
+
+        item.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |_this, _event: &gpui::MouseDownEvent, _window, cx| {
+                cx.emit(AppEvent::TabChanged { tab_id: ix });
+            }),
+        )
+        .on_mouse_down(
+            MouseButton::Middle,
+            cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.close_tabs(CloseScope::This, ix, window, cx);
+            }),
+        )
+        // The strip's context menu shows the menu of the tab right clicked.
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, _, _, _| {
+                this.context_menu_tab = Some(ix);
+            }),
+        )
+        .on_drag(dragged, |dragged, _, _, cx| {
+            cx.stop_propagation();
+            cx.new(|_| dragged.clone())
+        })
+        // A tab dragged rightwards lands after the one it is dropped on.
+        .drag_over::<DraggedTab>(move |style, dragged, _, cx| {
+            if dragged.ix < ix {
+                style.border_r_2()
+            } else {
+                style.border_l_2()
+            }
+            .border_color(cx.theme().drag_border)
+        })
+        .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
+            this.move_tab(dragged.ix, ix, cx);
+        }))
+    }
+
     /// Scroll the tab bar so the active tab is visible. `scroll_to_item` defers
     /// to the next paint, so this is safe to call right after adding a tab.
     fn scroll_tabbar_to_active(&self) {
@@ -750,9 +909,29 @@ impl Render for EditorPanel {
             .h_full()
             .overflow_hidden()
             .key_context(EDITOR_PANEL_CONTEXT)
-            .on_action(cx.listener(|this: &mut Self, _: &CloseTab, _, cx| {
-                this.close_active_tab(cx);
+            .on_action(cx.listener(|this: &mut Self, _: &CloseTab, window, cx| {
+                this.close_active_tab(window, cx);
             }))
+            .on_action(
+                cx.listener(|this: &mut Self, _: &CloseOtherTabs, window, cx| {
+                    this.close_tabs_around_active(CloseScope::Others, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this: &mut Self, _: &CloseTabsToTheLeft, window, cx| {
+                    this.close_tabs_around_active(CloseScope::Left, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this: &mut Self, _: &CloseTabsToTheRight, window, cx| {
+                    this.close_tabs_around_active(CloseScope::Right, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this: &mut Self, _: &CloseAllTabs, window, cx| {
+                    this.close_tabs_around_active(CloseScope::All, window, cx);
+                }),
+            )
             .on_action(cx.listener(|this: &mut Self, _: &NextTab, _, cx| {
                 this.select_next_tab(cx);
             }))
@@ -763,184 +942,53 @@ impl Render for EditorPanel {
                 // Tab bar. The segmented trough is full-bleed, so it is inset
                 // by a wrapper instead of its own padding - otherwise it would
                 // square off the editor card's top corners.
-                div().px(px(6.)).pt(px(6.)).min_w_0().child(
-                    TabBar::new("editor-tabs")
-                        .segmented()
-                        .menu(true)
-                        // No .w_full(): an explicit width can interfere with
-                        // flex-shrink and stop the tab strip from overflowing to
-                        // scroll. The dock's TabBar omits it and relies on flex
-                        // stretch, so we match that.
-                        .selected_index(self.active_tab_ix)
-                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                            this.active_tab_ix = *ix;
-                            cx.notify();
-                        }))
-                        .track_scroll(&self.tabbar_scroll_handle)
-                        .children(self.tabs.iter().enumerate().map(|(ix, tab)| match tab {
-                            TabType::Request(request_tab) => {
-                                let tab_index = ix;
-                                let muted_color = cx.theme().muted_foreground;
-
-                                Tab::new()
-                                    .label(request_tab.title.clone())
-                                    .prefix(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            // The prefix sits outside the tab's
-                                            // inner padding, so it needs its own
-                                            // inset to match the label.
-                                            .pl_3()
-                                            .when(request_tab.is_dirty, |this| {
-                                                this.child(
-                                                    div()
-                                                        .w(px(6.))
-                                                        .h(px(6.))
-                                                        .rounded_full()
-                                                        .bg(muted_color),
-                                                )
-                                            })
-                                            .child(MethodBadge::new(request_tab.method)),
-                                    )
-                                    .suffix(
-                                        h_flex()
-                                            .gap_1()
-                                            .items_center()
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(muted_color)
-                                                    .pr_1()
-                                                    .child(request_tab.collection_name.clone()),
-                                            )
-                                            .child(
-                                                Button::new(("close-tab", ix))
-                                                    .ghost()
-                                                    .xsmall()
-                                                    .icon(IconName::Close)
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.close_tab(tab_index, cx);
-                                                        },
-                                                    )),
-                                            )
-                                            .into_any_element(),
-                                    )
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(
-                                            move |_this,
-                                                  _event: &gpui::MouseDownEvent,
-                                                  _window,
-                                                  cx| {
-                                                cx.emit(AppEvent::TabChanged { tab_id: tab_index });
-                                            },
-                                        ),
-                                    )
+                div()
+                    .id("editor-tab-strip")
+                    .px(px(6.))
+                    .pt(px(6.))
+                    .min_w_0()
+                    // A right click outside the tabs shows no menu. The tab
+                    // under the pointer sets itself again after this.
+                    .capture_any_mouse_down(cx.listener(
+                        |this, event: &gpui::MouseDownEvent, _, _| {
+                            if event.button == MouseButton::Right {
+                                this.context_menu_tab = None;
                             }
-                            TabType::Collection(collection_tab) => {
-                                let tab_index = ix;
-
-                                Tab::new()
-                                    .label(&collection_tab.title)
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(
-                                            move |_this,
-                                                  _event: &gpui::MouseDownEvent,
-                                                  _window,
-                                                  cx| {
-                                                cx.emit(AppEvent::TabChanged { tab_id: tab_index });
-                                            },
-                                        ),
-                                    )
-                                    .suffix(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            .child(
-                                                Button::new(("close-tab", ix))
-                                                    .ghost()
-                                                    .xsmall()
-                                                    .icon(IconName::Close)
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.close_tab(tab_index, cx);
-                                                        },
-                                                    )),
-                                            )
-                                            .into_any_element(),
-                                    )
+                        },
+                    ))
+                    .child(
+                        TabBar::new("editor-tabs")
+                            .segmented()
+                            .menu(true)
+                            // No .w_full(): an explicit width can interfere with
+                            // flex-shrink and stop the tab strip from overflowing to
+                            // scroll. The dock's TabBar omits it and relies on flex
+                            // stretch, so we match that.
+                            .selected_index(self.active_tab_ix)
+                            .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                                this.active_tab_ix = *ix;
+                                cx.notify();
+                            }))
+                            .track_scroll(&self.tabbar_scroll_handle)
+                            .children(
+                                self.tabs
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(ix, tab)| self.render_tab_bar_item(ix, tab, cx)),
+                            ),
+                    )
+                    .context_menu({
+                        let panel = cx.entity().downgrade();
+                        move |menu, _, cx| {
+                            let target = panel
+                                .upgrade()
+                                .and_then(|panel| panel.read(cx).context_menu_tab);
+                            match target {
+                                Some(ix) => Self::tab_menu(&panel, ix, menu, cx),
+                                None => menu,
                             }
-                            TabType::Group(group_tab) => {
-                                let tab_index = ix;
-                                Tab::new()
-                                    .label(&group_tab.title)
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(
-                                            move |_this,
-                                                  _event: &gpui::MouseDownEvent,
-                                                  _window,
-                                                  cx| {
-                                                cx.emit(AppEvent::TabChanged { tab_id: tab_index });
-                                            },
-                                        ),
-                                    )
-                                    .suffix(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            .child(
-                                                Button::new(("close-tab", ix))
-                                                    .ghost()
-                                                    .xsmall()
-                                                    .icon(IconName::Close)
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.close_tab(tab_index, cx);
-                                                        },
-                                                    )),
-                                            )
-                                            .into_any_element(),
-                                    )
-                            }
-                            TabType::Settings(_) => {
-                                let tab_index = ix;
-                                Tab::new()
-                                    .label("Settings")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(
-                                            move |_this,
-                                                  _event: &gpui::MouseDownEvent,
-                                                  _window,
-                                                  cx| {
-                                                cx.emit(AppEvent::TabChanged { tab_id: tab_index });
-                                            },
-                                        ),
-                                    )
-                                    .suffix(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            .child(
-                                                Button::new(("close-tab", ix))
-                                                    .ghost()
-                                                    .xsmall()
-                                                    .icon(IconName::Close)
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.close_tab(tab_index, cx);
-                                                        },
-                                                    )),
-                                            )
-                                            .into_any_element(),
-                                    )
-                            }
-                        })),
-                ),
+                        }
+                    }),
             )
             // Render the active tab's complete view
             .child(
@@ -986,5 +1034,59 @@ impl Render for EditorPanel {
                         }
                     }),
             )
+    }
+}
+
+/// A tab being dragged along the strip or the open tabs list.
+#[derive(Clone)]
+struct DraggedTab {
+    ix: usize,
+    label: SharedString,
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_3()
+            .py_1()
+            .text_sm()
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().secondary)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(self.label.clone())
+    }
+}
+
+/// Where the tab at `ix` ends up after the tab at `from` moved to `to`.
+fn moved_index(ix: usize, from: usize, to: usize) -> usize {
+    if ix == from {
+        to
+    } else if from < to && (from + 1..=to).contains(&ix) {
+        ix - 1
+    } else if to < from && (to..from).contains(&ix) {
+        ix + 1
+    } else {
+        ix
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::moved_index;
+
+    #[test]
+    fn moving_a_tab_shifts_the_ones_between() {
+        // Move the tab at 1 to 3: tabs 2 and 3 shift left.
+        assert_eq!(moved_index(1, 1, 3), 3);
+        assert_eq!(moved_index(2, 1, 3), 1);
+        assert_eq!(moved_index(3, 1, 3), 2);
+        assert_eq!(moved_index(0, 1, 3), 0);
+        assert_eq!(moved_index(4, 1, 3), 4);
+        // Move the tab at 3 to 1: tabs 1 and 2 shift right.
+        assert_eq!(moved_index(3, 3, 1), 1);
+        assert_eq!(moved_index(1, 3, 1), 2);
+        assert_eq!(moved_index(2, 3, 1), 3);
+        assert_eq!(moved_index(0, 3, 1), 0);
     }
 }

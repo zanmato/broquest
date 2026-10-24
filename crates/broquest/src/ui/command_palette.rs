@@ -38,7 +38,12 @@ pub enum CommandType {
     NewRequest,
     SaveRequest,
     CopyResponse,
+    FormatBody,
     CloseTab,
+    CloseOtherTabs,
+    CloseTabsToTheLeft,
+    CloseTabsToTheRight,
+    CloseAllTabs,
     NextTab,
     PrevTab,
     OpenSettings,
@@ -308,21 +313,32 @@ fn keybinding_for_command(
     cmd: &CommandType,
     window: &Window,
 ) -> Option<gpui_kit::component::kbd::Kbd> {
+    use crate::requests::{EDITOR_PANEL_CONTEXT, REQUEST_EDITOR_CONTEXT};
     use gpui_kit::component::kbd::Kbd;
-    let action: Box<dyn gpui::Action> = match cmd {
-        CommandType::SendRequest => Box::new(crate::requests::Send),
-        CommandType::SaveRequest => Box::new(crate::requests::Save),
-        CommandType::CopyResponse => Box::new(crate::requests::CopyResponse),
-        CommandType::NewRequest => Box::new(crate::app::NewScratchRequest),
-        CommandType::NewCollection => Box::new(crate::app::OpenNewCollectionTab),
-        CommandType::OpenCollection => Box::new(crate::app::OpenCollection),
-        CommandType::CloseTab => Box::new(crate::requests::CloseTab),
-        CommandType::NextTab => Box::new(crate::requests::NextTab),
-        CommandType::PrevTab => Box::new(crate::requests::PrevTab),
-        CommandType::OpenSettings => Box::new(crate::app::OpenSettings),
+    // The key context each command's shortcut is bound in. The palette has
+    // focus while it is open, so the lookup names the context rather than
+    // using the focused one.
+    let request = Some(REQUEST_EDITOR_CONTEXT);
+    let panel = Some(EDITOR_PANEL_CONTEXT);
+    let (action, context): (Box<dyn gpui::Action>, Option<&str>) = match cmd {
+        CommandType::SendRequest => (Box::new(crate::requests::Send), request),
+        CommandType::SaveRequest => (Box::new(crate::requests::Save), request),
+        CommandType::CopyResponse => (Box::new(crate::requests::CopyResponse), request),
+        CommandType::FormatBody => (Box::new(crate::requests::FormatBody), request),
+        CommandType::NewRequest => (Box::new(crate::app::NewScratchRequest), None),
+        CommandType::NewCollection => (Box::new(crate::app::OpenNewCollectionTab), None),
+        CommandType::OpenCollection => (Box::new(crate::app::OpenCollection), None),
+        CommandType::CloseTab => (Box::new(crate::requests::CloseTab), panel),
+        CommandType::CloseOtherTabs => (Box::new(crate::requests::CloseOtherTabs), panel),
+        CommandType::CloseTabsToTheLeft => (Box::new(crate::requests::CloseTabsToTheLeft), panel),
+        CommandType::CloseTabsToTheRight => (Box::new(crate::requests::CloseTabsToTheRight), panel),
+        CommandType::CloseAllTabs => (Box::new(crate::requests::CloseAllTabs), panel),
+        CommandType::NextTab => (Box::new(crate::requests::NextTab), None),
+        CommandType::PrevTab => (Box::new(crate::requests::PrevTab), None),
+        CommandType::OpenSettings => (Box::new(crate::app::OpenSettings), None),
         CommandType::OpenRequest { .. } => return None,
     };
-    Kbd::binding_for_action(action.as_ref(), None, window)
+    Kbd::binding_for_action(action.as_ref(), context, window)
 }
 
 fn execute_command(cmd: &CommandType, window: &mut Window, cx: &mut App) {
@@ -345,8 +361,23 @@ fn execute_command(cmd: &CommandType, window: &mut Window, cx: &mut App) {
         CommandType::CopyResponse => {
             window.dispatch_action(Box::new(crate::requests::CopyResponse), cx);
         }
+        CommandType::FormatBody => {
+            window.dispatch_action(Box::new(crate::requests::FormatBody), cx);
+        }
         CommandType::CloseTab => {
             window.dispatch_action(Box::new(crate::requests::CloseTab), cx);
+        }
+        CommandType::CloseOtherTabs => {
+            window.dispatch_action(Box::new(crate::requests::CloseOtherTabs), cx);
+        }
+        CommandType::CloseTabsToTheLeft => {
+            window.dispatch_action(Box::new(crate::requests::CloseTabsToTheLeft), cx);
+        }
+        CommandType::CloseTabsToTheRight => {
+            window.dispatch_action(Box::new(crate::requests::CloseTabsToTheRight), cx);
+        }
+        CommandType::CloseAllTabs => {
+            window.dispatch_action(Box::new(crate::requests::CloseAllTabs), cx);
         }
         CommandType::NextTab => {
             window.dispatch_action(Box::new(crate::requests::NextTab), cx);
@@ -505,6 +536,11 @@ fn build_commands(cx: &App) -> Vec<CommandItem> {
             action_type: CommandType::CopyResponse,
         },
         CommandItem {
+            label: "Format Request Body".into(),
+            group: "Request".into(),
+            action_type: CommandType::FormatBody,
+        },
+        CommandItem {
             label: "New Request".into(),
             group: "Request".into(),
             action_type: CommandType::NewRequest,
@@ -523,6 +559,26 @@ fn build_commands(cx: &App) -> Vec<CommandItem> {
             label: "Close Tab".into(),
             group: "Tab".into(),
             action_type: CommandType::CloseTab,
+        },
+        CommandItem {
+            label: "Close Other Tabs".into(),
+            group: "Tab".into(),
+            action_type: CommandType::CloseOtherTabs,
+        },
+        CommandItem {
+            label: "Close Tabs to the Left".into(),
+            group: "Tab".into(),
+            action_type: CommandType::CloseTabsToTheLeft,
+        },
+        CommandItem {
+            label: "Close Tabs to the Right".into(),
+            group: "Tab".into(),
+            action_type: CommandType::CloseTabsToTheRight,
+        },
+        CommandItem {
+            label: "Close All Tabs".into(),
+            group: "Tab".into(),
+            action_type: CommandType::CloseAllTabs,
         },
         CommandItem {
             label: "Next Tab".into(),

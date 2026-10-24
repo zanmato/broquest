@@ -20,6 +20,11 @@ pub struct CollectionData {
     /// On-disk format, e.g. "broquest" or "opencollection".
     /// See [`crate::collections::CollectionFormat`].
     pub format: String,
+    /// The environment a request tab selects when it opens.
+    pub default_environment: Option<String>,
+    /// Whether request tabs must use an environment, which hides the
+    /// "No environment" choice.
+    pub require_environment: bool,
     #[allow(dead_code)]
     pub created_at: chrono::DateTime<chrono::Utc>,
     #[allow(dead_code)]
@@ -103,6 +108,22 @@ impl AppDatabase {
                 "Skipping format column migration (likely already applied): {}",
                 e
             );
+        }
+
+        // Migration: per-collection environment settings. These are the
+        // user's own choices, so they live here rather than in the collection
+        // files. Like the format column, a "duplicate column" error means the
+        // migration already ran.
+        for statement in [
+            "ALTER TABLE collections ADD COLUMN default_environment TEXT",
+            "ALTER TABLE collections ADD COLUMN require_environment INTEGER NOT NULL DEFAULT 0",
+        ] {
+            if let Err(e) = sqlx::query(statement).execute(&self.pool).await {
+                tracing::trace!(
+                    "Skipping environment column migration (likely already applied): {}",
+                    e
+                );
+            }
         }
 
         // User settings table (legacy)
@@ -234,7 +255,8 @@ impl AppDatabase {
         // TODO: allow re-ordering via position
         let rows = sqlx::query(
             r#"
-            SELECT c.id, c.name, c.path, c.position, c.format, c.created_at, c.updated_at
+            SELECT c.id, c.name, c.path, c.position, c.format, c.default_environment,
+                c.require_environment, c.created_at, c.updated_at
             FROM collections c
             ORDER BY c.id ASC
             "#,
@@ -250,6 +272,8 @@ impl AppDatabase {
                 path: row.get("path"),
                 position: row.get("position"),
                 format: row.get("format"),
+                default_environment: row.get("default_environment"),
+                require_environment: row.get("require_environment"),
                 created_at: chrono::DateTime::from_timestamp(row.get("created_at"), 0)
                     .unwrap_or_default(),
                 updated_at: chrono::DateTime::from_timestamp(row.get("updated_at"), 0)
@@ -258,6 +282,30 @@ impl AppDatabase {
         }
 
         Ok(collections)
+    }
+
+    /// Save a collection's environment settings. The collection's row must
+    /// already exist, see [`Self::save_collection`].
+    pub async fn save_environment_settings(
+        &self,
+        path: &str,
+        default_environment: Option<&str>,
+        require_environment: bool,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE collections
+            SET default_environment = ?, require_environment = ?, updated_at = ?
+            WHERE path = ?
+            "#,
+        )
+        .bind(default_environment)
+        .bind(require_environment)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(path)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     /// Delete a collection from the database by path

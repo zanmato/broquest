@@ -1,6 +1,6 @@
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    KeyBinding, ParentElement, Render, Styled, Window, actions, div, prelude::*,
+    ParentElement, Render, Styled, Window, actions, div, prelude::*,
 };
 use gpui_kit::component::{
     ActiveTheme as _, StyledExt, WindowExt,
@@ -15,7 +15,8 @@ use gpui_kit::component::{
 use super::manager::CollectionManager;
 use crate::{app_events::AppEvent, ui::icon::IconName};
 
-const CONTEXT: &str = "group_editor";
+/// The key context of the group editor, where its Save shortcut applies.
+pub(crate) const CONTEXT: &str = "group_editor";
 
 actions!(group_editor, [Save]);
 
@@ -27,10 +28,6 @@ pub struct GroupEditor {
 }
 
 impl GroupEditor {
-    pub fn init(cx: &mut App) {
-        cx.bind_keys([KeyBinding::new("secondary-s", Save, Some(CONTEXT))]);
-    }
-
     pub fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -117,7 +114,7 @@ impl Focusable for GroupEditor {
 }
 
 impl Render for GroupEditor {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context(CONTEXT)
@@ -154,10 +151,8 @@ impl Render for GroupEditor {
                             .compact()
                             .icon(IconName::Save)
                             .label("Save Group")
-                            .children(vec![
-                                Kbd::new(crate::ui::keybinding::parse_keystroke("secondary-s"))
-                                    .into_any_element(),
-                            ])
+                            // The shortcut as bound, which the user can change.
+                            .children(Kbd::binding_for_action(&Save, Some(CONTEXT), window))
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.save_group(window, cx)),
                             ),

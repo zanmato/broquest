@@ -1,9 +1,10 @@
 use gpui::{App, Context, Entity, Window, div, prelude::*, px};
 use gpui_kit::component::{
-    ActiveTheme, Sizable, StyledExt,
+    ActiveTheme, Icon, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
+    switch::Switch,
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -30,7 +31,6 @@ pub struct SecretRow {
 
 #[derive(Debug, Clone)]
 pub struct EnvironmentData {
-    #[allow(dead_code)]
     pub id: usize,
     pub name: String,
     pub name_input: Entity<InputState>,
@@ -43,6 +43,9 @@ pub struct EnvironmentEditor {
     active_environment_idx: usize,
     next_id: usize,
     collection_name: String,
+    /// The id of the environment request tabs select when they open. Kept by
+    /// id so that renaming the environment keeps it the default.
+    default_environment_id: Option<usize>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -53,19 +56,23 @@ impl EnvironmentEditor {
             active_environment_idx: 0,
             next_id: 0,
             collection_name: collection_name.to_string(),
+            default_environment_id: None,
             _subscriptions: Vec::new(),
         }
     }
 
-    /// Load environments from CollectionToml data
+    /// Load environments from CollectionToml data, marking the one called
+    /// `default_environment` as the default.
     pub fn load_environments(
         &mut self,
         environment_tomls: &[EnvironmentToml],
+        default_environment: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.environments.clear();
         self._subscriptions.clear();
+        self.default_environment_id = None;
 
         for env_toml in environment_tomls {
             let mut variables = Vec::new();
@@ -100,6 +107,9 @@ impl EnvironmentEditor {
             }
 
             let name_input = cx.new(|cx| InputState::new(window, cx).default_value(&env_toml.name));
+            if default_environment == Some(env_toml.name.as_str()) {
+                self.default_environment_id = Some(self.next_id);
+            }
             let environment = EnvironmentData {
                 id: self.next_id,
                 name: env_toml.name.clone(),
@@ -169,7 +179,10 @@ impl EnvironmentEditor {
         cx: &mut Context<Self>,
     ) {
         if index < self.environments.len() {
-            self.environments.remove(index);
+            let removed = self.environments.remove(index);
+            if self.default_environment_id == Some(removed.id) {
+                self.default_environment_id = None;
+            }
             // Adjust active environment index if needed
             if self.active_environment_idx >= self.environments.len()
                 && !self.environments.is_empty()
@@ -221,6 +234,23 @@ impl EnvironmentEditor {
             env.name = new_name;
             cx.notify();
         }
+    }
+
+    /// The name of the default environment, as it is typed now.
+    pub fn default_environment_name(&self, cx: &App) -> Option<String> {
+        let id = self.default_environment_id?;
+        let env = self.environments.iter().find(|env| env.id == id)?;
+        Some(env.name_input.read(cx).value().to_string())
+    }
+
+    /// Make the environment with `id` the default, or clear the default.
+    fn set_default_environment(&mut self, id: usize, is_default: bool, cx: &mut Context<Self>) {
+        if is_default {
+            self.default_environment_id = Some(id);
+        } else if self.default_environment_id == Some(id) {
+            self.default_environment_id = None;
+        }
+        cx.notify();
     }
 
     /// Get the currently active environment
@@ -595,15 +625,29 @@ impl EnvironmentEditor {
             }))
             .children(self.environments.iter().enumerate().map(|(env_idx, env)| {
                 let current_name = env.name_input.read(cx).value().to_string();
-                Tab::new().label(current_name).suffix(
-                    Button::new(("delete_env", env_idx))
-                        .small()
-                        .ghost()
-                        .icon(IconName::Trash)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.remove_environment(env_idx, window, cx);
-                        })),
-                )
+                let is_default = self.default_environment_id == Some(env.id);
+                Tab::new()
+                    .label(current_name)
+                    // The default environment is marked with a star. The
+                    // prefix sits outside the tab's padding, so it insets itself.
+                    .when(is_default, |tab| {
+                        tab.prefix(
+                            div().pl_3().child(
+                                Icon::new(IconName::Star)
+                                    .xsmall()
+                                    .text_color(cx.theme().muted_foreground),
+                            ),
+                        )
+                    })
+                    .suffix(
+                        Button::new(("delete_env", env_idx))
+                            .small()
+                            .ghost()
+                            .icon(IconName::Trash)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.remove_environment(env_idx, window, cx);
+                            })),
+                    )
             }))
             .suffix(
                 Button::new("add_env")
@@ -640,7 +684,25 @@ impl Render for EnvironmentEditor {
                                             .text_color(cx.theme().muted_foreground)
                                             .child("Name"),
                                     )
-                                    .child(Input::new(&env.name_input)),
+                                    .child(Input::new(&env.name_input))
+                                    .child({
+                                        let id = env.id;
+                                        Switch::new("default-environment")
+                                            .small()
+                                            .label("Default environment")
+                                            .checked(self.default_environment_id == Some(id))
+                                            .on_click(cx.listener(
+                                                move |this, checked: &bool, _window, cx| {
+                                                    this.set_default_environment(id, *checked, cx);
+                                                },
+                                            ))
+                                    })
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Requests of this collection open with this environment selected."),
+                                    ),
                             )
                             // Variables section
                             .child(
