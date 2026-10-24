@@ -8,7 +8,7 @@ use crate::domain::{
     RequestData, ResponseData,
 };
 use crate::environments::EnvironmentResolver;
-use crate::scripting::{ScriptExecutionService, VariableStore};
+use crate::scripting::{ScriptExecutionService, ScriptNotification, VariableStore};
 
 use super::auth_shorthand;
 use super::body_files;
@@ -34,6 +34,8 @@ fn value_to_string(v: &serde_json::Value) -> String {
 pub struct HttpError {
     pub summary: String,
     pub details: String,
+    /// Toasts the scripts asked for before the request failed.
+    pub notifications: Vec<ScriptNotification>,
 }
 
 impl std::error::Error for HttpError {}
@@ -48,6 +50,7 @@ impl HttpError {
         Self {
             summary: summary.into(),
             details: details.into(),
+            notifications: Vec::new(),
         }
     }
 
@@ -255,14 +258,25 @@ impl HttpClientService {
         runtime_vars: Option<HashMap<String, serde_json::Value>>,
         collection_vars: Option<HashMap<String, String>>,
     ) -> std::result::Result<(ResponseData, VariableStore), HttpError> {
-        self.send_request_internal(
-            request_data,
-            variables,
-            secrets,
-            runtime_vars,
-            collection_vars,
-        )
-        .await
+        let variable_store = VariableStore::new();
+        match self
+            .send_request_internal(
+                request_data,
+                variables,
+                secrets,
+                runtime_vars,
+                collection_vars,
+                variable_store.clone(),
+            )
+            .await
+        {
+            Ok(response) => Ok((response, variable_store)),
+            // A script can ask for a toast and the request still fail.
+            Err(mut error) => {
+                error.notifications = variable_store.take_notifications();
+                Err(error)
+            }
+        }
     }
 
     async fn send_request_internal(
@@ -272,7 +286,8 @@ impl HttpClientService {
         secrets: Option<HashMap<String, String>>,
         runtime_vars: Option<HashMap<String, serde_json::Value>>,
         collection_vars: Option<HashMap<String, String>>,
-    ) -> std::result::Result<(ResponseData, VariableStore), HttpError> {
+        variable_store: VariableStore,
+    ) -> std::result::Result<ResponseData, HttpError> {
         let start_time = std::time::Instant::now();
 
         // `<@ file` body lines of .http requests bring in a file whose
@@ -287,9 +302,6 @@ impl HttpClientService {
             request_data.body = body_files::expand_text_refs(&request_data.body, &options.dir);
             dotenv::expand_request(&mut request_data, &dotenv_values);
         }
-
-        // Create variable store for this request
-        let variable_store = VariableStore::new();
 
         // Seed the read-only collection variable bucket (bru.getCollectionVar).
         if let Some(cv) = &collection_vars {
@@ -477,10 +489,11 @@ impl HttpClientService {
             .await?
         };
 
+        let (response, _) = result;
         for (path, overwrite) in response_files {
-            save_response_file(&result.0, &path, overwrite);
+            save_response_file(&response, &path, overwrite);
         }
-        Ok(result)
+        Ok(response)
     }
 
     /// Send request with digest authentication (RFC 2617 challenge-response flow)
@@ -858,6 +871,7 @@ impl HttpClientService {
 
         Ok((response_data, variable_store))
     }
+
     /// Apply query parameters to a URL, handling URL encoding
     fn apply_query_parameters(url: &str, params: &[KeyValuePair]) -> String {
         let mut result = url.to_string();
@@ -1177,6 +1191,26 @@ pub(crate) fn format_xml(content: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn script_toasts_come_with_a_failed_request() {
+        let client = HttpClientService::new(5).unwrap();
+        let request = RequestData {
+            url: "http://localhost:1/never-sent".into(),
+            pre_request_script: Some(
+                "bro.notify('Signing failed', 'error'); throw new Error('no key');".into(),
+            ),
+            ..Default::default()
+        };
+        let error = smol::block_on(client.send_request(request, None, None, None, None))
+            .expect_err("the script throws");
+        assert_eq!(error.notifications.len(), 1);
+        assert_eq!(error.notifications[0].message, "Signing failed");
+        assert_eq!(
+            error.notifications[0].level,
+            crate::scripting::NotifyLevel::Error
+        );
+    }
 
     #[test]
     fn test_content_type_detection() {

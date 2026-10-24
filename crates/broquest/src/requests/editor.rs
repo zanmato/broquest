@@ -34,7 +34,7 @@ use crate::domain::{
 use crate::http::ResponseFormat;
 use crate::http::curl;
 use crate::result_ext::ResultExt;
-use crate::scripting::{ScriptEditor, ScriptEditorEvent};
+use crate::scripting::{NotifyLevel, ScriptEditor, ScriptEditorEvent, ScriptNotification};
 use crate::settings::EditorLayout;
 use crate::ui::icon::IconName;
 use crate::ui::tab_badge::TabBadge;
@@ -140,6 +140,23 @@ fn pick_environment(
         (true, selected)
     } else {
         (false, selected.or(default).or(Some(0)))
+    }
+}
+
+/// Show the toasts a request's scripts asked for with `bro.notify`.
+fn show_script_notifications(
+    notifications: &[ScriptNotification],
+    window: &mut Window,
+    cx: &mut App,
+) {
+    for notification in notifications {
+        let kind = match notification.level {
+            NotifyLevel::Info => NotificationType::Info,
+            NotifyLevel::Success => NotificationType::Success,
+            NotifyLevel::Warning => NotificationType::Warning,
+            NotifyLevel::Error => NotificationType::Error,
+        };
+        window.push_notification((kind, SharedString::from(notification.message.clone())), cx);
     }
 }
 
@@ -1313,8 +1330,12 @@ impl RequestEditor {
                             ;
                     }
 
+                    let notifications = variable_store.take_notifications();
+
                     // Successfully got response data
                     window.update(|window, cx| {
+                        show_script_notifications(&notifications, window, cx);
+
                         // Save to history
                         if record_history {
                             let history_entry = crate::app_database::HistoryEntry {
@@ -1391,6 +1412,8 @@ impl RequestEditor {
                     let error_summary = SharedString::from(http_error.summary.clone());
 
                     window.update(|window, cx| {
+                        show_script_notifications(&http_error.notifications, window, cx);
+
                         // Create error response
                         let response_data = ResponseData {
                             status_code: None,

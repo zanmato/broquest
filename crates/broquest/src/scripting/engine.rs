@@ -1,5 +1,5 @@
 use super::completion::ScriptContext;
-use super::variable_store::VariableStore;
+use super::variable_store::{NotifyLevel, VariableStore};
 use crate::domain::{KeyValuePair, RequestData, ResponseData, ScriptDialect};
 use anyhow::Result;
 use rquickjs::{Context, Ctx, Error, Function, Object, Runtime};
@@ -77,6 +77,12 @@ const BRUNO_COMPAT_PRELUDE: &str = r#"
       return s === undefined ? undefined : JSON.parse(s);
     };
     bro.hasRequestVar = function (n) { return bro.__hasRequestVar(n); };
+
+    // A toast in the app: bro.notify(message, 'info' | 'success' | 'warning' | 'error').
+    bro.notify = function (message, type) {
+      var text = typeof message === 'string' ? message : JSON.stringify(message);
+      bro.__notify(String(text), type === undefined ? 'info' : String(type));
+    };
 
     // Folder vars are not modeled by broquest yet. No-op stubs so scripts don't throw.
     bro.getFolderVar = function (_n) { return undefined; };
@@ -480,6 +486,14 @@ impl ScriptExecutionService {
             "__log",
             Function::new(ctx.clone(), |text: String| {
                 tracing::info!(target: "script", "{}", text);
+            })?,
+        )?;
+
+        let store = variable_store.clone();
+        bro_obj.set(
+            "__notify",
+            Function::new(ctx.clone(), move |message: String, level: String| {
+                store.notify(NotifyLevel::from_name(&level), message);
             })?,
         )?;
 
@@ -1296,6 +1310,50 @@ mod tests {
         // execution error.
         let result = svc.execute_pre_request_script("expect(1).to.equal(2);", &mut request, &store);
         assert!(result.is_err(), "a bare failing expect should error");
+    }
+
+    #[test]
+    fn notify_records_toasts_with_their_type() {
+        let store = VariableStore::new();
+        let script = r#"
+            bro.notify("Token refreshed");
+            bro.notify("Saved", "success");
+            bru.notify({ id: 7 }, "WARNING");
+            bro.notify("Failed", "error");
+            bro.notify("Odd", "shout");
+        "#;
+        service()
+            .execute_pre_request_script(script, &mut RequestData::default(), &store)
+            .unwrap();
+        let shown: Vec<(NotifyLevel, String)> = store
+            .take_notifications()
+            .into_iter()
+            .map(|n| (n.level, n.message))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (NotifyLevel::Info, "Token refreshed".to_string()),
+                (NotifyLevel::Success, "Saved".to_string()),
+                (NotifyLevel::Warning, r#"{"id":7}"#.to_string()),
+                (NotifyLevel::Error, "Failed".to_string()),
+                (NotifyLevel::Info, "Odd".to_string()),
+            ]
+        );
+        assert!(store.take_notifications().is_empty(), "taken once");
+    }
+
+    #[test]
+    fn notify_shows_at_most_five_toasts() {
+        let store = VariableStore::new();
+        service()
+            .execute_pre_request_script(
+                "for (let i = 0; i < 20; i++) bro.notify('n' + i);",
+                &mut RequestData::default(),
+                &store,
+            )
+            .unwrap();
+        assert_eq!(store.take_notifications().len(), 5);
     }
 
     #[test]

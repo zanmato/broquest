@@ -294,6 +294,25 @@ impl ScriptCompletionProvider {
                 })),
                 ..Default::default()
             },
+            CompletionItem {
+                label: "notify".to_string(),
+                kind: Some(CompletionItemKind::METHOD),
+                detail: Some(
+                    "(message: string, type?: 'info' | 'success' | 'warning' | 'error') => void"
+                        .to_string(),
+                ),
+                documentation: Some(lsp_types::Documentation::String(
+                    "Shows a toast in the app when the request finishes".to_string(),
+                )),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                    range: lsp_types::Range {
+                        start: start_pos,
+                        end: end_pos,
+                    },
+                    new_text: "notify()".to_string(),
+                })),
+                ..Default::default()
+            },
         ]
     }
 }

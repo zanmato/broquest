@@ -177,7 +177,7 @@ res.size;
 
 #### `bro` Object
 
-The `bro` object provides utility functions for environment variable management:
+The `bro` object provides utility functions for environment variables and notifications:
 
 ```javascript
 // Set environment variable
@@ -185,6 +185,12 @@ bro.setEnvVar("API_KEY", "your-api-key-here");
 
 // Get environment variable (returns undefined if not found)
 bro.getEnvVar("API_KEY");
+
+// Show a toast in the app when the request finishes. The type is "info"
+// (the default), "success", "warning" or "error". A request shows at most
+// five, and they show even when a script or the request fails afterwards.
+bro.notify("Token refreshed");
+bro.notify(`Got ${res.body.items.length} items`, "success");
 ```
 
 #### Global Functions

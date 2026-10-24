@@ -24,7 +24,41 @@ struct VariableStoreData {
     /// Request-level variables (Bruno `bru.getRequestVar`): declared on the
     /// request, read-only from scripts, resolvable via `{{name}}`.
     request_vars: HashMap<String, Value>,
+    /// Toasts asked for with `bro.notify`, shown when the request finishes.
+    notifications: Vec<ScriptNotification>,
 }
+
+/// How a script's toast looks: `bro.notify(message, type)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotifyLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+impl NotifyLevel {
+    /// The level a script names, Info for any other.
+    pub fn from_name(name: &str) -> Self {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "success" => Self::Success,
+            "warning" | "warn" => Self::Warning,
+            "error" => Self::Error,
+            _ => Self::Info,
+        }
+    }
+}
+
+/// A toast a script asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptNotification {
+    pub level: NotifyLevel,
+    pub message: String,
+}
+
+/// How many toasts one request's scripts can show, so a loop can't flood
+/// the window.
+const MAX_NOTIFICATIONS: usize = 5;
 
 impl VariableStore {
     /// Create a new variable store
@@ -32,6 +66,27 @@ impl VariableStore {
         Self {
             data: Arc::new(Mutex::new(VariableStoreData::default())),
         }
+    }
+
+    /// Ask for a toast. Past [`MAX_NOTIFICATIONS`] the rest are only logged.
+    pub fn notify(&self, level: NotifyLevel, message: String) {
+        let Ok(mut data) = self.data.lock() else {
+            return;
+        };
+        if data.notifications.len() < MAX_NOTIFICATIONS {
+            data.notifications
+                .push(ScriptNotification { level, message });
+        } else {
+            tracing::info!(target: "script", "Notification not shown, too many: {message}");
+        }
+    }
+
+    /// The toasts the scripts asked for, leaving none behind.
+    pub fn take_notifications(&self) -> Vec<ScriptNotification> {
+        self.data
+            .lock()
+            .map(|mut data| std::mem::take(&mut data.notifications))
+            .unwrap_or_default()
     }
 
     /// Set an environment variable (temporary, script-scoped) and mark as dirty
