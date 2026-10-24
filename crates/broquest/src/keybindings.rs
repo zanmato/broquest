@@ -9,7 +9,8 @@ use crate::collections::{
 };
 use crate::requests::{
     CloseAllTabs, CloseOtherTabs, CloseTab, CloseTabsToTheLeft, CloseTabsToTheRight, CopyResponse,
-    EDITOR_PANEL_CONTEXT, FormatBody, NextTab, PrevTab, REQUEST_EDITOR_CONTEXT, Save, Send,
+    EDITOR_PANEL_CONTEXT, FilterResponse, FormatBody, NextTab, PrevTab, REQUEST_EDITOR_CONTEXT,
+    Save, Send,
 };
 use crate::settings::Settings;
 
@@ -57,6 +58,12 @@ pub const CUSTOMIZABLE_BINDINGS: &[BindingDef] = &[
         label: "Format request body",
         group: "Request",
         default: "shift-alt-f",
+    },
+    BindingDef {
+        action: "FilterResponse",
+        label: "Filter response with JSONPath",
+        group: "Request",
+        default: "secondary-shift-f",
     },
     BindingDef {
         action: "NewRequest",
@@ -212,6 +219,7 @@ fn key_bindings(action: &str, keystrokes: &str) -> Vec<KeyBinding> {
         ],
         "CopyResponse" => vec![KeyBinding::new(k, CopyResponse, request)],
         "FormatBody" => vec![KeyBinding::new(k, FormatBody, request)],
+        "FilterResponse" => vec![KeyBinding::new(k, FilterResponse, request)],
         "NewRequest" => vec![KeyBinding::new(k, NewScratchRequest, None)],
         "ToggleDocsEdit" => vec![KeyBinding::new(
             k,

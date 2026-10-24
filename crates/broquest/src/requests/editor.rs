@@ -1,9 +1,9 @@
 use crate::ui::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
+    Anchor, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
     InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _, Render, SharedString,
-    StyleRefinement, Styled as _, StyledImage as _, Subscription, Task, Window, actions, div, img,
-    prelude::FluentBuilder, px,
+    StyleRefinement, Styled as _, StyledImage as _, Subscription, Task, WeakEntity, Window,
+    actions, div, img, prelude::FluentBuilder, px,
 };
 use gpui_kit::component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt, WindowExt,
@@ -12,6 +12,7 @@ use gpui_kit::component::{
     h_flex,
     input::{Editor, EditorState, Input, InputEvent, InputState},
     kbd::Kbd,
+    menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
     notification::NotificationType,
     scroll::ScrollableElement,
     select::{Select, SelectEvent, SelectItem, SelectState},
@@ -23,6 +24,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::auth_editor::{AuthEditor, AuthEditorEvent};
+use super::jsonpath_history::{self, JsonPathHistory};
 use super::key_value_editor::{KeyValueConfig, KeyValueEditor, KeyValueEvent};
 use crate::app_settings::AppSettings;
 use crate::domain::{
@@ -46,7 +48,10 @@ use std::time::Duration;
 /// The key context of the request editor, where its shortcuts apply.
 pub(crate) const CONTEXT: &str = "request_editor";
 
-actions!(request_editor, [Save, Send, CopyResponse, FormatBody]);
+actions!(
+    request_editor,
+    [Save, Send, CopyResponse, FormatBody, FilterResponse]
+);
 
 /// Percent-encode text for a URL or form body. `{{variables}}` stay as they
 /// are, so they can still be resolved.
@@ -233,6 +238,9 @@ pub struct RequestEditor {
     _was_dirty: bool,
     // JSONPath filtering
     jsonpath_input: Entity<InputState>,
+    /// The filter last applied without an error, which Enter or leaving
+    /// the filter adds to the filter history.
+    applied_filter: Option<String>,
     original_response_body: Option<String>,
     _jsonpath_filter_task: Task<()>,
     response_format: ResponseFormat,
@@ -367,8 +375,9 @@ impl RequestEditor {
 
         let auth_editor = cx.new(|cx| AuthEditor::new(window, cx));
 
-        let jsonpath_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("$.store.book[*].author"));
+        let jsonpath_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Filter the response with JSONPath, like $..id")
+        });
 
         let request_response_state = cx.new(|_cx| ResizableState::default());
 
@@ -423,6 +432,7 @@ impl RequestEditor {
             _updating_url_from_params: false,
             _was_dirty: false,
             jsonpath_input,
+            applied_filter: None,
             original_response_body: None,
             _jsonpath_filter_task: Task::ready(()),
             response_format: ResponseFormat::Unknown,
@@ -1353,9 +1363,6 @@ impl RequestEditor {
                                 }
                                 _ => None,
                             };
-                            request_editor.jsonpath_input.update(cx, |input, cx| {
-                                input.set_value("", window, cx);
-                            });
                             cx.notify();
                         });
 
@@ -1370,6 +1377,11 @@ impl RequestEditor {
                             let raw_content = response_data.format_raw_response();
                             input_state.set_value(raw_content, window, cx);
                             cx.notify();
+                        });
+
+                        // The filter stays from one response to the next.
+                        editor_entity.update(cx, |request_editor, cx| {
+                            request_editor.handle_jsonpath_input_change(window, cx);
                         })
                     })?;
                 }
@@ -2052,22 +2064,46 @@ impl RequestEditor {
                                 }))
                                 .child(Tab::new().label("Response"))
                                 .child(Tab::new().label("Raw"))
-                                .when(self.copyable_response_text(cx).is_some(), |this| {
-                                    this.suffix(
-                                        Button::new("copy-response")
-                                            .ghost()
-                                            .xsmall()
-                                            .icon(IconName::Copy)
-                                            .tooltip_with_action(
-                                                "Copy Response",
-                                                &CopyResponse,
-                                                Some(CONTEXT),
+                                .suffix(
+                                    h_flex()
+                                        .gap_1()
+                                        .when(self.is_response_json(), |this| {
+                                            this.child(
+                                                Button::new("filter-response")
+                                                    .ghost()
+                                                    .xsmall()
+                                                    .icon(IconName::Funnel)
+                                                    .tooltip_with_action(
+                                                        "Filter with JSONPath",
+                                                        &FilterResponse,
+                                                        Some(CONTEXT),
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.focus_response_filter(window, cx);
+                                                        },
+                                                    )),
                                             )
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.copy_response(window, cx);
-                                            })),
-                                    )
-                                }),
+                                        })
+                                        .when(self.copyable_response_text(cx).is_some(), |this| {
+                                            this.child(
+                                                Button::new("copy-response")
+                                                    .ghost()
+                                                    .xsmall()
+                                                    .icon(IconName::Copy)
+                                                    .tooltip_with_action(
+                                                        "Copy Response",
+                                                        &CopyResponse,
+                                                        Some(CONTEXT),
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.copy_response(window, cx);
+                                                        },
+                                                    )),
+                                            )
+                                        }),
+                                ),
                         ),
                     )
                     .child(
@@ -2160,7 +2196,25 @@ impl RequestEditor {
                                                                 .text_size(px(12.))
                                                                 .cleanable(true),
                                                         ),
-                                                    ),
+                                                    )
+                                                    .child({
+                                                        let editor = cx.entity().downgrade();
+                                                        Button::new("jsonpath-history")
+                                                            .ghost()
+                                                            .small()
+                                                            .icon(IconName::History)
+                                                            .tooltip("Recent Filters")
+                                                            .dropdown_menu_with_anchor(
+                                                                Anchor::BottomRight,
+                                                                move |menu, _, cx| {
+                                                                    Self::filter_history_menu(
+                                                                        editor.clone(),
+                                                                        menu,
+                                                                        cx,
+                                                                    )
+                                                                },
+                                                            )
+                                                    }),
                                             )
                                         })
                                         .into_any_element()
@@ -2381,10 +2435,10 @@ impl RequestEditor {
         // Subscribe to JSONPath input changes for filtering response
         let jsonpath_input = self.jsonpath_input.clone();
         let jsonpath_subscription = cx.subscribe_in(&jsonpath_input, window, {
-            move |this: &mut Self, _input_state, event: &InputEvent, window, cx| {
-                if let InputEvent::Change = event {
-                    this.handle_jsonpath_input_change(window, cx);
-                }
+            move |this: &mut Self, _input_state, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => this.handle_jsonpath_input_change(window, cx),
+                InputEvent::PressEnter { .. } | InputEvent::Blur => this.remember_filter(cx),
+                InputEvent::Focus => {}
             }
         });
         self._subscriptions.push(jsonpath_subscription);
@@ -2570,8 +2624,77 @@ impl RequestEditor {
         self.response_format == ResponseFormat::Json && self.original_response_body.is_some()
     }
 
+    /// Show the response with the JSONPath filter focused. A response that
+    /// isn't JSON can't be filtered, which a notification says.
+    pub fn focus_response_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_response_json() {
+            window.push_notification(
+                (
+                    NotificationType::Info,
+                    "Send the request first. A JSON response can be filtered with JSONPath.",
+                ),
+                cx,
+            );
+            return;
+        }
+        self.active_response_tab = ResponseTab::Response;
+        self.jsonpath_input
+            .update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Put `query` in the filter and apply it.
+    fn use_filter(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.jsonpath_input.update(cx, |input, cx| {
+            input.set_value(query.to_string(), window, cx);
+            input.focus(window, cx);
+        });
+        self.handle_jsonpath_input_change(window, cx);
+    }
+
+    /// Add the filter in use to the history when it applies without error.
+    fn remember_filter(&mut self, cx: &mut Context<Self>) {
+        let query = self.jsonpath_input.read(cx).value().trim().to_string();
+        if self.applied_filter.as_deref() == Some(query.as_str()) {
+            JsonPathHistory::record(&query, cx);
+        }
+    }
+
+    /// The filter's history menu: recent filters, or example filters before
+    /// there are any.
+    fn filter_history_menu(editor: WeakEntity<Self>, menu: PopupMenu, cx: &App) -> PopupMenu {
+        let entries = JsonPathHistory::entries(cx);
+        let item = |label: SharedString, query: String| {
+            let editor = editor.clone();
+            PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                let _ = editor.update(cx, |editor, cx| editor.use_filter(&query, window, cx));
+            })
+        };
+        if entries.is_empty() {
+            return jsonpath_history::EXAMPLES.iter().fold(
+                menu.label("Examples"),
+                |menu, (query, description)| {
+                    menu.item(item(
+                        format!("{query}   {description}").into(),
+                        query.to_string(),
+                    ))
+                },
+            );
+        }
+        entries
+            .into_iter()
+            .fold(menu.label("Recent filters"), |menu, query| {
+                menu.item(item(query.clone().into(), query))
+            })
+            .separator()
+            .item(PopupMenuItem::new("Clear History").on_click(|_, _, cx| {
+                JsonPathHistory::clear(cx);
+            }))
+    }
+
     fn handle_jsonpath_input_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self._jsonpath_filter_task = Task::ready(());
+        self.applied_filter = None;
 
         if self.response_format != ResponseFormat::Json {
             return;
@@ -2620,6 +2743,9 @@ impl RequestEditor {
                     Ok(serde_json::to_string_pretty(&matches).unwrap_or_else(|_| "[]".to_string()))
                 }
             })();
+
+            let applied = result.is_ok().then(|| query.trim().to_string());
+            let _ = this.update(window, |editor, _| editor.applied_filter = applied);
 
             let result = window.update(|window, cx| {
                 response_input.update(cx, |input_state, cx| {
@@ -2750,6 +2876,11 @@ impl Render for RequestEditor {
             .on_action(
                 cx.listener(|this: &mut RequestEditor, &FormatBody, window, cx| {
                     this.format_body(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this: &mut RequestEditor, &FilterResponse, window, cx| {
+                    this.focus_response_filter(window, cx);
                 }),
             )
             .on_action(

@@ -39,6 +39,7 @@ pub enum CommandType {
     SaveRequest,
     CopyResponse,
     FormatBody,
+    FilterResponse,
     CloseTab,
     CloseOtherTabs,
     CloseTabsToTheLeft,
@@ -325,6 +326,7 @@ fn keybinding_for_command(
         CommandType::SaveRequest => (Box::new(crate::requests::Save), request),
         CommandType::CopyResponse => (Box::new(crate::requests::CopyResponse), request),
         CommandType::FormatBody => (Box::new(crate::requests::FormatBody), request),
+        CommandType::FilterResponse => (Box::new(crate::requests::FilterResponse), request),
         CommandType::NewRequest => (Box::new(crate::app::NewScratchRequest), None),
         CommandType::NewCollection => (Box::new(crate::app::OpenNewCollectionTab), None),
         CommandType::OpenCollection => (Box::new(crate::app::OpenCollection), None),
@@ -363,6 +365,9 @@ fn execute_command(cmd: &CommandType, window: &mut Window, cx: &mut App) {
         }
         CommandType::FormatBody => {
             window.dispatch_action(Box::new(crate::requests::FormatBody), cx);
+        }
+        CommandType::FilterResponse => {
+            window.dispatch_action(Box::new(crate::requests::FilterResponse), cx);
         }
         CommandType::CloseTab => {
             window.dispatch_action(Box::new(crate::requests::CloseTab), cx);
@@ -539,6 +544,11 @@ fn build_commands(cx: &App) -> Vec<CommandItem> {
             label: "Format Request Body".into(),
             group: "Request".into(),
             action_type: CommandType::FormatBody,
+        },
+        CommandItem {
+            label: "Filter Response with JSONPath".into(),
+            group: "Request".into(),
+            action_type: CommandType::FilterResponse,
         },
         CommandItem {
             label: "New Request".into(),

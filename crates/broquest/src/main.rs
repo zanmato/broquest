@@ -142,6 +142,7 @@ fn main() {
             .detach();
 
         cx.set_global(db);
+        requests::JsonPathHistory::load(cx);
 
         // Initialize global CollectionManager as an entity-backed global.
         let collection_manager = cx.new(|_| CollectionManager::new());
