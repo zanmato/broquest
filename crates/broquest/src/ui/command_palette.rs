@@ -28,6 +28,48 @@ pub struct CommandItem {
     pub label: String,
     pub group: String,
     pub action_type: CommandType,
+    /// More words the search finds the command by, besides its label: a
+    /// request's collection, folder and URL, or a command's synonyms.
+    pub keywords: Vec<String>,
+    /// Whether the command can run now. One that can't is shown greyed out
+    /// after the others, and can't be chosen.
+    pub enabled: bool,
+}
+
+/// What the palette needs to know about the open tabs to tell which
+/// commands can run.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PaletteContext {
+    pub tab_count: usize,
+    pub active_tab: usize,
+    /// The active tab is a request.
+    pub request_tab: bool,
+    /// The active request has a JSON response to filter.
+    pub json_response: bool,
+}
+
+impl PaletteContext {
+    /// Whether `command` can run with the tabs as they are.
+    fn allows(&self, command: &CommandType) -> bool {
+        match command {
+            CommandType::SendRequest
+            | CommandType::SaveRequest
+            | CommandType::CopyResponse
+            | CommandType::FormatBody => self.request_tab,
+            CommandType::FilterResponse => self.json_response,
+            CommandType::CloseTab | CommandType::CloseAllTabs => self.tab_count > 0,
+            CommandType::CloseOtherTabs | CommandType::NextTab | CommandType::PrevTab => {
+                self.tab_count > 1
+            }
+            CommandType::CloseTabsToTheLeft => self.active_tab > 0,
+            CommandType::CloseTabsToTheRight => self.active_tab + 1 < self.tab_count,
+            CommandType::NewCollection
+            | CommandType::OpenCollection
+            | CommandType::NewRequest
+            | CommandType::OpenSettings
+            | CommandType::OpenRequest { .. } => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -54,9 +96,36 @@ pub enum CommandType {
     },
 }
 
-struct ScoredItem {
+/// A command with its label and keywords in lower case, made once when the
+/// palette opens so that typing doesn't redo it for every command.
+struct Entry {
     command: CommandItem,
-    score: i64,
+    label: String,
+    keywords: Vec<String>,
+}
+
+impl Entry {
+    fn new(command: CommandItem) -> Self {
+        Self {
+            label: command.label.to_lowercase(),
+            keywords: command.keywords.iter().map(|k| k.to_lowercase()).collect(),
+            command,
+        }
+    }
+
+    /// How well the command matches the query, `None` when it doesn't. A
+    /// match on the label ranks above any match on keywords only, which needs
+    /// every word of the query in the label or a keyword.
+    fn score(&self, query: &[char], words: &[&str]) -> Option<i64> {
+        const LABEL_MATCH: i64 = 1_000_000;
+        if let Some(score) = fuzzy_score(&self.label, query) {
+            return Some(LABEL_MATCH + score);
+        }
+        let found = |word: &&str| {
+            self.label.contains(*word) || self.keywords.iter().any(|k| k.contains(*word))
+        };
+        (!words.is_empty() && words.iter().all(found)).then_some(0)
+    }
 }
 
 pub struct CommandPalette {
@@ -98,7 +167,7 @@ impl CommandPalette {
                     }
                 }
                 ListEvent::Cancel => {
-                    palette.hide(window, cx);
+                    palette.cancel(window, cx);
                 }
                 _ => {}
             },
@@ -114,11 +183,7 @@ impl CommandPalette {
                     let query = query_clone.read(cx).value().to_string();
                     list_clone.update(cx, |state, cx| {
                         state.delegate_mut().set_query(&query, cx);
-                        let ix = if state.delegate().items_count(0, cx) > 0 {
-                            Some(IndexPath::new(0))
-                        } else {
-                            None
-                        };
+                        let ix = state.delegate().first_enabled();
                         state.set_selected_index(ix, window, cx);
                     });
                 }
@@ -149,24 +214,44 @@ impl CommandPalette {
         ]);
     }
 
+    /// Move the highlight by `delta` rows, wrapping around and skipping the
+    /// commands that can't run.
     fn move_selection(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         self.list_state.update(cx, |state, cx| {
-            let count = state.delegate().items_count(0, cx);
+            let count = state.delegate().items_count(0, cx) as isize;
             if count == 0 {
                 return;
             }
-            let current = state
+            let mut row = state
                 .selected_index()
                 .map(|ix| ix.row as isize)
-                .unwrap_or(-1);
-            let next = if current < 0 && delta < 0 {
-                (count as isize) - 1
-            } else {
-                (current + delta).rem_euclid(count as isize)
-            };
-            let new_ix = IndexPath::new(next as usize);
-            state.set_selected_index(Some(new_ix), window, cx);
-            state.scroll_to_item(new_ix, gpui::ScrollStrategy::Center, window, cx);
+                .unwrap_or(if delta < 0 { 0 } else { -1 });
+            for _ in 0..count {
+                row = (row + delta).rem_euclid(count);
+                if state.delegate().is_enabled(row as usize) {
+                    let new_ix = IndexPath::new(row as usize);
+                    state.set_selected_index(Some(new_ix), window, cx);
+                    state.scroll_to_item(new_ix, gpui::ScrollStrategy::Center, window, cx);
+                    return;
+                }
+            }
+        });
+    }
+
+    /// Escape clears a typed search first, and closes the palette when there
+    /// is none.
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.query_input.read(cx).value().is_empty() {
+            self.hide(window, cx);
+            return;
+        }
+        // Setting the value sends no change event, so filter here.
+        self.query_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.list_state.update(cx, |state, cx| {
+            state.delegate_mut().set_query("", cx);
+            let ix = state.delegate().first_enabled();
+            state.set_selected_index(ix, window, cx);
         });
     }
 
@@ -178,20 +263,16 @@ impl CommandPalette {
         }
     }
 
-    pub fn show(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn show(&mut self, context: PaletteContext, window: &mut Window, cx: &mut Context<Self>) {
         self.previous_focus = window.focused(cx).map(|h| h.downgrade());
         self.visible = true;
         self.query_input.update(cx, |input, cx| {
             input.set_value("", window, cx);
         });
         self.list_state.update(cx, |state, cx| {
-            state.delegate_mut().refresh_commands(cx);
+            state.delegate_mut().refresh_commands(context, cx);
             state.delegate_mut().set_query("", cx);
-            let ix = if state.delegate().items_count(0, cx) > 0 {
-                Some(IndexPath::new(0))
-            } else {
-                None
-            };
+            let ix = state.delegate().first_enabled();
             state.set_selected_index(ix, window, cx);
         });
         self.query_input.focus_handle(cx).focus(window, cx);
@@ -208,11 +289,11 @@ impl CommandPalette {
         cx.notify();
     }
 
-    pub fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle(&mut self, context: PaletteContext, window: &mut Window, cx: &mut Context<Self>) {
         if self.visible {
             self.hide(window, cx);
         } else {
-            self.show(window, cx);
+            self.show(context, window, cx);
         }
     }
 }
@@ -223,7 +304,7 @@ impl Render for CommandPalette {
             .key_context(COMMAND_PALETTE_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &CancelCommandPalette, window, cx| {
-                this.hide(window, cx);
+                this.cancel(window, cx);
             }))
             .on_action(cx.listener(|this, _: &SelectNextCommand, window, cx| {
                 this.move_selection(1, window, cx);
@@ -409,8 +490,9 @@ fn execute_command(cmd: &CommandType, window: &mut Window, cx: &mut App) {
 }
 
 pub struct CommandPaletteDelegate {
-    all_commands: Vec<CommandItem>,
-    filtered: Vec<ScoredItem>,
+    entries: Vec<Entry>,
+    /// The matching commands, as indices into `entries`, best first.
+    filtered: Vec<usize>,
     selected_index: Option<IndexPath>,
     query: String,
 }
@@ -418,193 +500,194 @@ pub struct CommandPaletteDelegate {
 impl CommandPaletteDelegate {
     fn new(cx: &App) -> Self {
         let mut delegate = Self {
-            all_commands: Vec::new(),
+            entries: Vec::new(),
             filtered: Vec::new(),
             selected_index: None,
             query: String::new(),
         };
-        delegate.refresh_commands(cx);
+        delegate.refresh_commands(PaletteContext::default(), cx);
         delegate
     }
 
-    fn refresh_commands(&mut self, cx: &App) {
-        self.all_commands = build_commands(cx);
+    fn refresh_commands(&mut self, context: PaletteContext, cx: &App) {
+        self.entries = build_commands(context, cx)
+            .into_iter()
+            .map(Entry::new)
+            .collect();
         self.apply_filter();
     }
 
     fn set_query(&mut self, query: &str, cx: &mut Context<ListState<Self>>) {
         self.query = query.to_string();
         self.apply_filter();
-        self.selected_index = if self.filtered.is_empty() {
-            None
-        } else {
-            Some(IndexPath::new(0))
-        };
+        self.selected_index = self.first_enabled();
         cx.notify();
     }
 
     fn apply_filter(&mut self) {
-        if self.query.is_empty() {
-            self.filtered = self
-                .all_commands
+        let query = self.query.trim().to_lowercase();
+        let mut scored: Vec<(usize, i64)> = if query.is_empty() {
+            (0..self.entries.len()).map(|ix| (ix, 0)).collect()
+        } else {
+            let chars: Vec<char> = query.chars().collect();
+            let words: Vec<&str> = query.split_whitespace().collect();
+            self.entries
                 .iter()
                 .enumerate()
-                .map(|(i, cmd)| ScoredItem {
-                    command: cmd.clone(),
-                    score: 10000 - i as i64,
-                })
-                .collect();
-            return;
-        }
-
-        let query_lower = self.query.to_lowercase();
-        let mut results: Vec<ScoredItem> = self
-            .all_commands
-            .iter()
-            .filter_map(|cmd| {
-                let label_lower = cmd.label.to_lowercase();
-                let score = fuzzy_score(&label_lower, &query_lower)?;
-                Some(ScoredItem {
-                    command: cmd.clone(),
-                    score,
-                })
-            })
-            .collect();
-
-        results.sort_by_key(|item| std::cmp::Reverse(item.score));
-        self.filtered = results;
+                .filter_map(|(ix, entry)| Some((ix, entry.score(&chars, &words)?)))
+                .collect()
+        };
+        // The best first, and the commands that can't run after the others.
+        // The sort is stable, so equal ones keep the order they were added in.
+        scored.sort_by_key(|&(ix, score)| {
+            (!self.entries[ix].command.enabled, std::cmp::Reverse(score))
+        });
+        self.filtered = scored.into_iter().map(|(ix, _)| ix).collect();
     }
 
+    fn command_at(&self, row: usize) -> Option<&CommandItem> {
+        self.filtered.get(row).map(|&ix| &self.entries[ix].command)
+    }
+
+    fn is_enabled(&self, row: usize) -> bool {
+        self.command_at(row).is_some_and(|command| command.enabled)
+    }
+
+    /// The first row whose command can run.
+    fn first_enabled(&self) -> Option<IndexPath> {
+        (0..self.filtered.len())
+            .find(|&row| self.is_enabled(row))
+            .map(IndexPath::new)
+    }
+
+    /// The highlighted command, when it can run.
     pub fn selected_command(&self) -> Option<CommandItem> {
         let ix = self.selected_index?;
-        self.filtered.get(ix.row).map(|item| item.command.clone())
+        self.command_at(ix.row)
+            .filter(|command| command.enabled)
+            .cloned()
     }
 }
 
-fn fuzzy_score(text: &str, query: &str) -> Option<i64> {
-    let text_chars: Vec<char> = text.chars().collect();
-    let query_chars: Vec<char> = query.chars().collect();
-
-    if query_chars.is_empty() {
+/// How well `query` matches `text` as a subsequence, higher for runs of
+/// consecutive characters and for matches at the start of a word. `None`
+/// when it doesn't match. Both are expected in lower case.
+fn fuzzy_score(text: &str, query: &[char]) -> Option<i64> {
+    if query.is_empty() {
         return Some(0);
     }
-    if query_chars.len() > text_chars.len() {
-        return None;
-    }
-
     let mut score: i64 = 0;
     let mut query_pos = 0;
-    let mut last_match_pos: Option<usize> = None;
-
-    for (i, &ch) in text_chars.iter().enumerate() {
-        if query_pos >= query_chars.len() {
+    let mut last_match: Option<usize> = None;
+    let mut previous: Option<char> = None;
+    for (i, ch) in text.chars().enumerate() {
+        if query_pos == query.len() {
             break;
         }
-        if ch == query_chars[query_pos] {
+        if ch == query[query_pos] {
             let mut bonus: i64 = 1;
-            if let Some(last) = last_match_pos
-                && last + 1 == i
-            {
+            if last_match.is_some_and(|last| last + 1 == i) {
                 bonus += 10;
             }
-            if i == 0 || text_chars[i - 1] == ' ' || text_chars[i - 1] == '-' {
+            if matches!(previous, None | Some(' ') | Some('-')) {
                 bonus += 5;
             }
             score += bonus;
-            last_match_pos = Some(i);
+            last_match = Some(i);
             query_pos += 1;
         }
+        previous = Some(ch);
     }
-
-    if query_pos == query_chars.len() {
-        Some(score)
-    } else {
-        None
-    }
+    (query_pos == query.len()).then_some(score)
 }
 
-fn build_commands(cx: &App) -> Vec<CommandItem> {
+fn build_commands(context: PaletteContext, cx: &App) -> Vec<CommandItem> {
+    let command =
+        |label: &str, group: &str, action_type: CommandType, keywords: &[&str]| CommandItem {
+            label: label.into(),
+            group: group.into(),
+            enabled: context.allows(&action_type),
+            action_type,
+            keywords: keywords.iter().map(|k| k.to_string()).collect(),
+        };
     let mut commands = vec![
-        CommandItem {
-            label: "Send Request".into(),
-            group: "Request".into(),
-            action_type: CommandType::SendRequest,
-        },
-        CommandItem {
-            label: "Save Request".into(),
-            group: "Request".into(),
-            action_type: CommandType::SaveRequest,
-        },
-        CommandItem {
-            label: "Copy Response".into(),
-            group: "Request".into(),
-            action_type: CommandType::CopyResponse,
-        },
-        CommandItem {
-            label: "Format Request Body".into(),
-            group: "Request".into(),
-            action_type: CommandType::FormatBody,
-        },
-        CommandItem {
-            label: "Filter Response with JSONPath".into(),
-            group: "Request".into(),
-            action_type: CommandType::FilterResponse,
-        },
-        CommandItem {
-            label: "New Request".into(),
-            group: "Request".into(),
-            action_type: CommandType::NewRequest,
-        },
-        CommandItem {
-            label: "New Collection".into(),
-            group: "Collection".into(),
-            action_type: CommandType::NewCollection,
-        },
-        CommandItem {
-            label: "Open Collection".into(),
-            group: "Collection".into(),
-            action_type: CommandType::OpenCollection,
-        },
-        CommandItem {
-            label: "Close Tab".into(),
-            group: "Tab".into(),
-            action_type: CommandType::CloseTab,
-        },
-        CommandItem {
-            label: "Close Other Tabs".into(),
-            group: "Tab".into(),
-            action_type: CommandType::CloseOtherTabs,
-        },
-        CommandItem {
-            label: "Close Tabs to the Left".into(),
-            group: "Tab".into(),
-            action_type: CommandType::CloseTabsToTheLeft,
-        },
-        CommandItem {
-            label: "Close Tabs to the Right".into(),
-            group: "Tab".into(),
-            action_type: CommandType::CloseTabsToTheRight,
-        },
-        CommandItem {
-            label: "Close All Tabs".into(),
-            group: "Tab".into(),
-            action_type: CommandType::CloseAllTabs,
-        },
-        CommandItem {
-            label: "Next Tab".into(),
-            group: "Tab".into(),
-            action_type: CommandType::NextTab,
-        },
-        CommandItem {
-            label: "Previous Tab".into(),
-            group: "Tab".into(),
-            action_type: CommandType::PrevTab,
-        },
-        CommandItem {
-            label: "Open Settings".into(),
-            group: "View".into(),
-            action_type: CommandType::OpenSettings,
-        },
+        command(
+            "Send Request",
+            "Request",
+            CommandType::SendRequest,
+            &["run", "execute"],
+        ),
+        command(
+            "Save Request",
+            "Request",
+            CommandType::SaveRequest,
+            &["write"],
+        ),
+        command(
+            "Copy Response",
+            "Request",
+            CommandType::CopyResponse,
+            &["clipboard"],
+        ),
+        command(
+            "Format Request Body",
+            "Request",
+            CommandType::FormatBody,
+            &["prettify", "beautify", "indent", "json", "xml"],
+        ),
+        command(
+            "Filter Response with JSONPath",
+            "Request",
+            CommandType::FilterResponse,
+            &["search", "query", "find"],
+        ),
+        command(
+            "New Request",
+            "Request",
+            CommandType::NewRequest,
+            &["create", "scratch"],
+        ),
+        command(
+            "New Collection",
+            "Collection",
+            CommandType::NewCollection,
+            &["create"],
+        ),
+        command(
+            "Open Collection",
+            "Collection",
+            CommandType::OpenCollection,
+            &["import", "folder", "load"],
+        ),
+        command("Close Tab", "Tab", CommandType::CloseTab, &[]),
+        command("Close Other Tabs", "Tab", CommandType::CloseOtherTabs, &[]),
+        command(
+            "Close Tabs to the Left",
+            "Tab",
+            CommandType::CloseTabsToTheLeft,
+            &[],
+        ),
+        command(
+            "Close Tabs to the Right",
+            "Tab",
+            CommandType::CloseTabsToTheRight,
+            &[],
+        ),
+        command("Close All Tabs", "Tab", CommandType::CloseAllTabs, &[]),
+        command("Next Tab", "Tab", CommandType::NextTab, &["switch"]),
+        command("Previous Tab", "Tab", CommandType::PrevTab, &["switch"]),
+        command(
+            "Open Settings",
+            "View",
+            CommandType::OpenSettings,
+            &[
+                "preferences",
+                "options",
+                "keybindings",
+                "shortcuts",
+                "theme",
+            ],
+        ),
     ];
 
     add_collection_requests(&mut commands, cx);
@@ -628,6 +711,9 @@ fn add_collection_requests(commands: &mut Vec<CommandItem>, cx: &App) {
                 Some(g) => format!("{} / {}", collection.data.name, g),
                 None => collection.data.name.clone(),
             };
+            // A request is also found by its collection, folder and URL.
+            let mut keywords = vec![collection.data.name.clone(), request.url.clone()];
+            keywords.extend(group.map(str::to_string));
             commands.push(CommandItem {
                 label: format!("{} {}", method.as_str(), request.name),
                 group: group_label,
@@ -635,6 +721,8 @@ fn add_collection_requests(commands: &mut Vec<CommandItem>, cx: &App) {
                     collection_path: collection.data.path.clone(),
                     request_name: request.name.clone(),
                 },
+                keywords,
+                enabled: true,
             });
         };
 
@@ -700,6 +788,7 @@ impl IntoElement for CommandPaletteItemElement {
         let selected = self.selected;
         let selected_bg = self.selected_bg;
         let selected_fg = self.selected_fg;
+        let enabled = self.command.enabled;
         let group_color = if selected {
             selected_fg
         } else {
@@ -711,7 +800,9 @@ impl IntoElement for CommandPaletteItemElement {
             .px_2()
             .py_1()
             .rounded(px(4.))
-            .cursor_pointer()
+            .when(enabled, |el| el.cursor_pointer())
+            // A command that can't run now is shown faded.
+            .when(!enabled, |el| el.opacity(0.5))
             .when(selected, |el| el.bg(selected_bg).text_color(selected_fg))
             .child(
                 div()
@@ -740,8 +831,8 @@ impl ListDelegate for CommandPaletteDelegate {
         window: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> Option<Self::Item> {
-        let selected = self.selected_index == Some(ix);
-        let command = self.filtered.get(ix.row)?.command.clone();
+        let command = self.command_at(ix.row)?.clone();
+        let selected = self.selected_index == Some(ix) && command.enabled;
         let theme = cx.theme();
         let muted_color = theme.muted_foreground;
         let selected_bg = theme.accent;
@@ -766,6 +857,7 @@ impl ListDelegate for CommandPaletteDelegate {
     ) -> gpui::Task<()> {
         self.query = query.to_string();
         self.apply_filter();
+        self.selected_index = self.first_enabled();
         cx.notify();
         gpui::Task::ready(())
     }
@@ -795,35 +887,137 @@ impl ListDelegate for CommandPaletteDelegate {
 mod tests {
     use super::*;
 
+    fn score(text: &str, query: &str) -> Option<i64> {
+        fuzzy_score(text, &query.chars().collect::<Vec<_>>())
+    }
+
+    fn item(label: &str, keywords: &[&str], enabled: bool) -> CommandItem {
+        CommandItem {
+            label: label.into(),
+            group: "Group".into(),
+            action_type: CommandType::NewRequest,
+            keywords: keywords.iter().map(|k| k.to_string()).collect(),
+            enabled,
+        }
+    }
+
+    fn delegate(items: Vec<CommandItem>) -> CommandPaletteDelegate {
+        CommandPaletteDelegate {
+            entries: items.into_iter().map(Entry::new).collect(),
+            filtered: Vec::new(),
+            selected_index: None,
+            query: String::new(),
+        }
+    }
+
+    fn labels(delegate: &CommandPaletteDelegate) -> Vec<&str> {
+        (0..delegate.filtered.len())
+            .map(|row| delegate.command_at(row).unwrap().label.as_str())
+            .collect()
+    }
+
     #[test]
     fn test_fuzzy_score_exact_match() {
-        assert!(fuzzy_score("send request", "send request").is_some());
+        assert!(score("send request", "send request").is_some());
     }
 
     #[test]
     fn test_fuzzy_score_prefix() {
-        assert!(fuzzy_score("send request", "send").is_some());
+        assert!(score("send request", "send").is_some());
     }
 
     #[test]
     fn test_fuzzy_score_subsequence() {
-        assert!(fuzzy_score("switch to dark theme", "std").is_some());
+        assert!(score("switch to dark theme", "std").is_some());
     }
 
     #[test]
     fn test_fuzzy_score_no_match() {
-        assert!(fuzzy_score("send request", "xyz").is_none());
+        assert!(score("send request", "xyz").is_none());
     }
 
     #[test]
     fn test_fuzzy_score_empty_query() {
-        assert!(fuzzy_score("send request", "").is_some());
+        assert!(score("send request", "").is_some());
     }
 
     #[test]
     fn test_fuzzy_score_consecutive_beats_spread() {
-        let consecutive = fuzzy_score("close tab", "clot").unwrap();
-        let spread = fuzzy_score("clear history", "clt").unwrap();
+        let consecutive = score("close tab", "clot").unwrap();
+        let spread = score("clear history", "clt").unwrap();
         assert!(consecutive > spread);
+    }
+
+    #[test]
+    fn keywords_find_requests_by_collection_and_url() {
+        let mut palette = delegate(vec![
+            item(
+                "GET List shipments",
+                &["Kestrel", "{{baseUrl}}/v1/shipments"],
+                true,
+            ),
+            item(
+                "POST Log in",
+                &["Kestrel", "{{baseUrl}}/v1/auth/token"],
+                true,
+            ),
+            item("GET Health", &["Other", "{{baseUrl}}/health"], true),
+        ]);
+        palette.query = "/v1/auth".into();
+        palette.apply_filter();
+        assert_eq!(labels(&palette), ["POST Log in"]);
+
+        // Every word has to be found, in the label or a keyword.
+        palette.query = "kestrel list".into();
+        palette.apply_filter();
+        assert_eq!(labels(&palette), ["GET List shipments"]);
+    }
+
+    #[test]
+    fn label_matches_rank_above_keyword_matches() {
+        let mut palette = delegate(vec![
+            item("Open Settings", &["theme"], true),
+            item("Switch Theme", &[], true),
+        ]);
+        palette.query = "theme".into();
+        palette.apply_filter();
+        assert_eq!(labels(&palette), ["Switch Theme", "Open Settings"]);
+    }
+
+    #[test]
+    fn commands_that_cant_run_come_last_and_are_skipped() {
+        let mut palette = delegate(vec![
+            item("Send Request", &[], false),
+            item("Save Request", &[], true),
+        ]);
+        palette.query = "request".into();
+        palette.apply_filter();
+        assert_eq!(labels(&palette), ["Save Request", "Send Request"]);
+        assert_eq!(palette.first_enabled(), Some(IndexPath::new(0)));
+
+        palette.selected_index = Some(IndexPath::new(1));
+        assert!(
+            palette.selected_command().is_none(),
+            "a disabled command can't run"
+        );
+    }
+
+    #[test]
+    fn tab_commands_follow_the_open_tabs() {
+        let context = PaletteContext {
+            tab_count: 3,
+            active_tab: 0,
+            request_tab: true,
+            json_response: false,
+        };
+        assert!(context.allows(&CommandType::SendRequest));
+        assert!(!context.allows(&CommandType::FilterResponse));
+        assert!(!context.allows(&CommandType::CloseTabsToTheLeft));
+        assert!(context.allows(&CommandType::CloseTabsToTheRight));
+
+        let none = PaletteContext::default();
+        assert!(!none.allows(&CommandType::CloseTab));
+        assert!(!none.allows(&CommandType::SendRequest));
+        assert!(none.allows(&CommandType::NewRequest));
     }
 }

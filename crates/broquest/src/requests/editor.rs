@@ -2620,6 +2620,11 @@ impl RequestEditor {
         !matches!(auth, AuthType::None)
     }
 
+    /// Whether the last response is JSON, which the filter can query.
+    pub(crate) fn has_json_response(&self) -> bool {
+        self.is_response_json()
+    }
+
     fn is_response_json(&self) -> bool {
         self.response_format == ResponseFormat::Json && self.original_response_body.is_some()
     }

@@ -372,6 +372,21 @@ impl BroquestApp {
         });
     }
 
+    /// Run `f` on the active tab's request editor, when the active tab is a
+    /// request.
+    fn with_active_request(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(
+            &mut crate::requests::RequestEditor,
+            &mut Context<crate::requests::RequestEditor>,
+        ),
+    ) {
+        if let Some(editor) = self.editor_panel.read(cx).active_request_editor() {
+            editor.update(cx, f);
+        }
+    }
+
     /// Close the tabs `scope` names around the active tab.
     fn close_tabs(&mut self, scope: CloseScope, window: &mut Window, cx: &mut Context<Self>) {
         self.editor_panel.update(cx, |panel, cx| {
@@ -712,8 +727,9 @@ impl BroquestApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let context = self.editor_panel.read(cx).palette_context(cx);
         self.command_palette.update(cx, |palette, cx| {
-            palette.toggle(window, cx);
+            palette.toggle(context, window, cx);
         });
     }
 
@@ -958,6 +974,26 @@ impl Render for BroquestApp {
                     panel.save_active_request(window, cx);
                 });
             }))
+            // The request editor handles these itself when it has focus. They
+            // reach here from elsewhere, such as the command palette after it
+            // gives focus back to the sidebar, and go to the active request.
+            .on_action(
+                cx.listener(|this, _: &crate::requests::CopyResponse, window, cx| {
+                    this.with_active_request(cx, |editor, cx| editor.copy_response(window, cx));
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::requests::FormatBody, window, cx| {
+                    this.with_active_request(cx, |editor, cx| editor.format_body(window, cx));
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::requests::FilterResponse, window, cx| {
+                    this.with_active_request(cx, |editor, cx| {
+                        editor.focus_response_filter(window, cx)
+                    });
+                }),
+            )
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 this.editor_panel.update(cx, |panel, cx| {
                     panel.close_active_tab(window, cx);

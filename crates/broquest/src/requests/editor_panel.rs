@@ -175,6 +175,20 @@ impl EditorPanel {
         cx.notify();
     }
 
+    /// What the command palette needs to know to tell which commands can run.
+    pub fn palette_context(&self, cx: &App) -> crate::ui::command_palette::PaletteContext {
+        let request = match self.tabs.get(self.active_tab_ix) {
+            Some(TabType::Request(tab)) => Some(tab.request_editor.read(cx)),
+            _ => None,
+        };
+        crate::ui::command_palette::PaletteContext {
+            tab_count: self.tabs.len(),
+            active_tab: self.active_tab_ix,
+            request_tab: request.is_some(),
+            json_response: request.is_some_and(|editor| editor.has_json_response()),
+        }
+    }
+
     pub fn send_active_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(TabType::Request(tab)) = self.tabs.get(self.active_tab_ix) {
             let editor = tab.request_editor.clone();
@@ -212,7 +226,6 @@ impl EditorPanel {
     }
 
     /// The editor of the active tab, when it is a request.
-    #[cfg(feature = "screenshots")]
     pub(crate) fn active_request_editor(&self) -> Option<Entity<RequestEditor>> {
         match self.tabs.get(self.active_tab_ix)? {
             TabType::Request(tab) => Some(tab.request_editor.clone()),
