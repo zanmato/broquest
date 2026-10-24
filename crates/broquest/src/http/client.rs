@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::domain::{
     AuthType, EncodedBody, HttpMethod, JwtAuth, KeyValuePair, OAuth2Auth, OAuth2GrantType,
-    RequestData, ResponseData,
+    OAuth2TokenKind, RequestData, ResponseData,
 };
 use crate::environments::EnvironmentResolver;
 use crate::scripting::{ScriptExecutionService, ScriptNotification, VariableStore};
@@ -14,8 +14,30 @@ use super::auth_shorthand;
 use super::body_files;
 use super::dotenv;
 use super::encoding;
+use super::is_token_expired;
 use super::jwt;
-use super::oauth2::{self, calculate_expires_at, is_oauth_token_expired};
+use super::oauth2::{self, CachedToken, TokenCache};
+
+/// What an OAuth2 token is wanted for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenNeed {
+    /// Sending a request: the cached token, else a refreshed or new one as
+    /// the settings allow.
+    Send,
+    /// The server answered 401: refresh or fetch, whatever is cached.
+    Rejected,
+    /// The Get token button: always a new one.
+    New,
+}
+
+/// The variables OAuth2 settings are resolved with outside of sending.
+#[derive(Debug, Clone, Default)]
+pub struct AuthVariables {
+    pub runtime: HashMap<String, String>,
+    pub collection: HashMap<String, String>,
+    pub variables: HashMap<String, String>,
+    pub secrets: HashMap<String, String>,
+}
 
 /// Flatten a JSON value to its broquest string representation for `{{}}`
 /// template resolution: strings are used verbatim; other JSON values are
@@ -84,6 +106,11 @@ pub struct HttpClientService {
     timeout: Duration,
     environment_resolver: EnvironmentResolver,
     script_execution_service: ScriptExecutionService,
+    /// OAuth2 tokens, kept while the app runs.
+    tokens: TokenCache,
+    /// URLs to open in the browser, sent to the app.
+    open_urls: smol::channel::Sender<String>,
+    opened_urls: smol::channel::Receiver<String>,
 }
 
 impl Global for HttpClientService {}
@@ -96,12 +123,17 @@ impl HttpClientService {
         let script_execution_service =
             ScriptExecutionService::new().context("Failed to create script execution service")?;
 
+        let (open_urls, opened_urls) = smol::channel::unbounded();
+
         Ok(Self {
             client,
             no_redirect_client,
             timeout: timeout_duration,
             environment_resolver: EnvironmentResolver::new(),
             script_execution_service,
+            tokens: TokenCache::default(),
+            open_urls,
+            opened_urls,
         })
     }
 
@@ -149,65 +181,177 @@ impl HttpClientService {
         cx.global_mut::<Self>()
     }
 
-    /// Ensure OAuth2 has a valid access token, fetching if necessary
+    /// URLs the app should open in the browser, for the authorization code
+    /// flow.
+    pub fn url_requests(&self) -> smol::channel::Receiver<String> {
+        self.opened_urls.clone()
+    }
+
+    /// Make sure `oauth` carries a token, from the cache, a refresh or a new
+    /// fetch, as `need` and the settings allow. Returns whether a token was
+    /// fetched or refreshed now.
     pub async fn ensure_oauth2_token(
         &self,
         oauth: &mut OAuth2Auth,
-        open_url: impl Fn(&str) + Send + 'static,
-    ) -> Result<(), HttpError> {
-        if !is_oauth_token_expired(oauth) {
-            return Ok(());
+        scope: &str,
+        need: TokenNeed,
+    ) -> Result<bool, HttpError> {
+        if !oauth2::can_fetch(oauth) {
+            if need == TokenNeed::New {
+                return Err(match oauth.grant_type {
+                    OAuth2GrantType::Password => HttpError::new(
+                        "Password grant not supported",
+                        "Use client credentials or authorization code flow",
+                    ),
+                    _ => HttpError::new(
+                        "OAuth2 token URL missing",
+                        "Set the token URL to fetch a token",
+                    ),
+                });
+            }
+            // Only a token set by hand, if any.
+            return Ok(false);
         }
 
-        match oauth.grant_type {
-            OAuth2GrantType::ClientCredentials => {
-                let token = oauth2::fetch_client_credentials_token(&self.client, oauth).await?;
-                oauth.access_token = Some(token.access_token);
-                oauth.refresh_token = token.refresh_token;
-                if let Some(expires_in) = token.expires_in {
-                    oauth.expires_at = Some(calculate_expires_at(expires_in));
+        // A token set by hand in the settings.
+        if need == TokenNeed::Send
+            && oauth.access_token.is_some()
+            && !is_token_expired(oauth.expires_at, true)
+        {
+            return Ok(false);
+        }
+
+        let key = oauth2::cache_key(scope, oauth);
+        let cached = self.tokens.get(&key);
+        if need == TokenNeed::Send
+            && let Some(token) = &cached
+            && !token.is_expired()
+        {
+            token.apply(oauth);
+            return Ok(false);
+        }
+
+        if need != TokenNeed::New
+            && oauth.auto_refresh
+            && let Some(refresh) = cached.as_ref().and_then(|t| t.refresh_token.clone())
+        {
+            match oauth2::refresh_token(&self.client, oauth, &refresh).await {
+                Ok(response) => {
+                    let token = CachedToken::from_response(response, Some(refresh));
+                    token.apply(oauth);
+                    self.tokens.insert(key, token);
+                    return Ok(true);
                 }
-            }
-            OAuth2GrantType::AuthorizationCode => {
-                let authorize_url = oauth
-                    .authorize_url
-                    .as_ref()
-                    .ok_or_else(|| {
-                        HttpError::new(
-                            "OAuth2 authorization URL missing",
-                            "Authorization URL is required for authorization code flow",
-                        )
-                    })?
-                    .clone();
-
-                let (addr, callback_future) = oauth2::spawn_callback_server(None).await?;
-                let redirect_uri = format!("http://{}", addr);
-
-                let auth_url =
-                    oauth2::build_authorization_url_with_url(&authorize_url, oauth, &redirect_uri);
-
-                open_url(&auth_url);
-
-                let result = callback_future.await?;
-
-                let token =
-                    oauth2::exchange_auth_code(&self.client, oauth, &result.code, &redirect_uri)
-                        .await?;
-                oauth.access_token = Some(token.access_token);
-                oauth.refresh_token = token.refresh_token;
-                if let Some(expires_in) = token.expires_in {
-                    oauth.expires_at = Some(calculate_expires_at(expires_in));
-                }
-            }
-            OAuth2GrantType::Password => {
-                return Err(HttpError::new(
-                    "Password grant not supported",
-                    "Use client credentials or authorization code flow",
-                ));
+                Err(e) => tracing::warn!("OAuth2 refresh failed, fetching a new token: {}", e),
             }
         }
 
-        Ok(())
+        if need != TokenNeed::New && !oauth.auto_fetch {
+            if cached.is_some() {
+                self.tokens.remove(&key);
+            }
+            oauth.access_token = None;
+            oauth.id_token = None;
+            return Ok(false);
+        }
+
+        let response = match oauth.grant_type {
+            OAuth2GrantType::AuthorizationCode => self.authorize(oauth).await?,
+            _ => oauth2::fetch_client_credentials_token(&self.client, oauth).await?,
+        };
+        let token = CachedToken::from_response(response, None);
+        token.apply(oauth);
+        self.tokens.insert(key, token);
+        Ok(true)
+    }
+
+    /// The authorization code flow: open the browser at the authorization
+    /// URL, wait for the redirect and trade its code for a token.
+    async fn authorize(&self, oauth: &OAuth2Auth) -> Result<oauth2::TokenResponse, HttpError> {
+        let authorize_url = oauth
+            .authorize_url
+            .clone()
+            .filter(|u| !u.trim().is_empty())
+            .ok_or_else(|| {
+                HttpError::new(
+                    "OAuth2 authorization URL missing",
+                    "Authorization URL is required for authorization code flow",
+                )
+            })?;
+
+        let server = oauth2::CallbackServer::bind(oauth.redirect_url.as_deref()).await?;
+        let redirect_uri = server.redirect_uri.clone();
+        let state = oauth2::state_for(oauth);
+        let pkce = oauth.pkce.then(oauth2::Pkce::new);
+        let url = oauth2::build_authorization_url(
+            &authorize_url,
+            oauth,
+            &redirect_uri,
+            &state,
+            pkce.as_ref().map(|p| p.challenge.as_str()),
+        );
+
+        tracing::info!("Opening the OAuth2 authorization URL: {}", url);
+        self.open_urls.try_send(url).ok();
+
+        let code = server
+            .wait_for_code(&state, oauth2::AUTHORIZATION_TIMEOUT)
+            .await?;
+        oauth2::exchange_auth_code(
+            &self.client,
+            oauth,
+            &code,
+            &redirect_uri,
+            pkce.as_ref().map(|p| p.verifier.as_str()),
+        )
+        .await
+    }
+
+    /// Resolve the variables in OAuth2 settings, as sending would.
+    pub fn resolve_oauth2(&self, oauth: &OAuth2Auth, vars: &AuthVariables) -> OAuth2Auth {
+        match self.environment_resolver.resolve_auth(
+            &AuthType::OAuth2(oauth.clone()),
+            &vars.runtime,
+            &vars.collection,
+            &vars.variables,
+            &vars.secrets,
+        ) {
+            AuthType::OAuth2(resolved) => resolved,
+            _ => oauth.clone(),
+        }
+    }
+
+    /// Fetch a new token for resolved settings and cache it, for the Get
+    /// token button.
+    pub async fn fetch_oauth2_token(
+        &self,
+        mut oauth: OAuth2Auth,
+        scope: &str,
+    ) -> Result<CachedToken, HttpError> {
+        self.ensure_oauth2_token(&mut oauth, scope, TokenNeed::New)
+            .await?;
+        self.tokens
+            .get(&oauth2::cache_key(scope, &oauth))
+            .ok_or_else(|| HttpError::new("OAuth2 token missing", "No token was cached"))
+    }
+
+    /// Forget the cached token of resolved settings. Returns whether there
+    /// was one.
+    pub fn clear_oauth2_token(&self, oauth: &OAuth2Auth, scope: &str) -> bool {
+        self.tokens
+            .remove(&oauth2::cache_key(scope, oauth))
+            .is_some()
+    }
+
+    /// Drop a request's OAuth2 token, as `bro.resetOAuth2Token()` asks.
+    fn forget_oauth2_token(&self, auth: &mut AuthType, scope: &str) {
+        if let AuthType::OAuth2(oauth) = auth {
+            self.tokens.remove(&oauth2::cache_key(scope, oauth));
+            oauth.access_token = None;
+            oauth.id_token = None;
+            oauth.refresh_token = None;
+            oauth.expires_at = None;
+        }
     }
 
     /// Ensure JWT has a valid access token, fetching if necessary
@@ -224,21 +368,21 @@ impl HttpClientService {
         Ok(())
     }
 
-    /// Ensure all auth tokens are valid, fetching/refreshing if necessary
+    /// Ensure all auth tokens are valid, fetching/refreshing if necessary.
+    /// Returns whether an OAuth2 token was fetched or refreshed now.
     pub async fn ensure_auth_tokens(
         &self,
         auth: &mut crate::domain::AuthType,
-    ) -> Result<(), HttpError> {
+        scope: &str,
+    ) -> Result<bool, HttpError> {
         use crate::domain::AuthType;
 
         match auth {
-            AuthType::OAuth2(oauth)
-                // Only auto-fetch for client credentials flow when token_url is configured
-                if matches!(oauth.grant_type, OAuth2GrantType::ClientCredentials)
-                    && !oauth.token_url.is_empty()
-                => {
-                    self.ensure_oauth2_token(oauth, |_| {}).await?;
-                }
+            AuthType::OAuth2(oauth) => {
+                return self
+                    .ensure_oauth2_token(oauth, scope, TokenNeed::Send)
+                    .await;
+            }
             AuthType::Jwt(jwt)
                 // Only try to fetch if login_url is configured
                 if !jwt.login_url.is_empty() => {
@@ -247,7 +391,7 @@ impl HttpClientService {
             _ => {}
         }
 
-        Ok(())
+        Ok(false)
     }
 
     pub async fn send_request(
@@ -418,6 +562,10 @@ impl HttpClientService {
                 ));
             }
 
+            if variable_store.take_oauth2_reset() {
+                self.forget_oauth2_token(&mut request_data.auth, &request_data.token_scope);
+            }
+
             // Variables the script set can fill placeholders that were still
             // unresolved, as in `request.variables.set("nonce", ...)`.
             let runtime_after: HashMap<String, String> = variable_store
@@ -440,7 +588,11 @@ impl HttpClientService {
         }
 
         // Ensure auth tokens are valid (fetch/refresh if needed)
-        self.ensure_auth_tokens(&mut request_data.auth).await?;
+        let token_scope = request_data.token_scope.clone();
+        let fetched_token = self
+            .ensure_auth_tokens(&mut request_data.auth, &token_scope)
+            .await?;
+        let auth_after = request_data.auth.clone();
 
         // `>> file` lines of .http requests, with variables resolved.
         let response_files: Vec<(std::path::PathBuf, bool)> = request_data
@@ -475,9 +627,32 @@ impl HttpClientService {
                 .await?
         } else {
             // Standard request flow for non-digest auth
-            let (request_builder, request_headers) =
+            let (request_builder, mut request_headers) =
                 self.build_request_builder(&request_data, None);
-            let response = self.execute_request(request_builder).await?;
+            let mut response = self.execute_request(request_builder).await?;
+
+            // A rejected OAuth2 token gets refreshed or fetched again, once.
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED
+                && !fetched_token
+                && let AuthType::OAuth2(oauth) = &mut request_data.auth
+                && (oauth.auto_fetch || oauth.auto_refresh)
+                && oauth2::can_fetch(oauth)
+            {
+                match self
+                    .ensure_oauth2_token(oauth, &token_scope, TokenNeed::Rejected)
+                    .await
+                {
+                    Ok(true) => {
+                        tracing::info!("Got 401, sending again with a new OAuth2 token");
+                        let (request_builder, headers) =
+                            self.build_request_builder(&request_data, None);
+                        request_headers = headers;
+                        response = self.execute_request(request_builder).await?;
+                    }
+                    Ok(false) => {}
+                    Err(e) => tracing::warn!("Could not get a new OAuth2 token: {}", e),
+                }
+            }
 
             self.process_response(
                 response,
@@ -489,7 +664,11 @@ impl HttpClientService {
             .await?
         };
 
-        let (response, _) = result;
+        let (response, variable_store) = result;
+        if variable_store.take_oauth2_reset() {
+            let mut auth = auth_after;
+            self.forget_oauth2_token(&mut auth, &token_scope);
+        }
         for (path, overwrite) in response_files {
             save_response_file(&response, &path, overwrite);
         }
@@ -950,16 +1129,16 @@ impl HttpClientService {
                 request.header(&key.header, &key.value)
             }
             AuthType::OAuth2(oauth) => {
-                if let Some(token) = &oauth.access_token {
+                let mut request = request;
+                for (name, value) in oauth2_headers(oauth) {
+                    request = request.header(&name, &value);
                     headers.push(KeyValuePair {
-                        key: "Authorization".to_string(),
-                        value: format!("Bearer {}", token),
+                        key: name,
+                        value,
                         enabled: true,
                     });
-                    request.bearer_auth(token)
-                } else {
-                    request
                 }
+                request
             }
             AuthType::Jwt(jwt) => {
                 if let Some(token) = &jwt.access_token {
@@ -979,6 +1158,40 @@ impl HttpClientService {
 
         (request, headers)
     }
+}
+
+/// The headers that carry an OAuth2 token, as the settings place it.
+fn oauth2_headers(oauth: &OAuth2Auth) -> Vec<(String, String)> {
+    let name = match oauth.header_name.trim() {
+        "" => "Authorization".to_string(),
+        name => name.to_string(),
+    };
+    let prefixed = |token: &str| match oauth.header_prefix.trim() {
+        "" => token.to_string(),
+        prefix => format!("{prefix} {token}"),
+    };
+    let access = oauth.access_token.as_deref().filter(|t| !t.is_empty());
+    let id = oauth.id_token.as_deref().filter(|t| !t.is_empty());
+
+    let mut headers = Vec::new();
+    match oauth.token_to_send {
+        OAuth2TokenKind::Access => headers.extend(access.map(|t| (name, prefixed(t)))),
+        OAuth2TokenKind::Id => {
+            if id.is_none() && access.is_some() {
+                tracing::warn!("The OAuth2 token response had no id_token to send");
+            }
+            headers.extend(id.map(|t| (name, prefixed(t))));
+        }
+        OAuth2TokenKind::Both => {
+            headers.extend(access.map(|t| (name, prefixed(t))));
+            let id_header = match oauth.id_token_header.trim() {
+                "" => "X-ID-Token",
+                header => header,
+            };
+            headers.extend(id.map(|t| (id_header.to_string(), t.to_string())));
+        }
+    }
+    headers
 }
 
 /// Whether a urlencoded body has file fields (`name=@path`), which are sent

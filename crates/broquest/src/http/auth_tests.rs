@@ -7,7 +7,7 @@ use crate::domain::{
     AuthType, BasicAuth, DigestAuth, HttpMethod, JwtAuth, KeyAuth, OAuth2Auth, OAuth2GrantType,
     RequestData,
 };
-use crate::http::HttpClientService;
+use crate::http::{HttpClientService, TokenNeed};
 use serde_json::json;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -426,7 +426,7 @@ async fn test_oauth2_client_credentials_fetches_token() {
     };
 
     client
-        .ensure_oauth2_token(&mut oauth, |_| {})
+        .ensure_oauth2_token(&mut oauth, "", TokenNeed::Send)
         .await
         .unwrap();
     assert_eq!(oauth.access_token, Some("auto-fetched-token".to_string()));
@@ -444,7 +444,7 @@ async fn test_oauth2_uses_existing_token() {
     };
 
     client
-        .ensure_oauth2_token(&mut oauth, |_| {})
+        .ensure_oauth2_token(&mut oauth, "", TokenNeed::Send)
         .await
         .unwrap();
     assert_eq!(oauth.access_token, Some("existing-token".to_string()));
@@ -474,7 +474,9 @@ async fn test_oauth2_token_error_returns_meaningful_message() {
         ..Default::default()
     };
 
-    let result = client.ensure_oauth2_token(&mut oauth, |_| {}).await;
+    let result = client
+        .ensure_oauth2_token(&mut oauth, "", TokenNeed::Send)
+        .await;
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.details.contains("401") || err.details.contains("invalid_client"));
@@ -507,7 +509,7 @@ async fn test_oauth2_refresh_token_stored() {
     };
 
     client
-        .ensure_oauth2_token(&mut oauth, |_| {})
+        .ensure_oauth2_token(&mut oauth, "", TokenNeed::Send)
         .await
         .unwrap();
     assert_eq!(oauth.access_token, Some("new-access-token".to_string()));
@@ -721,4 +723,420 @@ async fn test_jwt_login_error_returns_meaningful_message() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.details.contains("401") || err.details.contains("invalid_credentials"));
+}
+
+// OAuth2 tokens kept between requests, refreshed, retried and placed.
+
+fn token_body(token: &str, expires_in: u64) -> serde_json::Value {
+    json!({ "access_token": token, "token_type": "Bearer", "expires_in": expires_in })
+}
+
+fn oauth2_request(server: &MockServer, oauth: OAuth2Auth) -> RequestData {
+    RequestData {
+        method: HttpMethod::Get,
+        url: format!("{}/api", server.uri()),
+        auth: AuthType::OAuth2(OAuth2Auth {
+            client_id: "client".to_string(),
+            client_secret: "secret".to_string(),
+            token_url: format!("{}/oauth/token", server.uri()),
+            ..oauth
+        }),
+        token_scope: "collection\ndev".to_string(),
+        ..Default::default()
+    }
+}
+
+async fn send(client: &HttpClientService, request: RequestData) -> crate::domain::ResponseData {
+    client
+        .send_request(request, None, None, None, None)
+        .await
+        .expect("request should succeed")
+        .0
+}
+
+#[tokio::test]
+async fn oauth2_token_is_fetched_once_and_reused() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("cached", 3600)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api"))
+        .and(header("Authorization", "Bearer cached"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let client = HttpClientService::new(30).unwrap();
+    let request = oauth2_request(&server, OAuth2Auth::default());
+    assert_eq!(send(&client, request.clone()).await.status_code, Some(200));
+    assert_eq!(send(&client, request).await.status_code, Some(200));
+}
+
+#[tokio::test]
+async fn oauth2_tokens_are_kept_per_environment_and_token_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("t", 3600)))
+        .expect(3)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let client = HttpClientService::new(30).unwrap();
+    let dev = oauth2_request(&server, OAuth2Auth::default());
+    let prod = RequestData {
+        token_scope: "collection\nprod".to_string(),
+        ..dev.clone()
+    };
+    let admin = oauth2_request(
+        &server,
+        OAuth2Auth {
+            token_id: "admin".to_string(),
+            ..Default::default()
+        },
+    );
+    for request in [dev.clone(), prod, admin, dev] {
+        send(&client, request).await;
+    }
+}
+
+#[tokio::test]
+async fn expired_oauth2_token_is_refreshed_at_the_token_url() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .and(body_string_contains("grant_type=client_credentials"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "first",
+            "refresh_token": "r1",
+            "expires_in": 0
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .and(body_string_contains("grant_type=refresh_token"))
+        .and(body_string_contains("refresh_token=r1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("refreshed", 3600)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api"))
+        .and(header("Authorization", "Bearer refreshed"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let client = HttpClientService::new(30).unwrap();
+    let request = oauth2_request(&server, OAuth2Auth::default());
+    send(&client, request.clone()).await;
+    send(&client, request).await;
+}
+
+#[tokio::test]
+async fn rejected_oauth2_token_is_fetched_again_and_sent_once_more() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("fresh", 3600)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api"))
+        .and(header("Authorization", "Bearer revoked"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api"))
+        .and(header("Authorization", "Bearer fresh"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = HttpClientService::new(30).unwrap();
+    // A token the server has revoked.
+    let request = oauth2_request(
+        &server,
+        OAuth2Auth {
+            access_token: Some("revoked".to_string()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(send(&client, request).await.status_code, Some(200));
+}
+
+#[tokio::test]
+async fn fresh_oauth2_token_that_gets_401_is_not_retried() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("t", 3600)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = HttpClientService::new(30).unwrap();
+    let request = oauth2_request(&server, OAuth2Auth::default());
+    assert_eq!(send(&client, request).await.status_code, Some(401));
+}
+
+#[tokio::test]
+async fn oauth2_without_auto_fetch_sends_no_token() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("t", 3600)))
+        .expect(0)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let client = HttpClientService::new(30).unwrap();
+    let request = oauth2_request(
+        &server,
+        OAuth2Auth {
+            auto_fetch: false,
+            ..Default::default()
+        },
+    );
+    let response = send(&client, request).await;
+    assert!(
+        !response
+            .request_headers
+            .iter()
+            .any(|h| h.key.eq_ignore_ascii_case("authorization"))
+    );
+}
+
+#[tokio::test]
+async fn oauth2_token_request_uses_basic_header_and_extra_fields() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        // base64 of client:secret
+        .and(header("Authorization", "Basic Y2xpZW50OnNlY3JldA=="))
+        .and(body_string_contains(
+            "audience=https%3A%2F%2Fapi.example.com",
+        ))
+        .respond_with(move |request: &wiremock::Request| {
+            let body = String::from_utf8_lossy(&request.body);
+            if body.contains("client_secret") {
+                ResponseTemplate::new(400)
+            } else {
+                ResponseTemplate::new(200).set_body_json(token_body("t", 3600))
+            }
+        })
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let client = HttpClientService::new(30).unwrap();
+    let request = oauth2_request(
+        &server,
+        OAuth2Auth {
+            client_auth: crate::domain::OAuth2ClientAuth::BasicHeader,
+            extra_params: vec![crate::domain::KeyValuePair {
+                key: "audience".to_string(),
+                value: "https://api.example.com".to_string(),
+                enabled: true,
+            }],
+            ..Default::default()
+        },
+    );
+    send(&client, request).await;
+}
+
+#[tokio::test]
+async fn oauth2_token_goes_in_the_chosen_headers() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "access",
+            "id_token": "id",
+            "expires_in": 3600
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let client = HttpClientService::new(30).unwrap();
+    let headers = |response: crate::domain::ResponseData| {
+        response
+            .request_headers
+            .into_iter()
+            .filter(|h| h.key != "Accept-Encoding")
+            .map(|h| (h.key, h.value))
+            .collect::<Vec<_>>()
+    };
+    let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+
+    let custom = oauth2_request(
+        &server,
+        OAuth2Auth {
+            header_name: "X-Auth".to_string(),
+            header_prefix: "JWT".to_string(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        headers(send(&client, custom).await),
+        [pair("X-Auth", "JWT access")]
+    );
+
+    let id = oauth2_request(
+        &server,
+        OAuth2Auth {
+            token_to_send: crate::domain::OAuth2TokenKind::Id,
+            header_prefix: String::new(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        headers(send(&client, id).await),
+        [pair("Authorization", "id")]
+    );
+
+    let both = oauth2_request(
+        &server,
+        OAuth2Auth {
+            token_to_send: crate::domain::OAuth2TokenKind::Both,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        headers(send(&client, both).await),
+        [
+            pair("Authorization", "Bearer access"),
+            pair("X-ID-Token", "id")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn script_can_reset_the_oauth2_token() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("t", 3600)))
+        .expect(3)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let client = HttpClientService::new(30).unwrap();
+    let plain = oauth2_request(&server, OAuth2Auth::default());
+    let reset_before = RequestData {
+        pre_request_script: Some("bro.resetOAuth2Token();".to_string()),
+        ..plain.clone()
+    };
+    let reset_after = RequestData {
+        post_response_script: Some("bro.resetOAuth2Token();".to_string()),
+        ..plain.clone()
+    };
+    send(&client, plain.clone()).await; // fetch 1
+    send(&client, reset_before).await; // fetch 2
+    send(&client, reset_after).await; // cached, then forgotten
+    send(&client, plain).await; // fetch 3
+}
+
+#[tokio::test]
+async fn authorization_code_flow_with_pkce_and_no_secret() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .and(body_string_contains("grant_type=authorization_code"))
+        .and(body_string_contains("code=the-code"))
+        .and(body_string_contains("code_verifier="))
+        .and(body_string_contains("client_id=public-app"))
+        .respond_with(|request: &wiremock::Request| {
+            let body = String::from_utf8_lossy(&request.body);
+            if body.contains("client_secret") {
+                ResponseTemplate::new(400)
+            } else {
+                ResponseTemplate::new(200).set_body_json(token_body("from-code", 3600))
+            }
+        })
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api"))
+        .and(header("Authorization", "Bearer from-code"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = HttpClientService::new(30).unwrap();
+
+    // Play the browser: follow the authorization URL back to the redirect.
+    let urls = client.url_requests();
+    let browser = tokio::spawn(async move {
+        let url = url::Url::parse(&urls.recv().await.unwrap()).unwrap();
+        let params: HashMap<String, String> = url.query_pairs().into_owned().collect();
+        assert_eq!(params["code_challenge_method"], "S256");
+        assert_eq!(params["code_challenge"].len(), 43);
+        assert_eq!(params["state"], "fixed-state");
+        let redirect = format!(
+            "{}?code=the-code&state={}",
+            params["redirect_uri"], params["state"]
+        );
+        reqwest::get(redirect).await.unwrap().text().await.unwrap()
+    });
+
+    let request = RequestData {
+        method: HttpMethod::Get,
+        url: format!("{}/api", server.uri()),
+        auth: AuthType::OAuth2(OAuth2Auth {
+            grant_type: OAuth2GrantType::AuthorizationCode,
+            client_id: "public-app".to_string(),
+            authorize_url: Some(format!("{}/authorize", server.uri())),
+            token_url: format!("{}/oauth/token", server.uri()),
+            state: Some("fixed-state".to_string()),
+            pkce: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert_eq!(send(&client, request).await.status_code, Some(200));
+    assert!(browser.await.unwrap().contains("Authorization successful"));
 }

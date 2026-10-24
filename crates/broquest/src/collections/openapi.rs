@@ -182,6 +182,7 @@ impl OpenAPIImporter {
             vars: Vec::new(),
             script_dialect: Default::default(),
             http_file: None,
+            token_scope: String::new(),
         }
     }
 

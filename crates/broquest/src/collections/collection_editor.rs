@@ -25,7 +25,7 @@ use crate::{
     app_database::{AppDatabase, CollectionData},
     domain::AuthType,
     environments::EnvironmentEditor,
-    requests::AuthEditor,
+    requests::{AuthEditor, AuthEditorEvent, oauth2_token},
     result_ext::ResultExt,
     ui::icon::IconName,
 };
@@ -110,6 +110,51 @@ impl CollectionEditor {
     ) {
         self.docs_editing = !self.docs_editing;
         cx.notify();
+    }
+
+    /// Get Token and Clear Token, for the token requests that inherit this
+    /// collection's auth get with its default environment.
+    fn on_oauth2_token_button(
+        &mut self,
+        event: &AuthEditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if *event == AuthEditorEvent::AuthChanged {
+            return;
+        }
+        let AuthType::OAuth2(oauth) = self.auth_editor.read(cx).get_auth(cx) else {
+            return;
+        };
+        let path = self.collection_path.clone();
+        let environment = CollectionManager::global(cx)
+            .read(cx)
+            .get_collection_by_path(&path)
+            .and_then(|info| {
+                let name = info.data.default_environment.as_deref()?;
+                info.toml
+                    .environments
+                    .iter()
+                    .find(|e| e.name == name)
+                    .cloned()
+            });
+        let mut vars = oauth2_token::auth_variables(Some(&path), environment.as_ref(), cx);
+        // The variables as edited here, not yet saved.
+        vars.collection = self
+            .vars_editor
+            .read(cx)
+            .get_pairs(cx)
+            .into_iter()
+            .filter(|v| v.enabled && !v.key.is_empty())
+            .map(|v| (v.key, v.value))
+            .collect();
+        let scope =
+            oauth2_token::token_scope(Some(&path), environment.as_ref().map(|e| e.name.as_str()));
+        if *event == AuthEditorEvent::GetToken {
+            oauth2_token::get_token(self.auth_editor.clone(), oauth, vars, scope, window, cx);
+        } else {
+            oauth2_token::clear_token(&self.auth_editor, oauth, vars, &scope, cx);
+        }
     }
 
     pub fn new(
@@ -203,6 +248,14 @@ impl CollectionEditor {
             },
         );
 
+        let auth_subscription = cx.subscribe_in(
+            &auth_editor,
+            window,
+            |this, _editor, event: &AuthEditorEvent, window, cx| {
+                this.on_oauth2_token_button(event, window, cx);
+            },
+        );
+
         let mut editor = Self {
             active_tab: 0, // Collection tab
             collection_data,
@@ -223,7 +276,7 @@ impl CollectionEditor {
             wsdl_spec_input,
             use_opencollection: false,
             require_environment: false,
-            _subscriptions: vec![manager_subscription],
+            _subscriptions: vec![manager_subscription, auth_subscription],
         };
 
         // Load initial environments data from CollectionManager

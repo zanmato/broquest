@@ -3,20 +3,147 @@ use gpui::{
     div, prelude::*, px,
 };
 use gpui_kit::component::{
-    ActiveTheme, h_flex,
+    ActiveTheme, Disableable, Sizable,
+    button::{Button, ButtonVariants},
+    h_flex,
     input::{Input, InputEvent, InputState},
     scroll::ScrollableElement,
-    select::{Select, SelectItem, SelectState},
+    select::{Select, SelectEvent, SelectItem, SelectState},
+    switch::Switch,
     v_flex,
 };
 
+use super::key_value_editor::{KeyValueConfig, KeyValueEditor, KeyValueEvent};
 use crate::domain::{
-    AuthType, BasicAuth, DigestAuth, JwtAuth, KeyAuth, OAuth2Auth, OAuth2GrantType,
+    AuthType, BasicAuth, DigestAuth, JwtAuth, KeyAuth, OAuth2Auth, OAuth2ClientAuth,
+    OAuth2GrantType, OAuth2TokenKind,
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuthEditorEvent {
     AuthChanged,
+    /// The Get token button: fetch a new OAuth2 token for the settings shown.
+    GetToken,
+    /// The Clear token button: forget the cached OAuth2 token.
+    ClearToken,
+}
+
+impl SelectItem for OAuth2GrantType {
+    type Value = OAuth2GrantType;
+
+    fn title(&self) -> SharedString {
+        match self {
+            Self::ClientCredentials => "Client Credentials",
+            Self::AuthorizationCode => "Authorization Code",
+            Self::Password => "Password",
+        }
+        .into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        self
+    }
+}
+
+impl SelectItem for OAuth2ClientAuth {
+    type Value = OAuth2ClientAuth;
+
+    fn title(&self) -> SharedString {
+        match self {
+            Self::Body => "In the request body",
+            Self::BasicHeader => "As a Basic auth header",
+        }
+        .into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        self
+    }
+}
+
+impl SelectItem for OAuth2TokenKind {
+    type Value = OAuth2TokenKind;
+
+    fn title(&self) -> SharedString {
+        match self {
+            Self::Access => "Access token",
+            Self::Id => "ID token",
+            Self::Both => "Access and ID token",
+        }
+        .into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        self
+    }
+}
+
+const GRANT_TYPES: [OAuth2GrantType; 2] = [
+    OAuth2GrantType::ClientCredentials,
+    OAuth2GrantType::AuthorizationCode,
+];
+const CLIENT_AUTHS: [OAuth2ClientAuth; 2] = [OAuth2ClientAuth::Body, OAuth2ClientAuth::BasicHeader];
+const TOKEN_KINDS: [OAuth2TokenKind; 3] = [
+    OAuth2TokenKind::Access,
+    OAuth2TokenKind::Id,
+    OAuth2TokenKind::Both,
+];
+
+/// Select `value` in a select of `options`.
+fn select_option<T: SelectItem<Value = T> + PartialEq + Clone + 'static>(
+    select: &Entity<SelectState<Vec<T>>>,
+    options: &[T],
+    value: &T,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let row = options.iter().position(|o| o == value).unwrap_or(0);
+    select.update(cx, |state, cx| {
+        state.set_selected_index(
+            Some(gpui_kit::component::IndexPath::default().row(row)),
+            window,
+            cx,
+        );
+    });
+}
+
+fn new_select<T: SelectItem<Value = T> + PartialEq + Clone + 'static>(
+    options: &[T],
+    window: &mut Window,
+    cx: &mut Context<AuthEditor>,
+) -> Entity<SelectState<Vec<T>>> {
+    let options = options.to_vec();
+    cx.new(|cx| {
+        SelectState::new(
+            options,
+            Some(gpui_kit::component::IndexPath::default().row(0)),
+            window,
+            cx,
+        )
+    })
+}
+
+/// The OAuth2 inputs beyond client ID, secret, token URL and scope.
+struct OAuth2Inputs {
+    grant_type: Entity<SelectState<Vec<OAuth2GrantType>>>,
+    client_auth: Entity<SelectState<Vec<OAuth2ClientAuth>>>,
+    token_kind: Entity<SelectState<Vec<OAuth2TokenKind>>>,
+    authorize_url: Entity<InputState>,
+    redirect_url: Entity<InputState>,
+    state: Entity<InputState>,
+    refresh_url: Entity<InputState>,
+    header_name: Entity<InputState>,
+    header_prefix: Entity<InputState>,
+    id_token_header: Entity<InputState>,
+    token_id: Entity<InputState>,
+    extra_params: Entity<KeyValueEditor>,
+    pkce: bool,
+    encode_url: bool,
+    auto_fetch: bool,
+    auto_refresh: bool,
+    /// What the last Get token or Clear token did.
+    token_status: Option<SharedString>,
+    fetching_token: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -117,6 +244,7 @@ pub struct AuthEditor {
     jwt_token_field_input: Entity<InputState>,
     jwt_token_type_field_input: Entity<InputState>,
     jwt_expiry_field_input: Entity<InputState>,
+    oauth2: OAuth2Inputs,
     /// Preserved definition for an OpenCollection auth scheme broquest can't edit.
     unsupported_auth: Option<AuthType>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -211,6 +339,56 @@ impl AuthEditor {
                 .default_value("expires_in")
         });
 
+        let defaults = OAuth2Auth::default();
+        let input = |placeholder: &'static str,
+                     value: &str,
+                     window: &mut Window,
+                     cx: &mut Context<Self>| {
+            let value = value.to_string();
+            cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(placeholder)
+                    .default_value(value)
+            })
+        };
+        let oauth2 = OAuth2Inputs {
+            grant_type: new_select(&GRANT_TYPES, window, cx),
+            client_auth: new_select(&CLIENT_AUTHS, window, cx),
+            token_kind: new_select(&TOKEN_KINDS, window, cx),
+            authorize_url: input("Authorization URL", "", window, cx),
+            redirect_url: input("Empty listens on a free port of 127.0.0.1", "", window, cx),
+            state: input("Empty sends a random one", "", window, cx),
+            refresh_url: input("Empty uses the token URL", "", window, cx),
+            header_name: input("Authorization", &defaults.header_name, window, cx),
+            header_prefix: input(
+                "Empty sends the token alone",
+                &defaults.header_prefix,
+                window,
+                cx,
+            ),
+            id_token_header: input("X-ID-Token", &defaults.id_token_header, window, cx),
+            token_id: input(
+                "Empty shares the token with requests that have the same settings",
+                "",
+                window,
+                cx,
+            ),
+            extra_params: cx.new(|cx| {
+                KeyValueEditor::new(
+                    KeyValueConfig::new("oauth2-extra-params", "Field, such as audience", "Value")
+                        .embedded(),
+                    window,
+                    cx,
+                )
+            }),
+            pkce: defaults.pkce,
+            encode_url: defaults.encode_url,
+            auto_fetch: defaults.auto_fetch,
+            auto_refresh: defaults.auto_refresh,
+            token_status: None,
+            fetching_token: false,
+        };
+
         let mut subscriptions = Vec::new();
 
         let subscribe_to_input = |input: &Entity<InputState>, cx: &mut Context<Self>| {
@@ -238,6 +416,53 @@ impl AuthEditor {
         subscriptions.push(subscribe_to_input(&jwt_token_field_input, cx));
         subscriptions.push(subscribe_to_input(&jwt_token_type_field_input, cx));
         subscriptions.push(subscribe_to_input(&jwt_expiry_field_input, cx));
+        for input in [
+            &oauth2.authorize_url,
+            &oauth2.redirect_url,
+            &oauth2.state,
+            &oauth2.refresh_url,
+            &oauth2.header_name,
+            &oauth2.header_prefix,
+            &oauth2.id_token_header,
+            &oauth2.token_id,
+        ] {
+            subscriptions.push(subscribe_to_input(input, cx));
+        }
+        subscriptions.push(cx.subscribe(
+            &oauth2.extra_params,
+            |_this, _editor, _: &KeyValueEvent, cx| {
+                cx.emit(AuthEditorEvent::AuthChanged);
+                cx.notify();
+            },
+        ));
+        subscriptions.push(cx.subscribe(
+            &auth_type_select,
+            |_this, _select, _: &SelectEvent<Vec<AuthTypeOption>>, cx| {
+                cx.emit(AuthEditorEvent::AuthChanged);
+                cx.notify();
+            },
+        ));
+        subscriptions.push(cx.subscribe(
+            &oauth2.grant_type,
+            |_this, _select, _: &SelectEvent<Vec<OAuth2GrantType>>, cx| {
+                cx.emit(AuthEditorEvent::AuthChanged);
+                cx.notify();
+            },
+        ));
+        subscriptions.push(cx.subscribe(
+            &oauth2.client_auth,
+            |_this, _select, _: &SelectEvent<Vec<OAuth2ClientAuth>>, cx| {
+                cx.emit(AuthEditorEvent::AuthChanged);
+                cx.notify();
+            },
+        ));
+        subscriptions.push(cx.subscribe(
+            &oauth2.token_kind,
+            |_this, _select, _: &SelectEvent<Vec<OAuth2TokenKind>>, cx| {
+                cx.emit(AuthEditorEvent::AuthChanged);
+                cx.notify();
+            },
+        ));
 
         Self {
             focus_handle: cx.focus_handle(),
@@ -259,6 +484,7 @@ impl AuthEditor {
             jwt_token_field_input,
             jwt_token_type_field_input,
             jwt_expiry_field_input,
+            oauth2,
             unsupported_auth: None,
             _subscriptions: subscriptions,
         }
@@ -324,6 +550,7 @@ impl AuthEditor {
                 self.scope_input.update(cx, |state, cx| {
                     state.set_value(oauth.scope.clone().unwrap_or_default(), window, cx);
                 });
+                self.set_oauth2(oauth, window, cx);
             }
             AuthType::Jwt(jwt) => {
                 self.jwt_login_url_input.update(cx, |state, cx| {
@@ -384,21 +611,7 @@ impl AuthEditor {
                 header: self.header_input.read(cx).value().to_string(),
                 value: self.value_input.read(cx).value().to_string(),
             }),
-            AuthTypeOption::OAuth2 => AuthType::OAuth2(OAuth2Auth {
-                grant_type: OAuth2GrantType::ClientCredentials,
-                client_id: self.client_id_input.read(cx).value().to_string(),
-                client_secret: self.client_secret_input.read(cx).value().to_string(),
-                token_url: self.token_url_input.read(cx).value().to_string(),
-                scope: {
-                    let scope = self.scope_input.read(cx).value().to_string();
-                    if scope.is_empty() { None } else { Some(scope) }
-                },
-                authorize_url: None,
-                redirect_url: None,
-                access_token: None,
-                refresh_token: None,
-                expires_at: None,
-            }),
+            AuthTypeOption::OAuth2 => AuthType::OAuth2(self.get_oauth2(cx)),
             AuthTypeOption::Jwt => AuthType::Jwt(JwtAuth {
                 login_url: self.jwt_login_url_input.read(cx).value().to_string(),
                 username_field: self.jwt_username_field_input.read(cx).value().to_string(),
@@ -463,14 +676,333 @@ impl AuthEditor {
             .child(self.render_labeled_input("Value", &self.value_input, cx))
     }
 
+    fn set_oauth2(&mut self, oauth: &OAuth2Auth, window: &mut Window, cx: &mut Context<Self>) {
+        let inputs = &self.oauth2;
+        select_option(
+            &inputs.grant_type,
+            &GRANT_TYPES,
+            &oauth.grant_type,
+            window,
+            cx,
+        );
+        select_option(
+            &inputs.client_auth,
+            &CLIENT_AUTHS,
+            &oauth.client_auth,
+            window,
+            cx,
+        );
+        select_option(
+            &inputs.token_kind,
+            &TOKEN_KINDS,
+            &oauth.token_to_send,
+            window,
+            cx,
+        );
+        for (input, value) in [
+            (
+                &inputs.authorize_url,
+                oauth.authorize_url.clone().unwrap_or_default(),
+            ),
+            (
+                &inputs.redirect_url,
+                oauth.redirect_url.clone().unwrap_or_default(),
+            ),
+            (&inputs.state, oauth.state.clone().unwrap_or_default()),
+            (
+                &inputs.refresh_url,
+                oauth.refresh_url.clone().unwrap_or_default(),
+            ),
+            (&inputs.header_name, oauth.header_name.clone()),
+            (&inputs.header_prefix, oauth.header_prefix.clone()),
+            (&inputs.id_token_header, oauth.id_token_header.clone()),
+            (&inputs.token_id, oauth.token_id.clone()),
+        ] {
+            input.update(cx, |state, cx| state.set_value(value, window, cx));
+        }
+        inputs.extra_params.update(cx, |editor, cx| {
+            editor.set_pairs(&oauth.extra_params, window, cx);
+        });
+        self.oauth2.pkce = oauth.pkce;
+        self.oauth2.encode_url = oauth.encode_url;
+        self.oauth2.auto_fetch = oauth.auto_fetch;
+        self.oauth2.auto_refresh = oauth.auto_refresh;
+        self.oauth2.token_status = None;
+    }
+
+    fn get_oauth2(&self, cx: &App) -> OAuth2Auth {
+        let inputs = &self.oauth2;
+        let text = |input: &Entity<InputState>| input.read(cx).value().to_string();
+        let optional = |input: &Entity<InputState>| Some(text(input)).filter(|v| !v.is_empty());
+        OAuth2Auth {
+            grant_type: inputs
+                .grant_type
+                .read(cx)
+                .selected_value()
+                .cloned()
+                .unwrap_or_default(),
+            client_id: text(&self.client_id_input),
+            client_secret: text(&self.client_secret_input),
+            token_url: text(&self.token_url_input),
+            scope: optional(&self.scope_input),
+            authorize_url: optional(&inputs.authorize_url),
+            redirect_url: optional(&inputs.redirect_url),
+            refresh_url: optional(&inputs.refresh_url),
+            client_auth: inputs
+                .client_auth
+                .read(cx)
+                .selected_value()
+                .copied()
+                .unwrap_or_default(),
+            extra_params: inputs
+                .extra_params
+                .read(cx)
+                .get_pairs(cx)
+                .into_iter()
+                .filter(|p| !p.key.is_empty())
+                .collect(),
+            state: optional(&inputs.state),
+            pkce: inputs.pkce,
+            encode_url: inputs.encode_url,
+            token_to_send: inputs
+                .token_kind
+                .read(cx)
+                .selected_value()
+                .copied()
+                .unwrap_or_default(),
+            header_name: text(&inputs.header_name),
+            header_prefix: text(&inputs.header_prefix),
+            id_token_header: text(&inputs.id_token_header),
+            auto_fetch: inputs.auto_fetch,
+            auto_refresh: inputs.auto_refresh,
+            token_id: text(&inputs.token_id),
+            ..Default::default()
+        }
+    }
+
+    /// Show what the last Get token or Clear token did.
+    pub fn set_token_status(
+        &mut self,
+        status: Option<SharedString>,
+        fetching: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.oauth2.token_status = status;
+        self.oauth2.fetching_token = fetching;
+        cx.notify();
+    }
+
+    fn render_section(&self, title: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .pt_2()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(title)
+    }
+
+    fn render_labeled(
+        &self,
+        label: &'static str,
+        child: impl IntoElement,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        h_flex()
+            .gap_3()
+            .items_center()
+            .child(
+                div()
+                    .w(px(140.))
+                    .flex_shrink_0()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(label),
+            )
+            .child(div().flex_1().child(child))
+    }
+
+    fn render_switch(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        checked: bool,
+        set: fn(&mut OAuth2Inputs, bool),
+        cx: &mut Context<Self>,
+    ) -> Switch {
+        Switch::new(id)
+            .small()
+            .label(label)
+            .checked(checked)
+            .on_click(cx.listener(move |this, checked: &bool, _window, cx| {
+                set(&mut this.oauth2, *checked);
+                cx.emit(AuthEditorEvent::AuthChanged);
+                cx.notify();
+            }))
+    }
+
+    fn render_labeled_switch(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        checked: bool,
+        set: fn(&mut OAuth2Inputs, bool),
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let switch = self.render_switch(id, label, checked, set, cx);
+        self.render_labeled("", switch, cx)
+    }
+
     fn render_oauth2(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let inputs = &self.oauth2;
+        let grant_type = inputs
+            .grant_type
+            .read(cx)
+            .selected_value()
+            .cloned()
+            .unwrap_or_default();
+        let token_kind = inputs
+            .token_kind
+            .read(cx)
+            .selected_value()
+            .copied()
+            .unwrap_or_default();
+        let authorization_code = grant_type == OAuth2GrantType::AuthorizationCode;
+        let fetching = inputs.fetching_token;
+
         v_flex()
             .gap_3()
             .p_4()
+            .child(
+                self.render_labeled(
+                    "Grant Type",
+                    div()
+                        .w_full()
+                        .max_w(px(240.))
+                        .child(Select::new(&inputs.grant_type)),
+                    cx,
+                ),
+            )
+            .when(authorization_code, |this| {
+                this.child(self.render_labeled_input(
+                    "Authorization URL",
+                    &inputs.authorize_url,
+                    cx,
+                ))
+            })
+            .child(self.render_labeled_input("Token URL", &self.token_url_input, cx))
             .child(self.render_labeled_input("Client ID", &self.client_id_input, cx))
             .child(self.render_labeled_input("Client Secret", &self.client_secret_input, cx))
-            .child(self.render_labeled_input("Token URL", &self.token_url_input, cx))
             .child(self.render_labeled_input("Scope", &self.scope_input, cx))
+            .when(authorization_code, |this| {
+                this.child(self.render_labeled_input("Redirect URL", &inputs.redirect_url, cx))
+                    .child(self.render_labeled_input("State", &inputs.state, cx))
+                    .child(self.render_labeled_switch(
+                        "oauth2-pkce",
+                        "Use PKCE (S256)",
+                        inputs.pkce,
+                        |o, v| o.pkce = v,
+                        cx,
+                    ))
+                    .child(self.render_labeled_switch(
+                        "oauth2-encode-url",
+                        "Encode the authorization URL",
+                        inputs.encode_url,
+                        |o, v| o.encode_url = v,
+                        cx,
+                    ))
+            })
+            .child(self.render_section("Token Request", cx))
+            .child(
+                self.render_labeled(
+                    "Client Credentials",
+                    div()
+                        .w_full()
+                        .max_w(px(240.))
+                        .child(Select::new(&inputs.client_auth)),
+                    cx,
+                ),
+            )
+            .child(self.render_labeled_input("Refresh URL", &inputs.refresh_url, cx))
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Extra Fields"),
+                    )
+                    .child(inputs.extra_params.clone()),
+            )
+            .child(self.render_section("Sending the Token", cx))
+            .child(
+                self.render_labeled(
+                    "Send",
+                    div()
+                        .w_full()
+                        .max_w(px(240.))
+                        .child(Select::new(&inputs.token_kind)),
+                    cx,
+                ),
+            )
+            .child(self.render_labeled_input("Header", &inputs.header_name, cx))
+            .child(self.render_labeled_input("Prefix", &inputs.header_prefix, cx))
+            .when(token_kind == OAuth2TokenKind::Both, |this| {
+                this.child(self.render_labeled_input(
+                    "ID Token Header",
+                    &inputs.id_token_header,
+                    cx,
+                ))
+            })
+            .child(self.render_section("Token", cx))
+            .child(self.render_labeled_input("Token ID", &inputs.token_id, cx))
+            .child(self.render_labeled_switch(
+                "oauth2-auto-fetch",
+                "Fetch a token when sending",
+                inputs.auto_fetch,
+                |o, v| o.auto_fetch = v,
+                cx,
+            ))
+            .child(self.render_labeled_switch(
+                "oauth2-auto-refresh",
+                "Refresh expired tokens",
+                inputs.auto_refresh,
+                |o, v| o.auto_refresh = v,
+                cx,
+            ))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Button::new("oauth2-get-token")
+                            .label("Get Token")
+                            .small()
+                            .primary()
+                            .loading(fetching)
+                            .disabled(fetching)
+                            .on_click(cx.listener(|_this, _, _window, cx| {
+                                cx.emit(AuthEditorEvent::GetToken);
+                            })),
+                    )
+                    .child(
+                        Button::new("oauth2-clear-token")
+                            .label("Clear Token")
+                            .small()
+                            .outline()
+                            .disabled(fetching)
+                            .on_click(cx.listener(|_this, _, _window, cx| {
+                                cx.emit(AuthEditorEvent::ClearToken);
+                            })),
+                    )
+                    .when_some(inputs.token_status.clone(), |this, status| {
+                        this.child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(status),
+                        )
+                    }),
+            )
     }
 
     fn render_jwt(&self, cx: &mut Context<Self>) -> impl IntoElement {

@@ -182,5 +182,6 @@ fn create_soap_request(op: &wsdl::WsdlOperationInfo) -> RequestData {
         vars: Vec::new(),
         script_dialect: Default::default(),
         http_file: None,
+        token_scope: String::new(),
     }
 }

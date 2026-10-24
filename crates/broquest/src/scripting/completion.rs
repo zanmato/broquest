@@ -295,6 +295,23 @@ impl ScriptCompletionProvider {
                 ..Default::default()
             },
             CompletionItem {
+                label: "resetOAuth2Token".to_string(),
+                kind: Some(CompletionItemKind::METHOD),
+                detail: Some("() => void".to_string()),
+                documentation: Some(lsp_types::Documentation::String(
+                    "Forgets the request's OAuth2 token, so the next send fetches a new one"
+                        .to_string(),
+                )),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                    range: lsp_types::Range {
+                        start: start_pos,
+                        end: end_pos,
+                    },
+                    new_text: "resetOAuth2Token()".to_string(),
+                })),
+                ..Default::default()
+            },
+            CompletionItem {
                 label: "notify".to_string(),
                 kind: Some(CompletionItemKind::METHOD),
                 detail: Some(

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::KeyValuePair;
+
 /// Main auth type enum representing different authentication methods
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -10,6 +12,8 @@ pub enum AuthType {
     Digest(DigestAuth),
     Key(KeyAuth),
     Inherit,
+    /// Saved as `oauth2`. Files from before 0.1.14 say `o_auth2`.
+    #[serde(rename = "oauth2", alias = "o_auth2")]
     OAuth2(OAuth2Auth),
     Jwt(JwtAuth),
     /// An OpenCollection auth scheme broquest does not model (e.g. ntlm, awsv4,
@@ -29,7 +33,7 @@ impl AuthType {
             Self::Digest(_) => "Digest Auth",
             Self::Key(_) => "API Key",
             Self::Inherit => "Inherit from Collection",
-            Self::OAuth2(_) => "OAuth2 Client Credentials",
+            Self::OAuth2(_) => "OAuth2",
             Self::Jwt(_) => "JWT",
             Self::Unsupported { .. } => "Unsupported",
         }
@@ -118,6 +122,28 @@ impl OAuth2GrantType {
     }
 }
 
+/// How the client ID and secret reach the token endpoint.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuth2ClientAuth {
+    /// `client_id` and `client_secret` as form fields.
+    #[default]
+    Body,
+    /// An `Authorization: Basic` header (RFC 6749 section 2.3.1).
+    BasicHeader,
+}
+
+/// Which token a request sends.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuth2TokenKind {
+    #[default]
+    Access,
+    Id,
+    /// The access token in the main header and the ID token in its own.
+    Both,
+}
+
 /// OAuth2 configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OAuth2Auth {
@@ -127,11 +153,56 @@ pub struct OAuth2Auth {
     pub token_url: String,
     pub scope: Option<String>,
     pub authorize_url: Option<String>,
+    /// Where the authorization server sends the browser back to. Must be a
+    /// `http://localhost` or `http://127.0.0.1` address. Empty picks a free
+    /// port.
     pub redirect_url: Option<String>,
+    /// Where refresh tokens go. Empty uses the token URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_url: Option<String>,
+    #[serde(default)]
+    pub client_auth: OAuth2ClientAuth,
+    /// Extra fields for the token request, such as `audience`. They are also
+    /// added to the authorization URL.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_params: Vec<KeyValuePair>,
+    /// The `state` of the authorization code flow. Empty makes a random one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// PKCE with an S256 code challenge for the authorization code flow.
+    #[serde(default)]
+    pub pkce: bool,
+    /// Percent encode the values put on the authorization URL.
+    #[serde(default = "yes")]
+    pub encode_url: bool,
+    #[serde(default)]
+    pub token_to_send: OAuth2TokenKind,
+    #[serde(default = "default_header_name")]
+    pub header_name: String,
+    /// Put before the token, as in `Bearer <token>`. Empty sends the token
+    /// alone.
+    #[serde(default = "default_header_prefix")]
+    pub header_prefix: String,
+    /// The header for the ID token when both tokens are sent.
+    #[serde(default = "default_id_token_header")]
+    pub id_token_header: String,
+    /// Fetch a token when a request is sent without a valid one, and fetch a
+    /// new one once when the server answers 401.
+    #[serde(default = "yes")]
+    pub auto_fetch: bool,
+    /// Use the refresh token when the access token has expired.
+    #[serde(default = "yes")]
+    pub auto_refresh: bool,
+    /// Requests with the same settings share a token. A token ID keeps a
+    /// separate one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub token_id: String,
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
     #[serde(default)]
     pub expires_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_token: Option<String>,
 }
 
 impl Default for OAuth2Auth {
@@ -144,11 +215,41 @@ impl Default for OAuth2Auth {
             scope: None,
             authorize_url: None,
             redirect_url: None,
+            refresh_url: None,
+            client_auth: OAuth2ClientAuth::Body,
+            extra_params: Vec::new(),
+            state: None,
+            pkce: false,
+            encode_url: true,
+            token_to_send: OAuth2TokenKind::Access,
+            header_name: default_header_name(),
+            header_prefix: default_header_prefix(),
+            id_token_header: default_id_token_header(),
+            auto_fetch: true,
+            auto_refresh: true,
+            token_id: String::new(),
             access_token: None,
             refresh_token: None,
             expires_at: None,
+            id_token: None,
         }
     }
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn default_header_name() -> String {
+    "Authorization".to_string()
+}
+
+fn default_header_prefix() -> String {
+    "Bearer".to_string()
+}
+
+fn default_id_token_header() -> String {
+    "X-ID-Token".to_string()
 }
 
 fn default_token_type_field() -> String {
@@ -221,6 +322,22 @@ mod tests {
             }
             _ => panic!("Expected Basic auth"),
         }
+    }
+
+    #[test]
+    fn oauth2_is_saved_as_oauth2_and_reads_the_old_name() {
+        let json = serde_json::to_string(&AuthType::OAuth2(OAuth2Auth::default())).unwrap();
+        assert!(json.contains(r#""type":"oauth2""#));
+
+        let old: AuthType =
+            serde_json::from_str(r#"{"type":"o_auth2","grant_type":"client_credentials","client_id":"c","client_secret":"","token_url":"t","scope":null,"authorize_url":null,"redirect_url":null,"access_token":null,"refresh_token":null}"#)
+                .unwrap();
+        assert!(matches!(old, AuthType::OAuth2(ref o) if o.client_id == "c"));
+
+        let toml_old: AuthType =
+            toml::from_str("type = \"o_auth2\"\ngrant_type = \"client_credentials\"\nclient_id = \"c\"\nclient_secret = \"\"\ntoken_url = \"t\"\n")
+                .unwrap();
+        assert!(matches!(toml_old, AuthType::OAuth2(_)));
     }
 
     #[test]

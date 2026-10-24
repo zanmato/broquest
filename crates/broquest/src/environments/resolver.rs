@@ -1,5 +1,7 @@
 use crate::collections::{EnvironmentToml, EnvironmentVariable};
-use crate::domain::{BasicAuth, DigestAuth, JwtAuth, KeyAuth, OAuth2Auth, RequestData};
+use crate::domain::{
+    BasicAuth, DigestAuth, JwtAuth, KeyAuth, KeyValuePair, OAuth2Auth, RequestData,
+};
 use std::collections::HashMap;
 
 /// Environment variable resolver for HTTP requests
@@ -247,46 +249,38 @@ impl EnvironmentResolver {
                     secrets,
                 ),
             }),
-            AuthType::OAuth2(oauth) => AuthType::OAuth2(OAuth2Auth {
-                grant_type: oauth.grant_type.clone(),
-                client_id: self.resolve_string(
-                    &oauth.client_id,
-                    runtime_vars,
-                    collection_vars,
-                    variables,
-                    secrets,
-                ),
-                client_secret: self.resolve_string(
-                    &oauth.client_secret,
-                    runtime_vars,
-                    collection_vars,
-                    variables,
-                    secrets,
-                ),
-                token_url: self.resolve_string(
-                    &oauth.token_url,
-                    runtime_vars,
-                    collection_vars,
-                    variables,
-                    secrets,
-                ),
-                scope: oauth.scope.as_ref().map(|s| {
+            AuthType::OAuth2(oauth) => {
+                let r = |s: &String| {
                     self.resolve_string(s, runtime_vars, collection_vars, variables, secrets)
-                }),
-                authorize_url: oauth.authorize_url.as_ref().map(|s| {
-                    self.resolve_string(s, runtime_vars, collection_vars, variables, secrets)
-                }),
-                redirect_url: oauth.redirect_url.as_ref().map(|s| {
-                    self.resolve_string(s, runtime_vars, collection_vars, variables, secrets)
-                }),
-                access_token: oauth.access_token.as_ref().map(|s| {
-                    self.resolve_string(s, runtime_vars, collection_vars, variables, secrets)
-                }),
-                refresh_token: oauth.refresh_token.as_ref().map(|s| {
-                    self.resolve_string(s, runtime_vars, collection_vars, variables, secrets)
-                }),
-                expires_at: oauth.expires_at,
-            }),
+                };
+                let ro = |s: &Option<String>| s.as_ref().map(r);
+                AuthType::OAuth2(OAuth2Auth {
+                    client_id: r(&oauth.client_id),
+                    client_secret: r(&oauth.client_secret),
+                    token_url: r(&oauth.token_url),
+                    scope: ro(&oauth.scope),
+                    authorize_url: ro(&oauth.authorize_url),
+                    redirect_url: ro(&oauth.redirect_url),
+                    refresh_url: ro(&oauth.refresh_url),
+                    extra_params: oauth
+                        .extra_params
+                        .iter()
+                        .map(|p| KeyValuePair {
+                            key: r(&p.key),
+                            value: r(&p.value),
+                            enabled: p.enabled,
+                        })
+                        .collect(),
+                    state: ro(&oauth.state),
+                    header_name: r(&oauth.header_name),
+                    header_prefix: r(&oauth.header_prefix),
+                    id_token_header: r(&oauth.id_token_header),
+                    token_id: r(&oauth.token_id),
+                    access_token: ro(&oauth.access_token),
+                    refresh_token: ro(&oauth.refresh_token),
+                    ..oauth.clone()
+                })
+            }
             AuthType::Jwt(jwt) => AuthType::Jwt(JwtAuth {
                 login_url: self.resolve_string(
                     &jwt.login_url,

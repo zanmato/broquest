@@ -72,6 +72,10 @@ pub struct RequestData {
     /// Set for requests that come from a `.http` file.
     #[serde(skip)]
     pub http_file: Option<HttpFileOptions>,
+    /// Where the request's OAuth2 token is cached: its collection and
+    /// environment, so each environment keeps its own token.
+    #[serde(skip)]
+    pub token_scope: String,
 }
 
 /// What a request from a `.http` file needs beyond the request itself.
@@ -157,6 +161,7 @@ impl Default for RequestData {
             vars: Vec::new(),
             script_dialect: ScriptDialect::default(),
             http_file: None,
+            token_scope: String::new(),
         }
     }
 }

@@ -162,7 +162,17 @@ fn main() {
             .connection
             .request_timeout_seconds;
         match http::HttpClientService::new(timeout) {
-            Ok(http_client) => cx.set_global(http_client),
+            Ok(http_client) => {
+                // The OAuth2 authorization code flow opens the browser.
+                let urls = http_client.url_requests();
+                cx.spawn(async move |cx| {
+                    while let Ok(url) = urls.recv().await {
+                        cx.update(|cx| cx.open_url(&url));
+                    }
+                })
+                .detach();
+                cx.set_global(http_client)
+            }
             Err(e) => {
                 tracing::error!("Failed to initialize HTTP client: {}", e);
                 return;

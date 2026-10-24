@@ -26,6 +26,8 @@ struct VariableStoreData {
     request_vars: HashMap<String, Value>,
     /// Toasts asked for with `bro.notify`, shown when the request finishes.
     notifications: Vec<ScriptNotification>,
+    /// `bro.resetOAuth2Token()` was called.
+    oauth2_reset: bool,
 }
 
 /// How a script's toast looks: `bro.notify(message, type)`.
@@ -79,6 +81,21 @@ impl VariableStore {
         } else {
             tracing::info!(target: "script", "Notification not shown, too many: {message}");
         }
+    }
+
+    /// Forget the request's OAuth2 token, so the next send fetches a new one.
+    pub fn reset_oauth2_token(&self) {
+        if let Ok(mut data) = self.data.lock() {
+            data.oauth2_reset = true;
+        }
+    }
+
+    /// Whether a script asked to forget the OAuth2 token since last asked.
+    pub fn take_oauth2_reset(&self) -> bool {
+        self.data
+            .lock()
+            .map(|mut data| std::mem::take(&mut data.oauth2_reset))
+            .unwrap_or(false)
     }
 
     /// The toasts the scripts asked for, leaving none behind.

@@ -357,6 +357,7 @@ impl From<RequestToml> for RequestData {
             vars: toml.vars,
             script_dialect: Default::default(),
             http_file: None,
+            token_scope: String::new(),
         }
     }
 }
@@ -762,6 +763,14 @@ auth = "none"
                 client_secret: "my_secret".to_string(),
                 token_url: "https://auth.example.com/token".to_string(),
                 scope: Some("read write".to_string()),
+                extra_params: vec![KeyValuePair {
+                    key: "audience".to_string(),
+                    value: "https://api".to_string(),
+                    enabled: true,
+                }],
+                pkce: true,
+                header_prefix: "JWT".to_string(),
+                token_to_send: crate::domain::OAuth2TokenKind::Both,
                 ..Default::default()
             }),
             ..Default::default()
@@ -779,6 +788,11 @@ auth = "none"
                 assert_eq!(oauth.client_secret, "my_secret");
                 assert_eq!(oauth.token_url, "https://auth.example.com/token");
                 assert_eq!(oauth.scope, Some("read write".to_string()));
+                assert_eq!(oauth.extra_params[0].key, "audience");
+                assert!(oauth.pkce);
+                assert_eq!(oauth.header_prefix, "JWT");
+                assert_eq!(oauth.token_to_send, crate::domain::OAuth2TokenKind::Both);
+                assert!(oauth.auto_fetch && oauth.encode_url);
             }
             _ => panic!("Expected OAuth2 auth"),
         }

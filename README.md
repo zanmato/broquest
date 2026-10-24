@@ -95,6 +95,28 @@ to `http-client.env.json`, with values that came from
 `http-client.private.env.json` kept there. Environments that come from
 `.vscode/settings.json` can't be saved yet.
 
+## OAuth2
+
+The Auth tab supports the client credentials and authorization code grants.
+A request fetches a token when it is sent without a valid one, uses the
+refresh token when the token expires, and fetches a new one once when the
+server answers 401. Get Token and Clear Token do the same by hand, also in a
+collection's Auth tab, where they use the collection's default environment.
+
+- **Authorization code** opens the browser and listens for the redirect on
+  127.0.0.1. Leave the redirect URL empty for any free port, or set one such
+  as `http://localhost:8080/callback` to match what the provider has
+  registered. PKCE (S256) is a switch, and the client secret can then be
+  empty. The `state` is random unless you set one, and it is checked.
+- **Token request** sends the client ID and secret in the body or as a Basic
+  auth header, and extra fields such as `audience`. A refresh URL can be set
+  apart from the token URL.
+- **Sending the token**: the access token, the ID token or both, in a header
+  and with a prefix of your choice, such as `X-Auth: JWT <token>`.
+- **Tokens** are kept while Broquest runs, per collection and environment.
+  Requests with the same settings share one, and a token ID keeps a separate
+  one.
+
 ## Built in variables
 
 Requests can use `{{$...}}` variables that make a new value every time they
@@ -191,6 +213,9 @@ bro.getEnvVar("API_KEY");
 // five, and they show even when a script or the request fails afterwards.
 bro.notify("Token refreshed");
 bro.notify(`Got ${res.body.items.length} items`, "success");
+
+// Forget the request's OAuth2 token, so the next send fetches a new one.
+bro.resetOAuth2Token();
 ```
 
 #### Global Functions

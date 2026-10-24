@@ -27,6 +27,7 @@ use std::sync::Arc;
 use super::auth_editor::{AuthEditor, AuthEditorEvent};
 use super::jsonpath_history::{self, JsonPathHistory};
 use super::key_value_editor::{KeyValueConfig, KeyValueEditor, KeyValueEvent};
+use super::oauth2_token;
 use crate::app_settings::AppSettings;
 use crate::domain::{
     AuthType, ContentType, HttpFileOptions, HttpMethod, KeyValuePair, Prompt, RequestData,
@@ -824,6 +825,45 @@ impl RequestEditor {
         }
     }
 
+    /// Get Token and Clear Token, for the token sending would use.
+    fn on_oauth2_token_button(
+        &mut self,
+        event: &AuthEditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let collection_path = self.collection_path.clone();
+        let request = self.get_request_data(cx);
+        let Some(oauth) =
+            oauth2_token::oauth2_settings(request.auth.clone(), collection_path.as_deref(), cx)
+        else {
+            return;
+        };
+        let environment = self.get_selected_environment(cx);
+        let mut vars =
+            oauth2_token::auth_variables(collection_path.as_deref(), environment.as_ref(), cx);
+        for var in request
+            .vars
+            .iter()
+            .filter(|v| v.enabled && !v.key.is_empty())
+        {
+            vars.collection.insert(var.key.clone(), var.value.clone());
+        }
+        let scope = oauth2_token::token_scope(
+            collection_path.as_deref(),
+            environment.as_ref().map(|e| e.name.as_str()),
+        );
+        match event {
+            AuthEditorEvent::GetToken => {
+                oauth2_token::get_token(self.auth_editor.clone(), oauth, vars, scope, window, cx)
+            }
+            AuthEditorEvent::ClearToken => {
+                oauth2_token::clear_token(&self.auth_editor, oauth, vars, &scope, cx)
+            }
+            AuthEditorEvent::AuthChanged => {}
+        }
+    }
+
     pub fn get_selected_environment(&self, cx: &Context<Self>) -> Option<EnvironmentToml> {
         if let Some(selected_env) = self.environment_select.read(cx).selected_value() {
             match selected_env {
@@ -1269,6 +1309,14 @@ impl RequestEditor {
         } else {
             (None, None)
         };
+
+        // Each collection and environment keeps its own OAuth2 tokens.
+        final_request_data.token_scope = oauth2_token::token_scope(
+            self.collection_path.as_deref(),
+            self.get_selected_environment(cx)
+                .as_ref()
+                .map(|e| e.name.as_str()),
+        );
 
         // Resolve inherited auth from collection
         if matches!(final_request_data.auth, crate::domain::AuthType::Inherit) {
@@ -2620,11 +2668,17 @@ impl RequestEditor {
         self._subscriptions.push(script_subscription);
 
         // Subscribe to auth editor changes
-        let auth_subscription = cx.subscribe(
+        let auth_subscription = cx.subscribe_in(
             &self.auth_editor,
-            |this, _editor, _: &AuthEditorEvent, cx| {
-                this.recompute_dirty(cx);
-                cx.notify();
+            window,
+            |this, _editor, event: &AuthEditorEvent, window, cx| match event {
+                AuthEditorEvent::AuthChanged => {
+                    this.recompute_dirty(cx);
+                    cx.notify();
+                }
+                AuthEditorEvent::GetToken | AuthEditorEvent::ClearToken => {
+                    this.on_oauth2_token_button(event, window, cx);
+                }
             },
         );
         self._subscriptions.push(auth_subscription);

@@ -9,6 +9,20 @@ All notable changes to this project will be documented in this file.
 - Settings, Appearance has a VS Code Themes group that searches Open VSX for
   VS Code color themes, previews them, lets you try one across the app before
   installing, and installs them converted to Broquest's theme format
+- OAuth2 tokens are kept between requests, per collection and environment,
+  refreshed when they expire and fetched again once on 401
+- OAuth2 authorization code grant in the Auth tab, with PKCE, `state` and a
+  configurable redirect URL
+- OAuth2 token requests can send the client credentials as a Basic auth
+  header and carry extra fields such as `audience`
+- Choose which OAuth2 token to send (access, ID or both), the header and the
+  prefix
+- Get Token and Clear Token buttons, and `bro.resetOAuth2Token()` in scripts
+
+### Fixes
+
+- OAuth2 auth is saved as `type = "oauth2"` instead of `o_auth2`. Files with
+  the old name still load
 
 ## [0.1.13] - 2026-07-07
 

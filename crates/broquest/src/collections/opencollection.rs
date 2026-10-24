@@ -661,6 +661,7 @@ fn oc_item_to_request(item: &OcItem) -> Option<RequestData> {
         vars: vars_from_runtime(item.runtime.as_ref()),
         script_dialect: Default::default(),
         http_file: None,
+        token_scope: String::new(),
     })
 }
 

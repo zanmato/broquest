@@ -491,6 +491,12 @@ impl ScriptExecutionService {
 
         let store = variable_store.clone();
         bro_obj.set(
+            "resetOAuth2Token",
+            Function::new(ctx.clone(), move || store.reset_oauth2_token())?,
+        )?;
+
+        let store = variable_store.clone();
+        bro_obj.set(
             "__notify",
             Function::new(ctx.clone(), move |message: String, level: String| {
                 store.notify(NotifyLevel::from_name(&level), message);
@@ -1341,6 +1347,20 @@ mod tests {
             ]
         );
         assert!(store.take_notifications().is_empty(), "taken once");
+    }
+
+    #[test]
+    fn reset_oauth2_token_is_recorded() {
+        let store = VariableStore::new();
+        service()
+            .execute_pre_request_script(
+                "bru.resetOAuth2Token();",
+                &mut RequestData::default(),
+                &store,
+            )
+            .unwrap();
+        assert!(store.take_oauth2_reset());
+        assert!(!store.take_oauth2_reset(), "taken once");
     }
 
     #[test]
