@@ -72,9 +72,17 @@ fastrand = "2"
 http-file = { version = "0.1.0", path = "../http-file" }
 notify = "8"
 
+# Only for the `scene-export` feature
+futures = { version = "0.3", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+smallvec = { version = "1", optional = true }
+
 [features]
 # Stages scenes for the website screenshots; see script/screenshots/capture.
 screenshots = []
+# Exports painted frames as vector snapshots for the website's motion demo;
+# see src/scene_export.rs.
+scene-export = ["dep:futures", "dep:raw-window-handle", "dep:smallvec"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = "0.6"

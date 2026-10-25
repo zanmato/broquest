@@ -6,3 +6,6 @@ update-signing/
 
 # nix build output links
 /result*
+
+# Bundled by script/motion/bundle.mjs for the preview
+script/motion/demo.json
