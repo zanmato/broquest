@@ -1,0 +1,98 @@
+<!doctype html>
+<!--
+  Previews the motion demo, with a scrubber. Bundle the keyframes next to it
+  as demo.json, then serve this directory:
+
+    script/motion/bundle.mjs <keyframe dir> script/motion/demo.json
+    python3 -m http.server -d script/motion
+
+  and open http://localhost:8000/preview.html. ?t=<seconds> opens paused at
+  that time; with a time past the end, ?spot=<n> opens the nth hotspot.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Motion demo preview</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap"
+    />
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; min-height: 100vh; display: grid; place-items: center;
+        background: radial-gradient(ellipse at top, #302d41, #11111b 70%);
+        font: 14px system-ui, -apple-system, sans-serif; color: #cdd6f4;
+      }
+      main { width: min(1200px, calc(100vw - 32px)); }
+      .controls { display: flex; gap: 12px; align-items: center; margin-top: 16px; }
+      .controls input { flex: 1; }
+      .controls output { font-variant-numeric: tabular-nums; min-width: 4em; text-align: right; }
+      button {
+        font: inherit; color: inherit; background: #313244; border: 0;
+        border-radius: 6px; padding: 6px 12px; cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div id="demo"></div>
+      <div class="controls">
+        <button id="toggle" type="button">Pause</button>
+        <input id="scrub" type="range" min="0" step="0.01" value="0" />
+        <output id="time">0.00</output>
+      </div>
+    </main>
+    <script type="module">
+      import { mountDemo } from "./demo.mjs";
+
+      await document.fonts.load('14px "Fira Code"');
+      const bundle = await (await fetch("demo.json")).json();
+      const params = new URLSearchParams(location.search);
+      const start = params.get("t");
+      const demo = mountDemo(document.getElementById("demo"), bundle, {
+        autoplay: start === null,
+      });
+      window.demo = demo;
+
+      const scrub = document.getElementById("scrub");
+      const time = document.getElementById("time");
+      const toggle = document.getElementById("toggle");
+      // Rounded up to the slider's step, or its last stop falls just short of
+      // the end, where the demo stops on its hotspots.
+      scrub.max = Math.ceil(demo.duration * 100) / 100;
+      let playing = start === null;
+      toggle.textContent = playing ? "Pause" : "Play";
+      if (start !== null) {
+        demo.seek(Number(start));
+        const spot = params.get("spot");
+        if (spot !== null) {
+          // Past the entrance animations, so the card shows as on hover.
+          for (const animation of document.getAnimations()) {
+            // The glow repeats forever and cannot finish.
+            if (animation.effect?.getTiming().iterations !== Infinity) animation.finish();
+          }
+          document
+            .querySelectorAll(".bd-spot")
+            [Number(spot)]?.dispatchEvent(new PointerEvent("pointerenter"));
+        }
+        scrub.value = start;
+        time.textContent = Number(start).toFixed(2);
+      }
+      scrub.addEventListener("input", () => {
+        playing = false;
+        toggle.textContent = "Play";
+        demo.seek(Number(scrub.value));
+        time.textContent = Number(scrub.value).toFixed(2);
+      });
+      toggle.addEventListener("click", () => {
+        playing = !playing;
+        toggle.textContent = playing ? "Pause" : "Play";
+        playing ? demo.play() : demo.pause();
+      });
+    </script>
+  </body>
+</html>

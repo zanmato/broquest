@@ -543,6 +543,28 @@ impl RequestEditor {
         });
     }
 
+    /// Set the URL to `url` and its query parameters to the ones it holds, as
+    /// typing it into the URL bar does.
+    #[cfg(feature = "screenshots")]
+    pub(crate) fn type_url(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let params = self.parse_query_params_from_url(url);
+        self._updating_url_from_params = true;
+        self.query_param_editor.update(cx, |editor, cx| {
+            editor.set_pairs(&params, window, cx);
+        });
+        self._updating_url_from_params = false;
+        // Setting the parameters writes the URL back from them; the URL bar
+        // keeps exactly what was typed, with the caret at its end.
+        self.url_input.update(cx, |state, cx| {
+            state.set_value(url.to_string(), window, cx);
+            let end = url.len();
+            state.set_selected_range(end..end, window, cx);
+            state.focus(window, cx);
+        });
+        self.recompute_dirty(cx);
+        cx.notify();
+    }
+
     #[cfg(feature = "screenshots")]
     pub(crate) fn is_loading(&self) -> bool {
         self.is_loading

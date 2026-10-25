@@ -18,6 +18,8 @@ mod http;
 mod keybindings;
 mod requests;
 mod result_ext;
+#[cfg(all(feature = "scene-export", not(target_os = "windows")))]
+mod scene_export;
 #[cfg(feature = "screenshots")]
 mod screenshots;
 mod scripting;
@@ -31,6 +33,7 @@ use assets::Assets;
 use collections::CollectionManager;
 use gpui::{AppContext, SharedString, WindowBounds, WindowOptions, px, size};
 use gpui_kit::component::ThemeRegistry;
+#[cfg(not(all(feature = "scene-export", not(target_os = "windows"))))]
 use gpui_platform::application;
 
 use app_settings::AppSettings;
@@ -41,7 +44,13 @@ use themes_manager::ThemesManager;
 fn main() {
     tracing_subscriber::fmt::init();
 
-    let app = application()
+    #[cfg(all(feature = "scene-export", not(target_os = "windows")))]
+    let app = gpui::Application::with_platform(scene_export::wrap(
+        gpui_platform::current_platform(false),
+    ));
+    #[cfg(not(all(feature = "scene-export", not(target_os = "windows"))))]
+    let app = application();
+    let app = app
         .with_quit_mode(gpui::QuitMode::LastWindowClosed)
         .with_assets(Assets);
 
