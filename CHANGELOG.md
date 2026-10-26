@@ -21,6 +21,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixes
 
+- A running request can be cancelled again. The send button ignored clicks
+  while it showed its spinner
+
 - OAuth2 auth is saved as `type = "oauth2"` instead of `o_auth2`. Files with
   the old name still load
 

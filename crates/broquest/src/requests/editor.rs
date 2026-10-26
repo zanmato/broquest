@@ -2014,30 +2014,26 @@ impl RequestEditor {
                                 .text_sm(),
                         ),
                     )
-                    .child(
-                        // A single mouse-down handler toggles between send and
-                        // cancel. The Button is purely visual (`loading` gates
-                        // off its own on_click), so cancel and send can never
-                        // both fire for one click.
-                        div()
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(|this, _, window, cx| {
-                                    if this.is_loading {
-                                        this.cancel_request(window, cx);
-                                    } else {
-                                        this.send_request(window, cx);
-                                    }
-                                }),
-                            )
-                            .child(
-                                Button::new("send-request")
-                                    .primary()
-                                    .icon(IconName::Send)
-                                    .loading(self.is_loading)
-                                    .loading_icon(IconName::LoaderCircle),
-                            ),
-                    )
+                    .child(if self.is_loading {
+                        // Not a loading Button: those swallow clicks, so a
+                        // request could not be cancelled. The two buttons have
+                        // their own ids, so one click can't both send and
+                        // cancel.
+                        Button::new("cancel-request")
+                            .primary()
+                            .icon(IconName::Close)
+                            .tooltip("Cancel request")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.cancel_request(window, cx);
+                            }))
+                    } else {
+                        Button::new("send-request")
+                            .primary()
+                            .icon(IconName::Send)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.send_request(window, cx);
+                            }))
+                    })
                     .child(
                         Button::new("copy-curl")
                             .ghost()

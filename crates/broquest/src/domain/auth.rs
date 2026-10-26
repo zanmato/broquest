@@ -154,8 +154,8 @@ pub struct OAuth2Auth {
     pub scope: Option<String>,
     pub authorize_url: Option<String>,
     /// Where the authorization server sends the browser back to. Must be a
-    /// `http://localhost` or `http://127.0.0.1` address. Empty picks a free
-    /// port.
+    /// `http://localhost` or `http://127.0.0.1` address. Empty uses
+    /// `http://127.0.0.1:41983/callback`, and port 0 picks a free port.
     pub redirect_url: Option<String>,
     /// Where refresh tokens go. Empty uses the token URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1116,6 +1116,9 @@ async fn authorization_code_flow_with_pkce_and_no_secret() {
         assert_eq!(params["code_challenge_method"], "S256");
         assert_eq!(params["code_challenge"].len(), 43);
         assert_eq!(params["state"], "fixed-state");
+        let redirect = url::Url::parse(&params["redirect_uri"]).unwrap();
+        assert_eq!(redirect.host_str(), Some("localhost"));
+        assert_ne!(redirect.port(), Some(0), "the port the system picked");
         let redirect = format!(
             "{}?code=the-code&state={}",
             params["redirect_uri"], params["state"]
@@ -1130,6 +1133,7 @@ async fn authorization_code_flow_with_pkce_and_no_secret() {
             grant_type: OAuth2GrantType::AuthorizationCode,
             client_id: "public-app".to_string(),
             authorize_url: Some(format!("{}/authorize", server.uri())),
+            redirect_url: Some("http://localhost:0/callback".to_string()),
             token_url: format!("{}/oauth/token", server.uri()),
             state: Some("fixed-state".to_string()),
             pkce: true,

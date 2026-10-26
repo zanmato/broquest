@@ -104,9 +104,13 @@ server answers 401. Get Token and Clear Token do the same by hand, also in a
 collection's Auth tab, where they use the collection's default environment.
 
 - **Authorization code** opens the browser and listens for the redirect on
-  127.0.0.1. Leave the redirect URL empty for any free port, or set one such
-  as `http://localhost:8080/callback` to match what the provider has
-  registered. PKCE (S256) is a switch, and the client secret can then be
+  127.0.0.1. With the redirect URL left empty that is
+  `http://127.0.0.1:41983/callback`, which you register with the provider as
+  an allowed redirect URL. Set another, such as
+  `http://localhost:8080/callback`, if the provider has one registered
+  already, or one with port 0 for a free port when the provider allows any
+  loopback port. Cancel stops waiting, for example when the provider
+  refuses the redirect URL. PKCE (S256) is a switch, and the client secret can then be
   empty. The `state` is random unless you set one, and it is checked.
 - **Token request** sends the client ID and secret in the body or as a Basic
   auth header, and extra fields such as `audience`. A refresh URL can be set

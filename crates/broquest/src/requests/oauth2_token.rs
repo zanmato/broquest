@@ -122,11 +122,12 @@ pub fn get_token<T: 'static>(
     let resolved = http.resolve_oauth2(&oauth, &vars);
     auth_editor.update(cx, |editor, cx| {
         let waiting = (resolved.grant_type == crate::domain::OAuth2GrantType::AuthorizationCode)
-            .then(|| SharedString::from("Waiting for the browser sign in"));
+            .then(|| SharedString::from("Waiting for the sign in in the browser"));
         editor.set_token_status(waiting, true, cx);
     });
 
-    cx.spawn_in(window, async move |_, cx| {
+    let editor = auth_editor.clone();
+    let task = cx.spawn_in(window, async move |_, cx| {
         let result = async_compat::Compat::new(http.fetch_oauth2_token(resolved, &scope)).await;
         cx.update(|window, cx| {
             let status = match result {
@@ -151,8 +152,8 @@ pub fn get_token<T: 'static>(
             });
         })
         .ok();
-    })
-    .detach();
+    });
+    editor.update(cx, |editor, _| editor.set_token_task(task));
 }
 
 /// Forget the cached token for `oauth`.

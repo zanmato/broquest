@@ -1,6 +1,6 @@
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, SharedString, Window,
-    div, prelude::*, px,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, SharedString, Task,
+    Window, div, prelude::*, px,
 };
 use gpui_kit::component::{
     ActiveTheme, Disableable, Sizable,
@@ -144,6 +144,9 @@ struct OAuth2Inputs {
     /// What the last Get token or Clear token did.
     token_status: Option<SharedString>,
     fetching_token: bool,
+    /// The running Get Token. Dropping it cancels the fetch and closes the
+    /// redirect listener.
+    token_task: Option<Task<()>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -356,7 +359,7 @@ impl AuthEditor {
             client_auth: new_select(&CLIENT_AUTHS, window, cx),
             token_kind: new_select(&TOKEN_KINDS, window, cx),
             authorize_url: input("Authorization URL", "", window, cx),
-            redirect_url: input("Empty listens on a free port of 127.0.0.1", "", window, cx),
+            redirect_url: input(crate::http::oauth2::DEFAULT_REDIRECT_URL, "", window, cx),
             state: input("Empty sends a random one", "", window, cx),
             refresh_url: input("Empty uses the token URL", "", window, cx),
             header_name: input("Authorization", &defaults.header_name, window, cx),
@@ -387,6 +390,7 @@ impl AuthEditor {
             auto_refresh: defaults.auto_refresh,
             token_status: None,
             fetching_token: false,
+            token_task: None,
         };
 
         let mut subscriptions = Vec::new();
@@ -792,6 +796,16 @@ impl AuthEditor {
         cx.notify();
     }
 
+    /// Keep the running Get Token, so it can be cancelled.
+    pub fn set_token_task(&mut self, task: Task<()>) {
+        self.oauth2.token_task = Some(task);
+    }
+
+    fn cancel_token(&mut self, cx: &mut Context<Self>) {
+        self.oauth2.token_task.take();
+        self.set_token_status(Some("Cancelled".into()), false, cx);
+    }
+
     fn render_section(&self, title: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .pt_2()
@@ -973,17 +987,24 @@ impl AuthEditor {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(
+                    .child(if fetching {
+                        // A loading Button would swallow the click.
+                        Button::new("oauth2-cancel-token")
+                            .label("Cancel")
+                            .small()
+                            .outline()
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.cancel_token(cx);
+                            }))
+                    } else {
                         Button::new("oauth2-get-token")
                             .label("Get Token")
                             .small()
                             .primary()
-                            .loading(fetching)
-                            .disabled(fetching)
                             .on_click(cx.listener(|_this, _, _window, cx| {
                                 cx.emit(AuthEditorEvent::GetToken);
-                            })),
-                    )
+                            }))
+                    })
                     .child(
                         Button::new("oauth2-clear-token")
                             .label("Clear Token")

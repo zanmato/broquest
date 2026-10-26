@@ -13,6 +13,11 @@ use std::time::Duration;
 
 use super::{HttpError, current_unix_timestamp, is_token_expired};
 
+/// Where the authorization server sends the browser back to when no
+/// redirect URL is set. A fixed port, so it can be registered with the
+/// provider.
+pub const DEFAULT_REDIRECT_URL: &str = "http://127.0.0.1:41983/callback";
+
 /// How long the authorization code flow waits for the browser.
 pub const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -357,48 +362,52 @@ pub struct CallbackServer {
 }
 
 impl CallbackServer {
-    /// Listen where the redirect URL points, or on a free port of 127.0.0.1
-    /// when it is empty.
+    /// Listen where the redirect URL points, [`DEFAULT_REDIRECT_URL`] when
+    /// it is empty. Port 0 picks a free port, for providers that allow any
+    /// loopback port.
     pub async fn bind(redirect_url: Option<&str>) -> Result<Self, HttpError> {
         let invalid = |details: String| HttpError::new("Invalid OAuth2 redirect URL", details);
-        let configured = redirect_url.map(str::trim).filter(|u| !u.is_empty());
+        let url = redirect_url
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .unwrap_or(DEFAULT_REDIRECT_URL);
 
-        let (host, port, path) = match configured {
-            None => ("127.0.0.1".to_string(), 0, "/callback".to_string()),
-            Some(url) => {
-                let parsed = url::Url::parse(url).map_err(|e| invalid(e.to_string()))?;
-                let host = parsed.host_str().unwrap_or_default().to_string();
-                if parsed.scheme() != "http"
-                    || !matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]")
-                {
-                    return Err(invalid(format!(
-                        "{url} must be a http://localhost or http://127.0.0.1 address so Broquest can receive the callback"
-                    )));
-                }
-                let port = parsed.port_or_known_default().unwrap_or(80);
-                (host, port, parsed.path().to_string())
-            }
-        };
+        let mut parsed = url::Url::parse(url).map_err(|e| invalid(e.to_string()))?;
+        let host = parsed.host_str().unwrap_or_default().to_string();
+        if parsed.scheme() != "http"
+            || !matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]")
+        {
+            return Err(invalid(format!(
+                "{url} must be a http://localhost or http://127.0.0.1 address so Broquest can receive the callback"
+            )));
+        }
+        let port = parsed.port_or_known_default().unwrap_or(80);
         let bind_host = match host.as_str() {
             "[::1]" => "::1",
             "localhost" => "127.0.0.1",
             other => other,
         };
 
-        let listener = TcpListener::bind((bind_host, port))
-            .await
-            .map_err(|e| HttpError::new("Failed to start callback server", e.to_string()))?;
+        let listener = TcpListener::bind((bind_host, port)).await.map_err(|e| {
+            HttpError::new(
+                "Failed to start callback server",
+                format!("Could not listen on {bind_host}:{port} for the redirect ({e}). Set another redirect URL, or one with port 0 if the provider allows any port."),
+            )
+        })?;
         let addr = listener
             .local_addr()
             .map_err(|e| HttpError::new("Failed to get server address", e.to_string()))?;
 
-        let redirect_uri = match configured {
-            Some(url) => url.to_string(),
-            None => format!("http://{addr}{path}"),
+        // The URL as written, unless the port was left to the system.
+        let redirect_uri = if port == 0 {
+            parsed.set_port(Some(addr.port())).ok();
+            parsed.to_string()
+        } else {
+            url.to_string()
         };
         Ok(Self {
             listener,
-            path,
+            path: parsed.path().to_string(),
             redirect_uri,
         })
     }
@@ -625,6 +634,17 @@ mod tests {
     }
 
     #[test]
+    fn empty_redirect_url_uses_the_fixed_default() {
+        smol::block_on(async {
+            match CallbackServer::bind(None).await {
+                Ok(server) => assert_eq!(server.redirect_uri, DEFAULT_REDIRECT_URL),
+                // Something else on this machine has the port.
+                Err(error) => assert!(error.details.contains("41983")),
+            }
+        });
+    }
+
+    #[test]
     fn redirect_url_must_be_local() {
         let error = smol::block_on(CallbackServer::bind(Some("https://example.com/cb")))
             .err()
@@ -635,7 +655,9 @@ mod tests {
     #[test]
     fn callback_server_turns_away_other_paths_and_checks_state() {
         smol::block_on(async {
-            let server = CallbackServer::bind(None).await.unwrap();
+            let server = CallbackServer::bind(Some("http://127.0.0.1:0/callback"))
+                .await
+                .unwrap();
             let uri = server.redirect_uri.clone();
             let base = uri.trim_end_matches("/callback").to_string();
             let wait = smol::spawn(server.wait_for_code("good", Duration::from_secs(5)));
