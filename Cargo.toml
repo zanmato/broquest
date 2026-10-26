@@ -1,10 +1,16 @@
 [workspace]
-members = ["crates/broquest", "crates/http-file", "crates/tree-sitter-url", "crates/vsx-themes", "crates/wsdl"]
+members = [
+    "crates/broquest",
+    "crates/http-file",
+    "crates/tree-sitter-url",
+    "crates/vsx-themes",
+    "crates/wsdl",
+]
 exclude = ["vendor/llrt"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.13"
+version = "0.1.14"
 edition = "2024"
 authors = ["Andreas Johansson <z@zanmato.se>"]
 license = "Apache-2.0"
@@ -54,11 +60,7 @@ pest_derive = "2.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
-reqwest = { version = "0.12", features = [
-    "json",
-    "multipart",
-    "stream",
-] }
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 base64 = "0.22"
 async-compat = "0.2"
 digest_auth = "0.3"

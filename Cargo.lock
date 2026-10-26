@@ -958,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "broquest"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "anyhow",
  "async-compat",
@@ -10004,7 +10004,7 @@ dependencies = [
 
 [[package]]
 name = "vsx-themes"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "anyhow",
  "gpui-component",

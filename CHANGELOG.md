@@ -2,10 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.1.14] - 2026-10-26
 
 ### Features
 
+- Open and work with .http collections
+- Use `bro.notify` to show notifications from scripts
+- Added support for dynamic variables like `$guid`
+- Decode brotli, zstd and deflate responses
+- Restore open tabs on restart
+- New http verb styling
+- Added a copy button for responses
+- Rename requests and folders directly in the sidebar
 - Settings, Appearance has a VS Code Themes group that searches Open VSX for
   VS Code color themes, previews them, lets you try one across the app before
   installing, and installs them converted to Broquest's theme format
