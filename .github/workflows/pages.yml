@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     # The download links point at the latest release, so the page shows that
     # version even when dispatched from a branch with an unreleased bump.
@@ -33,9 +33,9 @@ jobs:
     - name: Build site
       run: script/build-site "${{ steps.release.outputs.tag }}"
 
-    - uses: actions/configure-pages@v5
+    - uses: actions/configure-pages@v6
 
-    - uses: actions/upload-pages-artifact@v4
+    - uses: actions/upload-pages-artifact@v5
       with:
         path: _site
 
@@ -49,4 +49,4 @@ jobs:
 
     steps:
     - id: deployment
-      uses: actions/deploy-pages@v4
+      uses: actions/deploy-pages@v5

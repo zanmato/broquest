@@ -34,7 +34,7 @@ jobs:
             asset_name: -macos-arm64
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         submodules: 'true'
 
@@ -72,7 +72,7 @@ jobs:
           libsqlite3-dev
 
     - name: Run sccache-cache
-      uses: mozilla-actions/sccache-action@v0.0.9
+      uses: mozilla-actions/sccache-action@v0.0.11
 
     - name: Build binary
       env:
@@ -126,7 +126,7 @@ jobs:
         ./script/package-deb
 
     - name: Upload binary artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: broquest-${{ matrix.target }}
         path: |
@@ -134,7 +134,7 @@ jobs:
 
     - name: Upload .deb artifact
       if: runner.os == 'Linux'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: broquest-deb
         path: build/broquest_*.deb
@@ -145,10 +145,10 @@ jobs:
     needs: [build]
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Download all artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         path: artifacts/
 
@@ -203,7 +203,7 @@ jobs:
         fi
 
     - name: Upload release assets
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       with:
         body: ${{ steps.changelog.outputs.body }}
         files: |
@@ -218,7 +218,7 @@ jobs:
 
     steps:
     - name: Download macOS artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: broquest-aarch64-apple-darwin
         path: mac
