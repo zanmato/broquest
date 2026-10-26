@@ -16,8 +16,10 @@
 
 import { renderSvg } from "./render.mjs";
 
-const WIDTH = 1640;
-const HEIGHT = 984;
+/// The window's size, which the keyframes give: on macOS the window, on
+/// Linux the frame the capture crops to.
+let WIDTH = 1640;
+let HEIGHT = 984;
 
 /// What the scene types into the URL bar, a keyframe each, as `02-query-1`
 /// to `04-query-3` hold it.
@@ -62,7 +64,7 @@ const HOTSPOTS = [
   },
   {
     title: "Palette",
-    text: "Press ⌘ K to open a request by name or run a command.",
+    text: "Press Ctrl K to open a request by name or run a command.",
     find: (items) => anchorAfter(textRun(items, (r) => r.text.startsWith("Search commands"))),
   },
   {
@@ -89,6 +91,9 @@ const HOTSPOTS = [
 
 export function mountDemo(root, bundle, options = {}) {
   const { keyframes, icons } = bundle;
+  const first = Object.values(keyframes)[0];
+  WIDTH = first.width;
+  HEIGHT = first.height;
   const reduced =
     options.reducedMotion ??
     globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -633,12 +638,12 @@ function makePlan(keyframes) {
     ],
     rings: [{ from: sendScripts + 0.6, to: outro, b: [post.x[0] - 8, post.y - 16, 170, 22] }],
     keys: [
-      { from: urlTyped + 0.3, to: send + 0.4, down: send - 0.15, keys: ["⌘", "↵"] },
-      { from: sendScripts - 0.5, to: sendScripts + 0.4, down: sendScripts - 0.15, keys: ["⌘", "↵"] },
+      { from: urlTyped + 0.3, to: send + 0.4, down: send - 0.15, keys: ["Ctrl", "↵"] },
+      { from: sendScripts - 0.5, to: sendScripts + 0.4, down: sendScripts - 0.15, keys: ["Ctrl", "↵"] },
     ],
     captions: [
       { from: 0.9, to: urlTyped + 0.2, text: "The query table and the URL stay in sync" },
-      { from: urlTyped + 0.4, to: filterClick - 0.4, text: "Send with ⌘ Enter" },
+      { from: urlTyped + 0.4, to: filterClick - 0.4, text: "Send with Ctrl Enter" },
       { from: filterClick - 0.2, to: filtered + 1.2, text: "Filter a JSON response with JSONPath" },
       { from: scripts - 0.2, to: sendScripts + 0.3, text: "Pre-request and post-response scripts" },
       { from: sendScripts + 0.5, to: outro + 0.5, text: "A script can save the token to the environment" },

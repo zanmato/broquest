@@ -24,7 +24,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:ital,wght@1,900&family=Instrument+Sans:ital,wdth,wght@0,75..100,400..700;1,75..100,400..700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:ital,wght@1,900&family=Instrument+Sans:ital,wdth,wght@0,75..100,400..700;1,75..100,400..700&family=JetBrains+Mono:wght@400;500;700&family=Fira+Code:wght@400;500&family=Ubuntu:wght@400&display=swap"
     />
     <style>
       :root {
@@ -911,18 +911,22 @@
       </section>
 
       <figure class="wrap shot">
-        <picture>
-          <source
-            media="(prefers-color-scheme: dark)"
-            srcset="images/request-mocha.webp"
-          />
-          <img
-            src="images/request-latte.webp"
-            width="1600"
-            height="1000"
-            alt="Broquest with a collection open in the sidebar and a GET request with three query parameters, sent in the Local environment, above its JSON response"
-          />
-        </picture>
+        <!-- The motion demo replaces the screenshot once it loads. Without
+             JavaScript, or when it fails to load, the screenshot stays. -->
+        <div id="motion-demo">
+          <picture>
+            <source
+              media="(prefers-color-scheme: dark)"
+              srcset="images/request-mocha.webp"
+            />
+            <img
+              src="images/request-latte.webp"
+              width="1600"
+              height="1000"
+              alt="Broquest with a collection open in the sidebar and a GET request with three query parameters, sent in the Local environment, above its JSON response"
+            />
+          </picture>
+        </div>
         <figcaption>
           The query table and the URL stay in sync.
           <code>{{baseUrl}}</code> comes from the environment selected next to
@@ -1457,6 +1461,29 @@
             });
           });
       })();
+    </script>
+    <script type="module">
+      import { mountDemo } from "./motion/demo.mjs";
+
+      try {
+        const [bundle] = await Promise.all([
+          fetch("motion/demo.json").then((response) => {
+            if (!response.ok) throw new Error(`demo.json: ${response.status}`);
+            return response.json();
+          }),
+          // The keyframes were drawn in Ubuntu and Fira Code, so both load
+          // before the demo does.
+          document.fonts.load('14px "Fira Code"'),
+          document.fonts.load('14px "Ubuntu"'),
+        ]);
+        // Mounted aside first, so a demo that fails partway leaves the
+        // screenshot in place.
+        const demo = document.createElement("div");
+        mountDemo(demo, bundle);
+        document.getElementById("motion-demo").replaceChildren(demo);
+      } catch (error) {
+        console.warn("The motion demo did not load, the screenshot stays", error);
+      }
     </script>
   </body>
 </html>

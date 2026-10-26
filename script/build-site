@@ -4,7 +4,8 @@
 # Usage: script/build-site [version]
 # The version defaults to the workspace version in Cargo.toml. Preview with
 # `python3 -m http.server -d _site`. The screenshots come from
-# docs/images/screenshots, see script/screenshots/capture.
+# docs/images/screenshots and the motion demo's keyframes from
+# docs/images/motion/demo.json, see script/screenshots/capture.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -22,6 +23,8 @@ rm -rf "$out"
 mkdir -p "$out/images"
 cp docs/images/logo-light.png docs/images/logo-dark.png "$out/images/"
 cp docs/images/screenshots/*.webp "$out/images/"
+mkdir -p "$out/motion"
+cp script/motion/demo.mjs script/motion/render.mjs docs/images/motion/demo.json "$out/motion/"
 cp crates/broquest/resources/broquest-icon-512x512.png "$out/images/icon.png"
 
 notes="$(mktemp)"
