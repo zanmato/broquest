@@ -119,6 +119,10 @@ impl PlatformTextSystem for ExportTextSystem {
             }
         }
         for run in &layout.runs {
+            // The text and advance of empty spacer glyphs a ligature drawn
+            // after them covers.
+            let mut spacers = String::new();
+            let mut spacer_advance = 0.;
             for (ix, glyph) in run.glyphs.iter().enumerate() {
                 // A glyph covers the text up to where the next one starts; a
                 // ligature covers several characters.
@@ -128,12 +132,44 @@ impl PlatformTextSystem for ExportTextSystem {
                     .map(|next| next.index)
                     .filter(|&end| end > glyph.index)
                     .unwrap_or_else(|| next_char_boundary(text, glyph.index));
-                if let Some(fragment) = text.get(glyph.index..end) {
+                let Some(fragment) = text.get(glyph.index..end) else {
+                    continue;
+                };
+                // A spacer paints nothing, though it stands for a character
+                // that would.
+                let empty = !fragment.trim().is_empty()
+                    && self
+                        .inner
+                        .glyph_raster_bounds(&RenderGlyphParams {
+                            font_id: run.font_id,
+                            glyph_id: glyph.id,
+                            font_size,
+                            subpixel_variant: Default::default(),
+                            scale_factor: 1.,
+                            is_emoji: false,
+                            subpixel_rendering: false,
+                            dilation: 0,
+                        })
+                        .is_ok_and(|bounds| bounds.size.width.0 == 0 || bounds.size.height.0 == 0);
+                let key = (run.font_id, glyph.id);
+                if empty {
+                    spacers.push_str(fragment);
+                    spacer_advance += recorder.advances.get(&key).copied().unwrap_or_default();
+                    continue;
+                }
+                if spacers.is_empty() {
                     recorder
                         .glyph_text
-                        .entry((run.font_id, glyph.id))
+                        .entry(key)
                         .or_insert_with(|| fragment.to_string());
+                } else {
+                    recorder
+                        .glyph_text
+                        .insert(key, format!("{spacers}{fragment}"));
+                    recorder.leads.insert(key, spacer_advance);
                 }
+                spacers.clear();
+                spacer_advance = 0.;
             }
         }
         layout

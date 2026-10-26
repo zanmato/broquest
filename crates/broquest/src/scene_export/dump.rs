@@ -300,6 +300,11 @@ impl Dump<'_> {
                     .advances
                     .get(&(params.font_id, params.glyph_id))
                     .map(|advance| round(advance * size));
+                let lead = self
+                    .recorder
+                    .leads
+                    .get(&(params.font_id, params.glyph_id))
+                    .map(|lead| round(lead * size));
                 json!({
                     "t": "glyph",
                     "font": font,
@@ -308,6 +313,7 @@ impl Dump<'_> {
                     "x": round(x / self.scale),
                     "y": round(y / self.scale),
                     "adv": advance,
+                    "lead": lead,
                     "sp": self.space_advance(params.font_id).map(|advance| round(advance * size)),
                     "s": text,
                 })
@@ -512,10 +518,12 @@ fn merge_text(items: Vec<Value>) -> Vec<Value> {
         let mut end = f64::NEG_INFINITY;
         for ix in glyphs {
             let glyph = &items[ix];
-            let x = glyph["x"].as_f64().unwrap_or_default();
+            // A ligature over spacers starts where its first spacer does.
+            let lead = glyph["lead"].as_f64().unwrap_or_default();
+            let x = glyph["x"].as_f64().unwrap_or_default() - lead;
             let text = glyph["s"].as_str().unwrap_or_default();
             let color = glyph["color"].as_str().unwrap_or_default();
-            let advance = glyph["adv"].as_f64().unwrap_or(size * 0.6);
+            let advance = glyph["adv"].as_f64().unwrap_or(size * 0.6) + lead;
             if !run.chars.is_empty() {
                 if (x - previous_x).abs() < 0.01 {
                     // The same glyph twice, from two tiles of a scroll layer.

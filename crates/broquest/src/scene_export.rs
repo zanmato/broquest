@@ -64,6 +64,10 @@ struct Recorder {
     glyph_text: HashMap<(FontId, GlyphId), String>,
     /// Each glyph's advance, as a fraction of the font size.
     advances: HashMap<(FontId, GlyphId), f32>,
+    /// How far a ligature reaches back over the empty spacer glyphs before
+    /// it, as a fraction of the font size. Fira Code draws `==` as a spacer
+    /// and a wide glyph over both cells, so the wide glyph stands for `==`.
+    leads: HashMap<(FontId, GlyphId), f32>,
     /// Glyph raster bounds, keyed by [`glyph_key`].
     raster_bounds: HashMap<GlyphKey, Bounds<DevicePixels>>,
     /// What each atlas tile holds, keyed by [`tile_key`].
