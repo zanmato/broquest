@@ -7,7 +7,11 @@
 
 A modern, desktop API client built with [GPUI](https://www.gpui.rs) and [gpui-kit](https://github.com/longbridge/gpui-kit), offering fast performance and a clean interface for API development and testing.
 
-![broquest](docs/images/screenshot.webp)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshots/request-mocha.webp">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/screenshots/request-latte.webp">
+  <img alt="Broquest showing a request and its JSON response" src="docs/images/screenshots/request-latte.webp">
+</picture>
 
 ## Features
 
