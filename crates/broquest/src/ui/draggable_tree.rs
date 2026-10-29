@@ -14,9 +14,9 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use gpui::{
-    App, AppContext, Context, DragMoveEvent, ElementId, Entity, FocusHandle,
+    AnyElement, App, AppContext, Context, Div, DragMoveEvent, ElementId, Entity, FocusHandle,
     InteractiveElement as _, IntoElement, KeyBinding, ListSizingBehavior, MouseButton,
-    ParentElement, Pixels, Point, Render, RenderOnce, ScrollStrategy, SharedString,
+    ParentElement, Pixels, Point, Render, RenderOnce, ScrollStrategy, SharedString, Stateful,
     StatefulInteractiveElement, StyleRefinement, Styled, Task, UniformListScrollHandle, Window,
     div, prelude::FluentBuilder, px, uniform_list,
 };
@@ -28,7 +28,10 @@ use gpui_kit::component::{
     scroll::Scrollbar,
 };
 
-use crate::ui::actions::{Confirm, SelectDown, SelectLeft, SelectRight, SelectUp};
+use crate::ui::{
+    actions::{Confirm, SelectDown, SelectLeft, SelectRight, SelectUp},
+    sticky_rows::{StickyRows, StickyRowsHost, scroll_to_entry},
+};
 
 /// The key context of a draggable tree.
 pub(crate) const CONTEXT: &str = "BroDraggableTree";
@@ -409,7 +412,7 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
             self.toggle_expand(ix);
         }
         self.selected_ix = Some(ix);
-        self.scroll_handle.scroll_to_item(ix, ScrollStrategy::Top);
+        self.scroll_to_entry(ix, ScrollStrategy::Top);
         cx.notify();
         true
     }
@@ -441,8 +444,7 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
             return false;
         };
         self.selected_ix = Some(ix);
-        self.scroll_handle
-            .scroll_to_item(ix, ScrollStrategy::Center);
+        self.scroll_to_entry(ix, ScrollStrategy::Center);
         cx.notify();
         true
     }
@@ -555,8 +557,7 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
         }
 
         self.selected_ix = Some(selected_ix);
-        self.scroll_handle
-            .scroll_to_item(selected_ix, ScrollStrategy::Top);
+        self.scroll_to_entry(selected_ix, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -569,8 +570,7 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
         }
 
         self.selected_ix = Some(selected_ix);
-        self.scroll_handle
-            .scroll_to_item(selected_ix, ScrollStrategy::Bottom);
+        self.scroll_to_entry(selected_ix, ScrollStrategy::Bottom);
         cx.notify();
     }
 
@@ -578,6 +578,129 @@ impl<D: DraggableTreeDelegate> DraggableTreeState<D> {
         self.selected_ix = Some(ix);
         self.toggle_expand(ix);
         cx.notify();
+    }
+
+    /// Closes a pinned folder and scrolls its row back into the slot it was
+    /// pinned in, so the rows after it come up under the pointer.
+    fn on_sticky_click(&mut self, ix: usize, slot: usize, cx: &mut Context<Self>) {
+        self.selected_ix = Some(ix);
+        self.toggle_expand(ix);
+        self.scroll_handle
+            .scroll_to_item_strict_with_offset(ix, ScrollStrategy::Top, slot);
+        cx.notify();
+    }
+
+    fn scroll_to_entry(&self, ix: usize, strategy: ScrollStrategy) {
+        let depth = self.entries.get(ix).map_or(0, TreeEntry::depth);
+        scroll_to_entry(&self.scroll_handle, ix, depth, strategy);
+    }
+
+    /// The row of entry `ix`, or its copy pinned in `pinned_slot`.
+    fn render_entry(
+        &mut self,
+        ix: usize,
+        pinned_slot: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
+        let entry = self.entries.get(ix)?.clone();
+        let item_id = entry.item().id.clone();
+        let selected = Some(ix) == self.selected_ix;
+        let cx_app = &**cx; // Convert &mut Context<Self> to &App
+
+        // Check if this item can be dragged and create drag data
+        let can_drag = self.delegate.can_drag(item_id.as_ref(), &entry, cx_app);
+        let drag_data = if can_drag {
+            self.delegate
+                .create_drag_data(item_id.as_ref(), &entry, cx_app)
+        } else {
+            None
+        };
+
+        let insert_position = self.get_insert_position(item_id.as_ref());
+        let el = div()
+            .id(("entry", ix))
+            .relative()
+            .when(
+                insert_position == Some(InsertPosition::Inside)
+                    && self.is_drag_highlighted(item_id.as_ref()),
+                |this| this.bg(cx.theme().muted_foreground.opacity(0.2)),
+            )
+            // Reorder indicator. Rows are uniform height, so it overlays the
+            // row edge instead of taking up space.
+            .when_some(
+                insert_position.filter(|position| *position != InsertPosition::Inside),
+                |this, position| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .h(INSERT_INDICATOR_HEIGHT)
+                            .bg(cx.theme().primary)
+                            // Straddle the row edge so one gap looks the same
+                            // whether it is reached as the row above's `After`
+                            // or the row below's `Before`.
+                            .map(|indicator| {
+                                let overhang = -INSERT_INDICATOR_HEIGHT / 2.;
+                                if position == InsertPosition::Before {
+                                    indicator.top(overhang)
+                                } else {
+                                    indicator.bottom(overhang)
+                                }
+                            }),
+                    )
+                },
+            )
+            .child(
+                self.delegate
+                    .render_item(ix, &entry, selected, window, cx)
+                    .disabled(entry.item().is_disabled())
+                    .selected(selected),
+            )
+            .when(!entry.item().is_disabled(), |this| {
+                this.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, window, cx| match pinned_slot {
+                        Some(slot) => this.on_sticky_click(ix, slot, cx),
+                        None => this.on_entry_click(ix, window, cx),
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, _, _, cx| {
+                        this.right_clicked_index = Some(ix);
+                        cx.notify();
+                    }),
+                )
+            })
+            // === DRAG AND DROP HANDLERS ===
+            .when_some(drag_data, |this, data| {
+                // Start drag, creates drag visual
+                this.on_drag(
+                    data,
+                    |dragged_data: &DraggedTreeItem, click_offset, _window, cx| {
+                        cx.new(|_| DraggedRequestView {
+                            dragged_item: dragged_data.clone(),
+                            click_offset,
+                        })
+                    },
+                )
+            })
+            .on_drag_move::<DraggedTreeItem>(cx.listener({
+                let item_id = item_id.clone();
+                let entry = entry.clone();
+                let is_folder = entry.is_folder();
+                move |this, event: &DragMoveEvent<DraggedTreeItem>, _window, cx| {
+                    this.on_entry_drag_move(&item_id, &entry, is_folder, event, cx);
+                }
+            }))
+            .on_drop::<DraggedTreeItem>(cx.listener({
+                move |this, dropped_item: &DraggedTreeItem, window, cx| {
+                    this.on_entry_drop(&item_id, &entry, dropped_item, window, cx);
+                }
+            }));
+        Some(el)
     }
 
     /// Handle drag movement over the empty background, toggling the root-level
@@ -848,146 +971,12 @@ impl<D: DraggableTreeDelegate> Render for DraggableTreeState<D> {
                             "entries",
                             self.entries.len(),
                             cx.processor(|this, visible_range: Range<usize>, window, cx| {
-                                let mut items = Vec::with_capacity(visible_range.len());
-                                for ix in visible_range {
-                                    let Some(entry) = this.entries.get(ix) else {
-                                        continue;
-                                    };
-                                    let entry = entry.clone();
-                                    let item_id = entry.item().id.clone();
-                                    let selected = Some(ix) == this.selected_ix;
-                                    let cx_app = &**cx; // Convert &mut Context<Self> to &App
-
-                                    // Check if this item can be dragged and create drag data
-                                    let can_drag =
-                                        this.delegate.can_drag(item_id.as_ref(), &entry, cx_app);
-                                    let drag_data = if can_drag {
-                                        this.delegate.create_drag_data(
-                                            item_id.as_ref(),
-                                            &entry,
-                                            cx_app,
-                                        )
-                                    } else {
-                                        None
-                                    };
-
-                                    let insert_position =
-                                        this.get_insert_position(item_id.as_ref());
-                                    let el = div()
-                                        .id(("entry", ix))
-                                        .relative()
-                                        .when(
-                                            insert_position == Some(InsertPosition::Inside)
-                                                && this.is_drag_highlighted(item_id.as_ref()),
-                                            |this| {
-                                                this.bg(cx.theme().muted_foreground.opacity(0.2))
-                                            },
-                                        )
-                                        // Reorder indicator. Rows are uniform
-                                        // height, so it overlays the row edge
-                                        // instead of taking up space.
-                                        .when_some(
-                                            insert_position.filter(|position| {
-                                                *position != InsertPosition::Inside
-                                            }),
-                                            |this, position| {
-                                                this.child(
-                                                    div()
-                                                        .absolute()
-                                                        .left_0()
-                                                        .right_0()
-                                                        .h(INSERT_INDICATOR_HEIGHT)
-                                                        .bg(cx.theme().primary)
-                                                        // Straddle the row edge
-                                                        // so one gap looks the
-                                                        // same whether it is
-                                                        // reached as the row
-                                                        // above's `After` or
-                                                        // the row below's
-                                                        // `Before`.
-                                                        .map(|indicator| {
-                                                            let overhang =
-                                                                -INSERT_INDICATOR_HEIGHT / 2.;
-                                                            if position == InsertPosition::Before {
-                                                                indicator.top(overhang)
-                                                            } else {
-                                                                indicator.bottom(overhang)
-                                                            }
-                                                        }),
-                                                )
-                                            },
-                                        )
-                                        .child(
-                                            this.delegate
-                                                .render_item(ix, &entry, selected, window, cx)
-                                                .disabled(entry.item().is_disabled())
-                                                .selected(selected),
-                                        )
-                                        .when(!entry.item().is_disabled(), |this| {
-                                            this.on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _, window, cx| {
-                                                    this.on_entry_click(ix, window, cx);
-                                                }),
-                                            )
-                                            .on_mouse_down(
-                                                MouseButton::Right,
-                                                cx.listener(move |this, _, _, cx| {
-                                                    this.right_clicked_index = Some(ix);
-                                                    cx.notify();
-                                                }),
-                                            )
-                                        })
-                                        // === DRAG AND DROP HANDLERS ===
-                                        .when_some(drag_data, |this, data| {
-                                            // Start drag, creates drag visual
-                                            this.on_drag(
-                                                data,
-                                                |dragged_data: &DraggedTreeItem,
-                                                 click_offset,
-                                                 _window,
-                                                 cx| {
-                                                    cx.new(|_| DraggedRequestView {
-                                                        dragged_item: dragged_data.clone(),
-                                                        click_offset,
-                                                    })
-                                                },
-                                            )
-                                        })
-                                        .on_drag_move::<DraggedTreeItem>(cx.listener({
-                                            let item_id = item_id.clone();
-                                            let entry = entry.clone();
-                                            let is_folder = entry.is_folder();
-                                            move |this,
-                                                  event: &DragMoveEvent<DraggedTreeItem>,
-                                                  _window,
-                                                  cx| {
-                                                this.on_entry_drag_move(
-                                                    &item_id, &entry, is_folder, event, cx,
-                                                );
-                                            }
-                                        }))
-                                        .on_drop::<DraggedTreeItem>(cx.listener({
-                                            move |this,
-                                                  dropped_item: &DraggedTreeItem,
-                                                  window,
-                                                  cx| {
-                                                this.on_entry_drop(
-                                                    &item_id,
-                                                    &entry,
-                                                    dropped_item,
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
-                                        }));
-
-                                    items.push(el);
-                                }
-
-                                items
+                                visible_range
+                                    .filter_map(|ix| this.render_entry(ix, None, window, cx))
+                                    .collect::<Vec<_>>()
                             }),
                         )
+                        .with_decoration(StickyRows(cx.entity()))
                         .flex_grow(1.)
                         .size_full()
                         .track_scroll(&self.scroll_handle)
@@ -1004,6 +993,27 @@ impl<D: DraggableTreeDelegate> Render for DraggableTreeState<D> {
                     .w(px(4. * 2. + 8.))
                     .child(Scrollbar::vertical(&self.scroll_handle)),
             )
+    }
+}
+
+impl<D: DraggableTreeDelegate> StickyRowsHost for DraggableTreeState<D> {
+    fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn entry_depth(&self, ix: usize) -> usize {
+        self.entries.get(ix).map_or(0, TreeEntry::depth)
+    }
+
+    fn render_sticky_row(
+        &mut self,
+        ix: usize,
+        slot: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.render_entry(ix, Some(slot), window, cx)
+            .map_or_else(|| div().into_any_element(), IntoElement::into_any_element)
     }
 }
 
@@ -1047,5 +1057,87 @@ impl<D: DraggableTreeDelegate> RenderOnce for DraggableTree<D> {
             .size_full()
             .child(self.state)
             .refine_style(&self.style)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Modifiers, TestAppContext, VisualTestContext, point};
+
+    use super::*;
+
+    struct Plain;
+
+    impl DraggableTreeDelegate for Plain {
+        fn render_item(
+            &self,
+            ix: usize,
+            entry: &TreeEntry,
+            _selected: bool,
+            _window: &mut Window,
+            _cx: &mut App,
+        ) -> ListItem {
+            ListItem::new(ix).child(entry.item().label.clone())
+        }
+    }
+
+    struct TreeHost {
+        state: Entity<DraggableTreeState<Plain>>,
+    }
+
+    impl Render for TreeHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            DraggableTree::new(&self.state)
+        }
+    }
+
+    #[gpui::test]
+    fn clicking_a_pinned_folder_closes_it(cx: &mut TestAppContext) {
+        let requests = (0..200).map(|ix| TreeItem::new(format!("request-{ix}"), "request"));
+        let items = vec![
+            TreeItem::new("collection", "collection")
+                .expanded(true)
+                .children(requests),
+        ];
+        let (state, window) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            let state = cx.new(|cx| {
+                let mut state = DraggableTreeState::new(Plain, cx);
+                state.set_items(items, cx);
+                state
+            });
+            let window = cx
+                .open_window(Default::default(), |window, cx| {
+                    let host = cx.new(|_| TreeHost {
+                        state: state.clone(),
+                    });
+                    cx.new(|cx| gpui_kit::component::Root::new(host, window, cx))
+                })
+                .expect("failed to open window");
+            (state, window)
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        state.update(&mut cx, |state, _| {
+            state.scroll_handle.scroll_to_item(150, ScrollStrategy::Top);
+        });
+        cx.run_until_parked();
+
+        // The collection's own row is far above, so this click lands on its
+        // pinned copy.
+        let top_row = point(px(40.), px(4.));
+        cx.simulate_mouse_move(top_row, None, Modifiers::none());
+        cx.simulate_click(top_row, Modifiers::none());
+        cx.run_until_parked();
+
+        state.update(&mut cx, |state, _| {
+            assert_eq!(
+                state.entries().len(),
+                1,
+                "the pinned collection should close"
+            );
+            assert_eq!(state.selected_index(), Some(0));
+        });
     }
 }

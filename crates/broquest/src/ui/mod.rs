@@ -4,4 +4,5 @@ pub mod draggable_tree;
 pub mod icon;
 pub mod method_badge;
 pub mod resizable;
+mod sticky_rows;
 pub mod tab_badge;

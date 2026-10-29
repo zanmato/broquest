@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Features
+
+- Sticky collection tree
+
 ## [0.1.14] - 2026-10-26
 
 ### Features
